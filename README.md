@@ -76,8 +76,9 @@ Cargo workspace:
 | `/` / `i` / `a`       | enter insert mode in a search bar           |
 | `v`                   | enter visual mode in a search bar           |
 | `h` `l` / `b` `w`     | move by character / word                    |
+| `B` `W` / `e` `E`       | move by WORD / to end of word               |
 | `0` / `$`             | move to start / end                          |
-| `x` / `D`             | delete character / to end                   |
+| `x` / `D` / `dd`      | delete character / to end / whole line      |
 | `d` / `x` / `c`       | delete or change a visual selection         |
 | `↑` `↓` / `k` `j`     | move package selection                      |
 | Enter                 | install selected package                    |
