@@ -11,18 +11,17 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::StreamExt;
-use nixbox_config::{Config, DEFAULT_CHANNEL, InputMode, Target};
+use nixbox_config::{DEFAULT_CHANNEL, InputMode, Target};
+use nixbox_core::{Engine, ManagedPackage};
 use nixbox_nix::{
     Manifest,
     build::BuildEvent,
     flakes::{FlakeDetails, FlakeHit},
-    manifest::ManagedFile,
-    scan::{ExternalPackage, ScanTarget, scan},
+    scan::ExternalPackage,
     search::{PackageCatalog, SearchHit},
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -54,59 +53,9 @@ pub(crate) enum SettingsPage {
     Channel,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum QueuedOp {
-    Install {
-        hit: SearchHit,
-        scope: Target,
-    },
-    InstallFlake {
-        repo: String,
-        module: String,
-        scope: Target,
-    },
-    InstallFlakePackage {
-        repo: String,
-        package: String,
-        scope: Target,
-    },
-    Uninstall {
-        name: String,
-        scope: Target,
-    },
-    Migrate {
-        names: Vec<String>,
-        scope: Target,
-    },
-}
-
-impl QueuedOp {
-    pub(crate) fn scope(&self) -> Target {
-        match self {
-            QueuedOp::Install { scope, .. }
-            | QueuedOp::InstallFlake { scope, .. }
-            | QueuedOp::InstallFlakePackage { scope, .. }
-            | QueuedOp::Uninstall { scope, .. }
-            | QueuedOp::Migrate { scope, .. } => *scope,
-        }
-    }
-
-    pub(crate) fn label(&self) -> String {
-        let tag = self.scope().tag();
-        match self {
-            QueuedOp::Install { hit, .. } => format!("install {} [{}]", hit.attr, tag),
-            QueuedOp::InstallFlake { repo, .. } => format!("install flake {} [{}]", repo, tag),
-            QueuedOp::InstallFlakePackage { repo, package, .. } => {
-                format!("install {repo}#{package} [{tag}]")
-            }
-            QueuedOp::Uninstall { name, .. } => format!("remove {} [{}]", name, tag),
-            QueuedOp::Migrate { names, .. } => match names.len() {
-                1 => format!("migrate {} [{}]", names[0], tag),
-                n => format!("migrate {} packages [{}]", n, tag),
-            },
-        }
-    }
-}
+/// The queue holds core ops verbatim, so what the TUI schedules is exactly
+/// what the engine applies — and what `state.json` round-trips.
+pub(crate) use nixbox_core::Op as QueuedOp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tab {
@@ -160,14 +109,6 @@ pub(crate) enum AppEvent {
     Build(BuildEvent),
 }
 
-/// A package tracked by nixbox's manifest (managed) — tagged with the
-/// target/scope it belongs to.
-#[derive(Debug, Clone)]
-pub(crate) struct ManagedPackage {
-    pub name: String,
-    pub scope: Target,
-}
-
 /// The row currently under the cursor in the Installed tab.
 #[derive(Debug, Clone)]
 pub(crate) enum InstalledCursor {
@@ -176,14 +117,9 @@ pub(crate) enum InstalledCursor {
 }
 
 pub(crate) struct App {
-    pub(crate) config: Config,
-    /// Manifest of packages tracked in `nixbox-home-packages.nix`.
-    pub(crate) home_manifest: Manifest,
-    /// Manifest of packages tracked in `nixbox-system-packages.nix`.
-    pub(crate) nixos_manifest: Manifest,
-    /// Packages found declared directly in the user's main config files
-    /// (both home.nix and configuration.nix), tagged with their scope.
-    pub(crate) external_packages: Vec<ExternalPackage>,
+    /// Settings, both manifests, the external-package scan, and every
+    /// mutation of the user's configuration.
+    pub(crate) engine: Engine,
     pub(crate) input: VimInput,
     pub(crate) results: Vec<SearchHit>,
     pub(crate) selected: usize,
@@ -230,24 +166,36 @@ pub(crate) struct App {
 }
 
 impl App {
+    /// Builds an app around an engine assembled by the caller. Only tests
+    /// use it directly; `run` goes through [`Engine::load`].
+    #[cfg(test)]
     pub(crate) fn new(
-        config: Config,
+        config: nixbox_config::Config,
         home_manifest: Manifest,
         nixos_manifest: Manifest,
         external_packages: Vec<ExternalPackage>,
     ) -> Self {
-        let managed = home_manifest.packages.len() + nixos_manifest.packages.len();
-        let external = external_packages.len();
+        Self::from_engine(Engine::from_parts(
+            config,
+            home_manifest,
+            nixos_manifest,
+            external_packages,
+        ))
+    }
+
+    pub(crate) fn from_engine(engine: Engine) -> Self {
+        let managed = engine.home_manifest.packages.len() + engine.nixos_manifest.packages.len();
+        let external = engine.external_packages.len();
         let theme_index = theme::ALL
             .iter()
-            .position(|t| t.name == config.theme)
+            .position(|t| t.name == engine.config.theme)
             .unwrap_or(0);
         let status = if external == 0 {
             format!("{} packages tracked.", managed)
         } else {
             format!("{} managed  ·  {} external.", managed, external)
         };
-        let input_mode = config.input_mode;
+        let input_mode = engine.config.input_mode;
         let mut input = VimInput::default();
         let mut flake_input = VimInput::default();
         let mut installed_input = VimInput::default();
@@ -257,10 +205,7 @@ impl App {
             installed_input.enter_insert_before();
         }
         Self {
-            config,
-            home_manifest,
-            nixos_manifest,
-            external_packages,
+            engine,
             input,
             results: Vec::new(),
             selected: 0,
@@ -314,11 +259,11 @@ impl App {
     }
 
     pub(crate) fn channel(&self) -> &str {
-        &self.config.channel
+        &self.engine.config.channel
     }
 
     pub(crate) fn target_label(&self) -> &'static str {
-        self.config.target.label()
+        self.engine.config.target.label()
     }
 
     pub(crate) fn theme(&self) -> &'static theme::Theme {
@@ -333,7 +278,7 @@ impl App {
     }
 
     pub(crate) fn apply_input_mode(&mut self, mode: InputMode) {
-        self.config.input_mode = mode;
+        self.engine.config.input_mode = mode;
         match mode {
             InputMode::Vim => {
                 self.input.enter_normal();
@@ -347,36 +292,13 @@ impl App {
     }
 
     pub(crate) fn manifest_for(&self, scope: Target) -> &Manifest {
-        match scope {
-            Target::HomeManager => &self.home_manifest,
-            Target::NixosSystem => &self.nixos_manifest,
-        }
+        self.engine.manifest_for(scope)
     }
 
-    pub(crate) fn manifest_for_mut(&mut self, scope: Target) -> &mut Manifest {
-        match scope {
-            Target::HomeManager => &mut self.home_manifest,
-            Target::NixosSystem => &mut self.nixos_manifest,
-        }
-    }
-
-    /// Returns all managed packages from both scopes, sorted by (scope, name)
-    /// so HM entries appear before NixOS entries.
+    /// Returns all managed packages from both scopes, home-manager entries
+    /// first.
     pub(crate) fn managed_packages(&self) -> Vec<ManagedPackage> {
-        let mut out: Vec<ManagedPackage> = Vec::new();
-        for p in &self.home_manifest.packages {
-            out.push(ManagedPackage {
-                name: p.clone(),
-                scope: Target::HomeManager,
-            });
-        }
-        for p in &self.nixos_manifest.packages {
-            out.push(ManagedPackage {
-                name: p.clone(),
-                scope: Target::NixosSystem,
-            });
-        }
-        out
+        self.engine.managed_packages()
     }
 
     pub(crate) fn installed_filter(&self) -> Option<String> {
@@ -397,7 +319,8 @@ impl App {
 
     pub(crate) fn filtered_external_packages(&self) -> Vec<ExternalPackage> {
         let filter = self.installed_filter();
-        self.external_packages
+        self.engine
+            .external_packages
             .iter()
             .filter(|ep| match &filter {
                 None => true,
@@ -444,8 +367,7 @@ impl App {
     /// Re-reads both main config files and refreshes `external_packages`,
     /// excluding anything already tracked in either manifest.
     pub(crate) fn refresh_external_packages(&mut self) {
-        self.external_packages =
-            read_external_packages(&self.config, &self.home_manifest, &self.nixos_manifest);
+        self.engine.refresh_externals();
         let total = self.installed_total();
         if total == 0 {
             self.installed_selected = 0;
@@ -455,46 +377,8 @@ impl App {
     }
 }
 
-/// Scans both home.nix and configuration.nix and returns external packages
-/// from each, scope-tagged, excluding anything already in the matching
-/// manifest. The same package name can appear twice if declared in both
-/// scopes — that's intentional.
-pub(crate) fn read_external_packages(
-    config: &Config,
-    home_manifest: &Manifest,
-    nixos_manifest: &Manifest,
-) -> Vec<ExternalPackage> {
-    let mut out: Vec<ExternalPackage> = Vec::new();
-
-    if let Ok(found) = scan(
-        &config.main_file_for(Target::HomeManager),
-        ScanTarget::HomeManager,
-    ) {
-        out.extend(
-            found
-                .into_iter()
-                .filter(|ep| !home_manifest.packages.contains(&ep.name)),
-        );
-    }
-    if let Ok(found) = scan(
-        &config.main_file_for(Target::NixosSystem),
-        ScanTarget::Nixos,
-    ) {
-        out.extend(
-            found
-                .into_iter()
-                .filter(|ep| !nixos_manifest.packages.contains(&ep.name)),
-        );
-    }
-
-    out
-}
-
 pub async fn run() -> Result<()> {
-    let config = Config::load_or_default()?;
-    let home_manifest = ManagedFile::new(config.managed_file_for(Target::HomeManager)).load()?;
-    let nixos_manifest = ManagedFile::new(config.managed_file_for(Target::NixosSystem)).load()?;
-    let externals = read_external_packages(&config, &home_manifest, &nixos_manifest);
+    let engine = Engine::load()?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -502,14 +386,7 @@ pub async fn run() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = event_loop(
-        &mut terminal,
-        config,
-        home_manifest,
-        nixos_manifest,
-        externals,
-    )
-    .await;
+    let result = event_loop(&mut terminal, engine).await;
 
     disable_raw_mode()?;
     execute!(
@@ -520,6 +397,63 @@ pub async fn run() -> Result<()> {
     terminal.show_cursor()?;
 
     result
+}
+
+async fn event_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    engine: Engine,
+) -> Result<()> {
+    let mut app = App::from_engine(engine);
+    let (tx, mut rx) = mpsc::channel::<AppEvent>(128);
+    state::restore(&mut app, &tx);
+    prepare_package_catalog(&mut app, tx.clone());
+    let mut term_events = EventStream::new();
+    let mut spinner_tick = tokio::time::interval(Duration::from_millis(80));
+    spinner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        terminal.draw(|f| ui::draw(f, &app))?;
+        if app.should_quit {
+            if let Some(task) = app.search_task.take() {
+                task.abort();
+            }
+            if let Some(task) = app.flake_search_task.take() {
+                task.abort();
+            }
+            if let Some(task) = app.flake_detail_task.take() {
+                task.abort();
+            }
+            if let Some(task) = app.catalog_task.take() {
+                task.abort();
+            }
+            break;
+        }
+
+        tokio::select! {
+            Some(Ok(ev)) = term_events.next() => {
+                handle_terminal_event(&mut app, &tx, ev).await?;
+            }
+            Some(app_ev) = rx.recv() => {
+                handle_app_event(&mut app, &tx, app_ev);
+            }
+            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.build_in_progress => {
+                app.spinner_frame = app.spinner_frame.wrapping_add(1);
+            }
+        }
+    }
+    if let Some(handle) = app.search_task.take() {
+        handle.abort();
+    }
+    if let Some(handle) = app.flake_search_task.take() {
+        handle.abort();
+    }
+    if let Some(handle) = app.flake_detail_task.take() {
+        handle.abort();
+    }
+    if let Some(handle) = app.catalog_task.take() {
+        handle.abort();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -677,64 +611,4 @@ mod tests {
         assert!(app.results.is_empty());
         assert_eq!(app.status, "search failed: boom");
     }
-}
-
-async fn event_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    config: Config,
-    home_manifest: Manifest,
-    nixos_manifest: Manifest,
-    externals: Vec<ExternalPackage>,
-) -> Result<()> {
-    let mut app = App::new(config, home_manifest, nixos_manifest, externals);
-    let (tx, mut rx) = mpsc::channel::<AppEvent>(128);
-    state::restore(&mut app, &tx);
-    prepare_package_catalog(&mut app, tx.clone());
-    let mut term_events = EventStream::new();
-    let mut spinner_tick = tokio::time::interval(Duration::from_millis(80));
-    spinner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    loop {
-        terminal.draw(|f| ui::draw(f, &app))?;
-        if app.should_quit {
-            if let Some(task) = app.search_task.take() {
-                task.abort();
-            }
-            if let Some(task) = app.flake_search_task.take() {
-                task.abort();
-            }
-            if let Some(task) = app.flake_detail_task.take() {
-                task.abort();
-            }
-            if let Some(task) = app.catalog_task.take() {
-                task.abort();
-            }
-            break;
-        }
-
-        tokio::select! {
-            Some(Ok(ev)) = term_events.next() => {
-                handle_terminal_event(&mut app, &tx, ev).await?;
-            }
-            Some(app_ev) = rx.recv() => {
-                handle_app_event(&mut app, &tx, app_ev);
-            }
-            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.build_in_progress => {
-                app.spinner_frame = app.spinner_frame.wrapping_add(1);
-            }
-        }
-    }
-    if let Some(handle) = app.search_task.take() {
-        handle.abort();
-    }
-    if let Some(handle) = app.flake_search_task.take() {
-        handle.abort();
-    }
-    if let Some(handle) = app.flake_detail_task.take() {
-        handle.abort();
-    }
-    if let Some(handle) = app.catalog_task.take() {
-        handle.abort();
-    }
-    Ok(())
 }

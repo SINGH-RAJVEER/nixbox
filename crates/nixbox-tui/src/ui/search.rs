@@ -19,15 +19,17 @@ struct HitStatus {
 
 impl HitStatus {
     fn for_attr(app: &App, attr: &str) -> Self {
-        let managed_hm = app.home_manifest.packages.contains(attr);
-        let managed_nixos = app.nixos_manifest.packages.contains(attr);
+        let managed_hm = app.engine.home_manifest.packages.contains(attr);
+        let managed_nixos = app.engine.nixos_manifest.packages.contains(attr);
         let external_hm = !managed_hm
             && app
+                .engine
                 .external_packages
                 .iter()
                 .any(|ep| ep.name == attr && ep.scope == ScanTarget::HomeManager);
         let external_nixos = !managed_nixos
             && app
+                .engine
                 .external_packages
                 .iter()
                 .any(|ep| ep.name == attr && ep.scope == ScanTarget::Nixos);
@@ -174,7 +176,7 @@ pub(super) fn draw_search_body(f: &mut Frame, area: Rect, app: &App) {
         }
 
         lines.push(Line::raw(""));
-        let hint = if status.installed_in(app.config.target) {
+        let hint = if status.installed_in(app.engine.config.target) {
             format!("↵  installed for {}", app.target_label())
         } else {
             format!("↵  install for {}", app.target_label())

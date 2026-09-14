@@ -39,7 +39,7 @@ pub(crate) async fn handle_terminal_event(
     }
 
     if matches!(key.code, KeyCode::Esc)
-        && app.config.input_mode == InputMode::Vim
+        && app.engine.config.input_mode == InputMode::Vim
         && matches!(app.tab, Tab::Search)
         && !matches!(app.input.mode(), VimMode::Normal)
     {
@@ -48,7 +48,7 @@ pub(crate) async fn handle_terminal_event(
     }
 
     if matches!(key.code, KeyCode::Esc)
-        && app.config.input_mode == InputMode::Vim
+        && app.engine.config.input_mode == InputMode::Vim
         && matches!(app.tab, Tab::Flakes)
         && !matches!(app.flake_input.mode(), VimMode::Normal)
     {
@@ -56,7 +56,7 @@ pub(crate) async fn handle_terminal_event(
         return Ok(());
     }
     if matches!(key.code, KeyCode::Esc)
-        && app.config.input_mode == InputMode::Vim
+        && app.engine.config.input_mode == InputMode::Vim
         && matches!(app.tab, Tab::Installed)
         && !matches!(app.installed_input.mode(), VimMode::Normal)
     {
@@ -84,7 +84,7 @@ pub(crate) async fn handle_terminal_event(
         _ => {}
     }
 
-    if app.config.input_mode == InputMode::Normal {
+    if app.engine.config.input_mode == InputMode::Normal {
         match app.tab {
             Tab::Search => match key.code {
                 KeyCode::Down => move_selection(app, 1),
@@ -401,13 +401,13 @@ fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 
     match code {
         KeyCode::Up | KeyCode::Char('k')
-            if matches!(code, KeyCode::Up) || app.config.input_mode == InputMode::Vim =>
+            if matches!(code, KeyCode::Up) || app.engine.config.input_mode == InputMode::Vim =>
         {
             let n = settings_option_count(app.settings_page);
             app.settings_cursor = app.settings_cursor.checked_sub(1).unwrap_or(n - 1);
         }
         KeyCode::Down | KeyCode::Char('j')
-            if matches!(code, KeyCode::Down) || app.config.input_mode == InputMode::Vim =>
+            if matches!(code, KeyCode::Down) || app.engine.config.input_mode == InputMode::Vim =>
         {
             app.settings_cursor =
                 (app.settings_cursor + 1) % settings_option_count(app.settings_page);
@@ -439,16 +439,16 @@ fn select_setting(app: &mut App) {
         app.settings_cursor = match app.settings_page {
             SettingsPage::InputMode => INPUT_MODES
                 .iter()
-                .position(|mode| *mode == app.config.input_mode)
+                .position(|mode| *mode == app.engine.config.input_mode)
                 .unwrap_or(0),
             SettingsPage::Theme => app.theme_index,
             SettingsPage::Target => TARGETS
                 .iter()
-                .position(|target| *target == app.config.target)
+                .position(|target| *target == app.engine.config.target)
                 .unwrap_or(0),
             SettingsPage::Channel => CHANNELS
                 .iter()
-                .position(|channel| *channel == app.config.channel)
+                .position(|channel| *channel == app.engine.config.channel)
                 .unwrap_or(0),
             SettingsPage::Main => 0,
         };
@@ -465,20 +465,20 @@ fn select_setting(app: &mut App) {
         }
         SettingsPage::Theme => {
             app.theme_index = app.settings_cursor;
-            app.config.theme = theme::ALL[app.theme_index].name.to_string();
+            app.engine.config.theme = theme::ALL[app.theme_index].name.to_string();
             format!("Theme set to {}.", theme::ALL[app.theme_index].name)
         }
         SettingsPage::Target => {
-            app.config.target = TARGETS[app.settings_cursor];
-            format!("Target set to {}.", app.config.target.label())
+            app.engine.config.target = TARGETS[app.settings_cursor];
+            format!("Target set to {}.", app.engine.config.target.label())
         }
         SettingsPage::Channel => {
-            app.config.channel = CHANNELS[app.settings_cursor].to_string();
-            format!("Channel set to {}.", app.config.channel)
+            app.engine.config.channel = CHANNELS[app.settings_cursor].to_string();
+            format!("Channel set to {}.", app.engine.config.channel)
         }
         SettingsPage::Main => unreachable!(),
     };
-    let _ = app.config.save();
+    let _ = app.engine.config.save();
     app.settings_page = SettingsPage::Main;
     app.settings_cursor = settings_main_index(page);
 }
@@ -780,7 +780,7 @@ mod tests {
 
         press_with_modifiers(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL).await;
         assert_eq!(app.mode, Mode::Browsing);
-        assert_eq!(app.config.input_mode, InputMode::Vim);
+        assert_eq!(app.engine.config.input_mode, InputMode::Vim);
     }
 
     #[tokio::test]
@@ -811,9 +811,9 @@ mod tests {
         }
 
         assert_eq!(app.mode, Mode::Browsing);
-        assert_eq!(app.config.target, Config::default().target);
-        assert_eq!(app.config.channel, Config::default().channel);
-        assert_eq!(app.config.theme, Config::default().theme);
+        assert_eq!(app.engine.config.target, Config::default().target);
+        assert_eq!(app.engine.config.channel, Config::default().channel);
+        assert_eq!(app.engine.config.theme, Config::default().theme);
     }
 
     #[test]

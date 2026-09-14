@@ -13,6 +13,7 @@ description = "Ratatui front-end (search/build views, theming) for the nixbox TU
 
 [dependencies]
 nixbox-nix = { path = "../nixbox-nix", version = "0.2.1" }
+nixbox-core = { path = "../nixbox-core", version = "0.2.1" }
 nixbox-config = { path = "../nixbox-config", version = "0.2.1" }
 anyhow = { workspace = true }
 ratatui = { workspace = true }

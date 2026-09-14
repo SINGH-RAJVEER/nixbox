@@ -543,6 +543,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nixbox-core"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "nixbox-config",
+ "nixbox-nix",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "nixbox-nix"
 version = "0.2.1"
 dependencies = [
@@ -564,6 +576,7 @@ dependencies = [
  "directories",
  "futures",
  "nixbox-config",
+ "nixbox-core",
  "nixbox-nix",
  "ratatui",
  "serde",
