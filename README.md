@@ -31,6 +31,45 @@ cargo install nixbox
 
 NixBox requires a working Nix installation and a configured NixOS or home-manager flake. The `nix` and rebuild commands are executed locally, so make sure the selected flake can be evaluated before installing packages.
 
+### Install from the flake
+
+Add NixBox to your flake inputs:
+
+```nix
+inputs.nixbox.url = "github:SINGH-RAJVEER/nix-box";
+```
+
+Then add its package to either a NixOS system package list:
+
+```nix
+environment.systemPackages = [
+  inputs.nixbox.packages.${pkgs.system}.default
+];
+```
+
+or a Home Manager package list:
+
+```nix
+home.packages = [
+  inputs.nixbox.packages.${pkgs.system}.default
+];
+```
+
+If your configuration uses overlays, apply the included overlay and refer to the package as `pkgs.nixbox`:
+
+```nix
+nixpkgs.overlays = [ inputs.nixbox.overlays.default ];
+
+environment.systemPackages = [ pkgs.nixbox ];
+# or: home.packages = [ pkgs.nixbox ];
+```
+
+You can also try it without installing it:
+
+```sh
+nix run github:SINGH-RAJVEER/nix-box
+```
+
 Or build from source:
 
 ```sh
