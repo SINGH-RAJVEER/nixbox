@@ -88,6 +88,67 @@ Installing a package writes a generated module before the rebuild starts. NixBox
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Release notes](docs/RELEASE_NOTES.md)
 
+## CLI
+
+Running `nixbox` with no arguments opens the TUI. Every subcommand does the same work headlessly, against the same managed files.
+
+```sh
+nixbox search ripgrep            # search the configured channel
+nixbox install ripgrep           # add it, wire the import, rebuild
+nixbox remove ripgrep            # drop it and rebuild
+nixbox list                      # what NixBox manages
+nixbox scan                      # packages you declared by hand
+nixbox migrate htop              # move one of them into the managed file
+nixbox apply                     # rewrite the managed file and rebuild
+nixbox status                    # target, paths, and how they are wired
+nixbox doctor                    # check what NixBox depends on
+```
+
+Flake modules work the same way:
+
+```sh
+nixbox flake search nix-index    # needs `gh auth login`
+nixbox flake info Mic92/nix-index-database
+nixbox flake add Mic92/nix-index-database
+nixbox flake list
+nixbox flake remove Mic92/nix-index-database
+```
+
+Settings can be read and changed without opening the TUI:
+
+```sh
+nixbox config show
+nixbox config set channel nixpkgs-unstable
+nixbox config path
+nixbox completions fish > ~/.config/fish/completions/nixbox.fish
+```
+
+### Flags
+
+| flag                 | effect                                                          |
+| -------------------- | --------------------------------------------------------------- |
+| `-t`, `--target`     | act on `home-manager` or `nixos` for this invocation only        |
+| `-c`, `--channel`    | use another channel for this invocation only                     |
+| `--json`             | machine-readable output instead of a table                       |
+| `--dry-run`          | print the plan and stop, writing nothing                         |
+| `--no-rebuild`       | write the configuration but skip the rebuild                     |
+| `-y`, `--yes`        | do not ask before changing the configuration                     |
+
+Anything that changes your configuration asks first. Without a terminal to ask at, it refuses unless you pass `--yes`, so a script can never trigger a rebuild by accident. `--target` and `--channel` never touch `settings.json` — only `nixbox config set` does.
+
+The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run `nixbox apply` to finish.
+
+### Exit codes
+
+| code | meaning                                                      |
+| ---- | ------------------------------------------------------------ |
+| 0    | success                                                       |
+| 1    | NixBox could not do what you asked, or the run was cancelled  |
+| 2    | the command line could not be parsed                          |
+| 3    | the configuration was written but the rebuild failed          |
+
+Structured output goes to stdout and progress to stderr, so `nixbox list --json | jq` works while a rebuild is streaming.
+
 ## Development
 
 Use the pinned devenv shell so Cargo, Rust, Nix, and Clippy come from one toolchain:

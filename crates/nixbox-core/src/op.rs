@@ -25,6 +25,10 @@ pub enum Op {
         package: String,
         scope: Target,
     },
+    UninstallFlake {
+        repo: String,
+        scope: Target,
+    },
     Uninstall {
         name: String,
         scope: Target,
@@ -44,6 +48,7 @@ impl Op {
             Op::Install { scope, .. }
             | Op::InstallFlake { scope, .. }
             | Op::InstallFlakePackage { scope, .. }
+            | Op::UninstallFlake { scope, .. }
             | Op::Uninstall { scope, .. }
             | Op::Migrate { scope, .. } => *scope,
         }
@@ -59,6 +64,7 @@ impl Op {
             Op::InstallFlakePackage { repo, package, .. } => {
                 format!("install {repo}#{package} [{tag}]")
             }
+            Op::UninstallFlake { repo, .. } => format!("remove flake {} [{}]", repo, tag),
             Op::Uninstall { name, .. } => format!("remove {} [{}]", name, tag),
             Op::Migrate { names, .. } => match names.as_slice() {
                 [only] => format!("migrate {} [{}]", only, tag),
@@ -118,6 +124,18 @@ mod tests {
             }
             .label(),
             "install owner/repo#default [hm]"
+        );
+    }
+
+    #[test]
+    fn removing_a_flake_reads_as_a_flake_removal() {
+        assert_eq!(
+            Op::UninstallFlake {
+                repo: "owner/repo".into(),
+                scope: Target::HomeManager,
+            }
+            .label(),
+            "remove flake owner/repo [hm]"
         );
     }
 

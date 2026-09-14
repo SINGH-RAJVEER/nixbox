@@ -113,6 +113,15 @@ pub enum Command {
     /// Show the active target, the files nixbox owns, and how they are wired.
     Status,
 
+    /// Check that everything nixbox depends on is in place.
+    Doctor,
+
+    /// Browse and manage flake modules.
+    Flake {
+        #[command(subcommand)]
+        action: commands::flake::Action,
+    },
+
     /// Read or change saved settings.
     Config {
         #[command(subcommand)]
@@ -141,6 +150,8 @@ impl Cli {
             Some(Command::List(args)) => commands::list::run(&args, &self.global),
             Some(Command::Scan) => commands::scan::run(&self.global),
             Some(Command::Status) => commands::status::run(&self.global),
+            Some(Command::Doctor) => commands::doctor::run(&self.global).await,
+            Some(Command::Flake { action }) => commands::flake::run(&action, &self.global).await,
             Some(Command::Config { action }) => commands::config::run(&action, &self.global),
             Some(Command::Completions { shell }) => {
                 commands::completions::run(shell);

@@ -52,6 +52,14 @@ impl FlakeManifest {
     pub fn add_package(&mut self, input: String, package: String) -> bool {
         self.packages.insert(input, package).is_none()
     }
+
+    /// Drops every output wired in for `input`, module or package, so
+    /// removing a flake leaves nothing of it behind.
+    pub fn remove(&mut self, input: &str) -> bool {
+        let had_module = self.modules.remove(input).is_some();
+        let had_package = self.packages.remove(input).is_some();
+        had_module || had_package
+    }
 }
 
 impl Manifest {

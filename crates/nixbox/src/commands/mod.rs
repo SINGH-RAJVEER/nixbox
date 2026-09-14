@@ -3,6 +3,8 @@
 pub mod apply;
 pub mod completions;
 pub mod config;
+pub mod doctor;
+pub mod flake;
 pub mod install;
 pub mod list;
 pub mod migrate;

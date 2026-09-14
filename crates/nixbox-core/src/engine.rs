@@ -7,7 +7,7 @@ use anyhow::Result;
 use nixbox_config::{Config, Target};
 use nixbox_nix::{
     Manifest,
-    flakes::ensure_flake_input,
+    flakes::{ensure_flake_input, remove_flake_input},
     manifest::{FlakeManifest, ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported},
     scan::{ExternalPackage, ScanTarget, remove_from_source, scan},
 };
@@ -193,6 +193,9 @@ impl Engine {
                     manifest.add_package(repo.clone(), package.clone());
                 });
             }
+            Op::UninstallFlake { repo, .. } => {
+                return self.remove_flake(repo, scope, reporter);
+            }
             Op::Uninstall { name, .. } => {
                 self.manifest_for_mut(scope).remove(name);
             }
@@ -276,6 +279,56 @@ pub enum ImportState {
     NotImported,
     /// There is no main config file to import from.
     MainFileMissing,
+}
+
+impl Engine {
+    /// Drops a flake module from the generated manifest and removes its input
+    /// from the root flake.
+    fn remove_flake(
+        &mut self,
+        repo: &str,
+        scope: Target,
+        reporter: &mut dyn Reporter,
+    ) -> Result<()> {
+        let managed = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
+        let mut manifest = managed.load()?;
+        if !manifest.remove(repo) {
+            reporter.warn(format!(
+                "{repo} is not one of the flakes nixbox manages for {}.",
+                scope.label()
+            ));
+            return Ok(());
+        }
+        match scope {
+            Target::HomeManager => managed.write_home_manager(&manifest)?,
+            Target::NixosSystem => managed.write_nixos(&manifest)?,
+        }
+
+        let flake_file = self.config.flake_file();
+        if remove_flake_input(&flake_file, repo)? {
+            reporter.info(format!(
+                "Removed github:{} from {}.",
+                repo,
+                flake_file.display()
+            ));
+        } else {
+            reporter.warn(format!(
+                "no input for {repo} found in {}; remove it by hand if it is still there",
+                flake_file.display()
+            ));
+        }
+        git_track(managed.path(), reporter);
+        if flake_file.exists() {
+            git_track(&flake_file, reporter);
+        }
+        Ok(())
+    }
+
+    /// The flake modules nixbox manages for `scope`, as (input, module) pairs.
+    pub fn managed_flakes(&self, scope: Target) -> Result<Vec<(String, String)>> {
+        let managed = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
+        Ok(managed.load()?.modules.into_iter().collect())
+    }
 }
 
 /// Scans both main config files and returns the packages declared in them,

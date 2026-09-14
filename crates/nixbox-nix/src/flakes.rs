@@ -35,6 +35,28 @@ pub struct FlakePackage {
     pub version: String,
 }
 
+impl FlakeHit {
+    /// A hit pointing at `flake.nix` in the root of `owner/repo`, for when
+    /// the user names a repository outright instead of searching for one.
+    ///
+    /// The evaluated fields stay empty: nothing has inspected the flake yet,
+    /// and `fetch_flake_details` is what fills them in.
+    #[must_use]
+    pub fn for_repo(repo: &str) -> Self {
+        Self {
+            repo: repo.to_string(),
+            repo_url: format!("https://github.com/{repo}"),
+            path: "flake.nix".to_string(),
+            match_fragment: None,
+            packages: Vec::new(),
+            nixos_module: None,
+            home_manager_module: None,
+            outputs: Vec::new(),
+            content_url: format!("repos/{repo}/contents/flake.nix"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FlakeDetails {
     pub repo: String,
@@ -623,6 +645,41 @@ pub fn ensure_flake_input(
     }
 
     fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))
+}
+
+/// Drops the `"owner/repo".url = ...;` line that [`ensure_flake_input`]
+/// added, and reports whether there was one.
+///
+/// The `inherit inputs` wiring stays: other flake modules nixbox manages may
+/// still depend on it, and it is harmless when nothing does.
+pub fn remove_flake_input(flake_file: &Path, repo: &str) -> Result<bool> {
+    if !flake_file.exists() {
+        return Ok(false);
+    }
+    let source = fs::read_to_string(flake_file)
+        .with_context(|| format!("reading {}", flake_file.display()))?;
+    let needle = format!("\"{repo}\".url");
+
+    let trailing_newline = source.ends_with('\n');
+    let mut kept: Vec<&str> = Vec::new();
+    let mut removed = false;
+    for line in source.lines() {
+        if line.trim_start().starts_with(&needle) {
+            removed = true;
+        } else {
+            kept.push(line);
+        }
+    }
+    if !removed {
+        return Ok(false);
+    }
+
+    let mut updated = kept.join("\n");
+    if trailing_newline {
+        updated.push('\n');
+    }
+    fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))?;
+    Ok(true)
 }
 
 fn matching_brace(source: &str, open: usize) -> Option<usize> {
