@@ -11,7 +11,7 @@ pub mod op;
 pub mod rebuild;
 pub mod report;
 
-pub use engine::{Engine, ManagedPackage, scan_externals, scan_target, scope_matches};
+pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};
 pub use op::Op;
 pub use rebuild::{HOME_FALLBACK_NOTE, RebuildCommand};
 pub use report::{LogReporter, Reporter, SilentReporter};
@@ -22,6 +22,7 @@ pub(crate) mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Mutex, MutexGuard, PoisonError};
 
+    use nixbox_config::Config;
     use nixbox_nix::search::SearchHit;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -36,6 +37,18 @@ pub(crate) mod tests {
     pub(crate) struct TempConfigDir {
         path: PathBuf,
         _guard: MutexGuard<'static, ()>,
+    }
+
+    impl TempConfigDir {
+        /// A config pinned to this directory, so nothing in a test can reach
+        /// the host's real `/etc/nixos`.
+        pub(crate) fn config(&self) -> Config {
+            Config {
+                home_manager_main_file: Some(self.path.join("home.nix")),
+                nixos_main_file: Some(self.path.join("configuration.nix")),
+                ..Config::default()
+            }
+        }
     }
 
     impl Drop for TempConfigDir {

@@ -135,6 +135,25 @@ impl Engine {
         self.manifest_for(scope).packages.contains(name)
     }
 
+    /// Reports whether `scope`'s managed file is imported, without writing
+    /// anything — [`Engine::apply`] is what repairs a missing import.
+    #[must_use]
+    pub fn import_state(&self, scope: Target) -> ImportState {
+        let main_file = self.config.main_file_for(scope);
+        let managed_file = self.config.managed_file_for(scope);
+        let Some(name) = managed_file.file_name().and_then(|n| n.to_str()) else {
+            return ImportState::NotImported;
+        };
+        let Ok(source) = std::fs::read_to_string(&main_file) else {
+            return ImportState::MainFileMissing;
+        };
+        if source.contains(name) {
+            ImportState::Imported
+        } else {
+            ImportState::NotImported
+        }
+    }
+
     /// Re-reads both main config files and refreshes `external_packages`.
     pub fn refresh_externals(&mut self) {
         self.external_packages =
@@ -246,6 +265,17 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+/// Whether a target's managed file is wired into the user's own config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportState {
+    /// The main config file imports the managed file.
+    Imported,
+    /// The main config file exists but does not import the managed file.
+    NotImported,
+    /// There is no main config file to import from.
+    MainFileMissing,
 }
 
 /// Scans both main config files and returns the packages declared in them,
@@ -417,8 +447,12 @@ mod tests {
     #[test]
     fn applying_an_install_writes_the_managed_file_and_reports_it() {
         let dir = crate::tests::temp_dir("apply-install");
-        let mut engine = engine();
-        engine.config.target = Target::NixosSystem;
+        let mut engine = Engine::from_parts(
+            dir.config(),
+            Manifest::default(),
+            Manifest::default(),
+            Vec::new(),
+        );
         let mut reporter = LogReporter::new();
 
         engine
@@ -447,7 +481,12 @@ mod tests {
     #[test]
     fn uninstall_drops_the_package_from_the_managed_file() {
         let dir = crate::tests::temp_dir("apply-uninstall");
-        let mut engine = engine();
+        let mut engine = Engine::from_parts(
+            dir.config(),
+            Manifest::default(),
+            Manifest::default(),
+            Vec::new(),
+        );
         engine.manifest_for_mut(Target::NixosSystem).add("ripgrep");
         engine.manifest_for_mut(Target::NixosSystem).add("fd");
 
@@ -465,6 +504,60 @@ mod tests {
             .expect("managed file written");
         assert!(written.contains("ripgrep"));
         assert!(!written.contains("fd"));
+        drop(dir);
+    }
+}
+
+#[cfg(test)]
+mod import_state_tests {
+    use super::{Engine, ImportState};
+    use nixbox_config::Target;
+    use nixbox_nix::Manifest;
+
+    fn engine(dir: &crate::tests::TempConfigDir) -> Engine {
+        Engine::from_parts(
+            dir.config(),
+            Manifest::default(),
+            Manifest::default(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn a_missing_main_file_is_reported_as_such() {
+        let dir = crate::tests::temp_dir("import-missing");
+        let engine = engine(&dir);
+
+        assert_eq!(
+            engine.import_state(Target::NixosSystem),
+            ImportState::MainFileMissing
+        );
+        drop(dir);
+    }
+
+    #[test]
+    fn an_import_line_is_detected_and_its_absence_is_not() {
+        let dir = crate::tests::temp_dir("import-present");
+        let engine = engine(&dir);
+        let main_file = engine.config.main_file_for(Target::NixosSystem);
+        std::fs::write(&main_file, "{ imports = [ ./unrelated.nix ]; }\n")
+            .expect("write main file");
+
+        assert_eq!(
+            engine.import_state(Target::NixosSystem),
+            ImportState::NotImported
+        );
+
+        std::fs::write(
+            &main_file,
+            "{ imports = [ ./nixbox-system-packages.nix ]; }\n",
+        )
+        .expect("write main file");
+
+        assert_eq!(
+            engine.import_state(Target::NixosSystem),
+            ImportState::Imported
+        );
         drop(dir);
     }
 }
