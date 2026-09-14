@@ -4,7 +4,8 @@ A NixOS TUI package manager. Search a nixpkgs channel, pick a package, and NixBo
 
 ## What it does
 
-- Live search against `nix search --json` over a configurable flake input (default `nixpkgs`).
+- Searches a local package catalog built from the exact `nixpkgs` revision pinned by your configuration's `flake.lock`.
+- Stores the catalog in `~/.cache/nixbox/package-catalog.json` and rebuilds it after the locked revision changes. If the lock cannot be resolved, search falls back to live `nix search --json` using the configured channel.
 - Maintains two managed files in your config directory — `nixbox-home-packages.nix` and `nixbox-system-packages.nix` — and owns them end-to-end. Your hand-written config is never touched outside of a single `imports` line.
 - On install/uninstall it updates the managed file, makes sure it's imported by your `home.nix` / `configuration.nix`, then runs the appropriate rebuild and streams the output into the TUI.
 - Works whether your home-manager is exposed as a standalone `homeConfigurations.<user>` flake output, or wired in as a NixOS module — NixBox auto-detects which one you have and picks the right rebuild command.
@@ -29,7 +30,7 @@ Inside the managed file, NixBox owns everything between `# nixbox:packages:start
 cargo install nixbox
 ```
 
-NixBox requires a working Nix installation and a configured NixOS or home-manager flake. The `nix` and rebuild commands are executed locally, so make sure the selected flake can be evaluated before installing packages.
+NixBox requires a working Nix installation and a configured NixOS or home-manager flake. The first run evaluates the locked nixpkgs revision once to create the package catalog. Later searches use the cached catalog without invoking Nix.
 
 ### Install from the flake
 
@@ -105,7 +106,7 @@ Cargo workspace:
 
 - `crates/nixbox` — binary entrypoint
 - `crates/nixbox-tui` — ratatui app, search / installed / build views
-- `crates/nixbox-nix` — `nix search` wrapper, managed-file writer, import inserter, rebuild runner
+- `crates/nixbox-nix` — revision-pinned package catalog, `nix search` fallback, managed-file writer, import inserter, rebuild runner
 - `crates/nixbox-config` — persisted user settings (channel, target, theme, input mode, path overrides)
 
 ## Keys

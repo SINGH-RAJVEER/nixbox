@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -17,7 +18,7 @@ use nixbox_nix::{
     flakes::{FlakeDetails, FlakeHit},
     manifest::ManagedFile,
     scan::{ExternalPackage, ScanTarget, scan},
-    search::SearchHit,
+    search::{PackageCatalog, SearchHit},
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -28,6 +29,7 @@ use tokio::{
 };
 
 use crate::handlers::{handle_app_event, handle_terminal_event};
+use crate::ops::prepare_package_catalog;
 use crate::state::{self, InProgress, PersistedState};
 use crate::theme;
 use crate::ui;
@@ -128,6 +130,8 @@ pub(crate) enum AppEvent {
         epoch: u64,
         error: String,
     },
+    CatalogReady(Arc<PackageCatalog>),
+    CatalogFailed(String),
     FlakeSearchDone {
         epoch: u64,
         hits: Vec<FlakeHit>,
@@ -199,6 +203,9 @@ pub(crate) struct App {
     pub(crate) settings_cursor: usize,
     pub(crate) searching: bool,
     pub(crate) search_task: Option<JoinHandle<()>>,
+    pub(crate) package_catalog: Option<Arc<PackageCatalog>>,
+    pub(crate) catalog_loading: bool,
+    pub(crate) catalog_task: Option<JoinHandle<()>>,
     pub(crate) build_in_progress: bool,
     pub(crate) build_cancel: Option<oneshot::Sender<()>>,
     pub(crate) spinner_frame: usize,
@@ -273,6 +280,9 @@ impl App {
             settings_cursor: 0,
             searching: false,
             search_task: None,
+            package_catalog: None,
+            catalog_loading: false,
+            catalog_task: None,
             build_in_progress: false,
             build_cancel: None,
             spinner_frame: 0,
@@ -670,6 +680,7 @@ async fn event_loop(
     let mut app = App::new(config, home_manifest, nixos_manifest, externals);
     let (tx, mut rx) = mpsc::channel::<AppEvent>(128);
     state::restore(&mut app, &tx);
+    prepare_package_catalog(&mut app, tx.clone());
     let mut term_events = EventStream::new();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(80));
     spinner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -686,6 +697,9 @@ async fn event_loop(
             if let Some(task) = app.flake_detail_task.take() {
                 task.abort();
             }
+            if let Some(task) = app.catalog_task.take() {
+                task.abort();
+            }
             break;
         }
 
@@ -696,7 +710,7 @@ async fn event_loop(
             Some(app_ev) = rx.recv() => {
                 handle_app_event(&mut app, &tx, app_ev);
             }
-            _ = spinner_tick.tick(), if app.searching || app.flake_searching || app.flake_detail_loading || app.build_in_progress => {
+            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.build_in_progress => {
                 app.spinner_frame = app.spinner_frame.wrapping_add(1);
             }
         }
@@ -708,6 +722,9 @@ async fn event_loop(
         handle.abort();
     }
     if let Some(handle) = app.flake_detail_task.take() {
+        handle.abort();
+    }
+    if let Some(handle) = app.catalog_task.take() {
         handle.abort();
     }
     Ok(())

@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use directories::BaseDirs;
 use nixbox_config::Target;
 use nixbox_nix::{
     build::{
@@ -10,6 +11,7 @@ use nixbox_nix::{
     flakes::{ensure_flake_input, fetch_flake_details, search_flakes},
     manifest::{ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported},
     scan::{ScanTarget, remove_from_source},
+    search::PackageCatalog,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
@@ -334,6 +336,17 @@ fn ep_target_eq(scan_scope: ScanTarget, target: Target) -> bool {
 }
 
 pub(crate) async fn install_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
+    if app.package_catalog.as_ref().is_some_and(|catalog| {
+        !catalog
+            .is_current_for(&app.config.home_manager_dir())
+            .unwrap_or(false)
+    }) {
+        app.package_catalog = None;
+        prepare_package_catalog(app, tx.clone());
+        app.status = "The nixpkgs lock changed; refreshing the package catalog first.".into();
+        return Ok(());
+    }
+
     let Some(hit) = app.results.get(app.selected).cloned() else {
         app.status = "No selection.".into();
         return Ok(());
@@ -561,6 +574,35 @@ pub(crate) async fn migrate_all(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> R
     Ok(())
 }
 
+pub(crate) fn prepare_package_catalog(app: &mut App, tx: mpsc::Sender<AppEvent>) {
+    if let Some(task) = app.catalog_task.take() {
+        task.abort();
+    }
+
+    let Some(base_dirs) = BaseDirs::new() else {
+        app.catalog_loading = false;
+        return;
+    };
+    let config_dir = app.config.home_manager_dir();
+    let cache_path = base_dirs
+        .cache_dir()
+        .join("nixbox")
+        .join("package-catalog.json");
+    app.catalog_loading = true;
+    app.catalog_task = Some(tokio::spawn(async move {
+        match PackageCatalog::load_or_build(&config_dir, &cache_path).await {
+            Ok(catalog) => {
+                let _ = tx
+                    .send(AppEvent::CatalogReady(std::sync::Arc::new(catalog)))
+                    .await;
+            }
+            Err(error) => {
+                let _ = tx.send(AppEvent::CatalogFailed(error.to_string())).await;
+            }
+        }
+    }));
+}
+
 pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
     if let Some(task) = app.search_task.take() {
         task.abort();
@@ -582,9 +624,34 @@ pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
     let channel = app.config.channel.clone();
     app.latest_query = query.clone();
 
+    if app.catalog_loading {
+        app.status = "Preparing package catalog for your locked nixpkgs revision...".into();
+        return;
+    }
+
+    if app.package_catalog.as_ref().is_some_and(|catalog| {
+        !catalog
+            .is_current_for(&app.config.home_manager_dir())
+            .unwrap_or(false)
+    }) {
+        app.package_catalog = None;
+        prepare_package_catalog(app, tx);
+        app.status = "The nixpkgs lock changed; refreshing the package catalog...".into();
+        return;
+    }
+
+    let catalog = app.package_catalog.clone();
+
     app.search_task = Some(tokio::spawn(async move {
         sleep(Duration::from_millis(180)).await;
-        match nixbox_nix::search::search(&channel, &query).await {
+        let result = if let Some(catalog) = catalog {
+            tokio::task::spawn_blocking(move || catalog.search(&query))
+                .await
+                .map_err(|error| anyhow!("joining package catalog search: {error}"))
+        } else {
+            nixbox_nix::search::search(&channel, &query).await
+        };
+        match result {
             Ok(hits) => {
                 let _ = tx.send(AppEvent::SearchDone { epoch, hits }).await;
             }

@@ -533,6 +533,29 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
                 app.status = format!("search failed: {}", error);
             }
         }
+        AppEvent::CatalogReady(catalog) => {
+            app.catalog_task = None;
+            app.catalog_loading = false;
+            let revision: String = catalog.revision().chars().take(12).collect();
+            app.package_catalog = Some(catalog);
+            if app.input.value().is_empty() && !app.build_in_progress && app.last_error.is_none() {
+                app.status = format!("Package catalog ready at {revision}.");
+            } else if !app.input.value().is_empty() {
+                schedule_search(app, tx.clone());
+            }
+        }
+        AppEvent::CatalogFailed(error) => {
+            app.catalog_task = None;
+            app.catalog_loading = false;
+            app.package_catalog = None;
+            if app.input.value().is_empty() && !app.build_in_progress && app.last_error.is_none() {
+                app.status =
+                    format!("Package catalog unavailable; live search will be used: {error}");
+            } else if !app.input.value().is_empty() {
+                app.status = format!("Package catalog unavailable; using live search: {error}");
+                schedule_search(app, tx.clone());
+            }
+        }
         AppEvent::FlakeSearchDone { epoch, hits } => {
             if epoch == app.flake_search_epoch {
                 app.flake_search_task = None;
