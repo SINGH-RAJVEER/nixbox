@@ -91,6 +91,19 @@ pub enum Command {
     /// Search a nixpkgs channel.
     Search(commands::search::SearchArgs),
 
+    /// Add packages to your configuration and rebuild.
+    Install(commands::install::InstallArgs),
+
+    /// Drop packages from your configuration and rebuild.
+    #[command(visible_alias = "rm", alias = "uninstall")]
+    Remove(commands::remove::RemoveArgs),
+
+    /// Move hand-declared packages into the file nixbox manages.
+    Migrate(commands::migrate::MigrateArgs),
+
+    /// Rewrite the managed file and rebuild without changing the package set.
+    Apply(commands::apply::ApplyArgs),
+
     /// List the packages nixbox manages.
     List(commands::list::ListArgs),
 
@@ -121,6 +134,10 @@ impl Cli {
                 Ok(ExitCode::SUCCESS)
             }
             Some(Command::Search(args)) => commands::search::run(&args, &self.global).await,
+            Some(Command::Install(args)) => commands::install::run(&args, &self.global).await,
+            Some(Command::Remove(args)) => commands::remove::run(&args, &self.global).await,
+            Some(Command::Migrate(args)) => commands::migrate::run(&args, &self.global).await,
+            Some(Command::Apply(args)) => commands::apply::run(&args, &self.global).await,
             Some(Command::List(args)) => commands::list::run(&args, &self.global),
             Some(Command::Scan) => commands::scan::run(&self.global),
             Some(Command::Status) => commands::status::run(&self.global),

@@ -1,3 +1,4 @@
+mod apply;
 mod cli;
 mod commands;
 mod render;

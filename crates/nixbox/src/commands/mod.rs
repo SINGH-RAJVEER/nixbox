@@ -1,8 +1,12 @@
 //! One module per subcommand.
 
+pub mod apply;
 pub mod completions;
 pub mod config;
+pub mod install;
 pub mod list;
+pub mod migrate;
+pub mod remove;
 pub mod scan;
 pub mod search;
 pub mod status;
