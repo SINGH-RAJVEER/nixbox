@@ -1,5 +1,6 @@
 /target
 /result
+*.qcow2
 AGENTS.md
 CLAUDE.md
 /.direnv

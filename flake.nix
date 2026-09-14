@@ -12,6 +12,11 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      linuxSystems = builtins.filter (nixpkgs.lib.hasSuffix "-linux") supportedSystems;
+      forAllLinuxSystems = nixpkgs.lib.genAttrs linuxSystems;
+      # nixosConfigurations is a flat attribute set, so the test VM is pinned
+      # to one system rather than generated per system.
+      vmSystem = "x86_64-linux";
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       mkNixbox =
         pkgs:
@@ -82,5 +87,31 @@
       overlays.default = final: _prev: {
         nixbox = mkNixbox final;
       };
+
+      # A throwaway VM for exercising NixBox against a real rebuild. Build and
+      # boot it with `just vm`. Nothing here is ever applied to the host: the
+      # only safe subcommands are `build-vm` and `build-vm-with-bootloader`.
+      nixosConfigurations.nixbox-testvm = nixpkgs.lib.nixosSystem {
+        system = vmSystem;
+        specialArgs = {
+          nixbox = self.packages.${vmSystem}.default;
+          nixpkgsFlake = nixpkgs;
+        };
+        modules = [ ./vm/host.nix ];
+      };
+
+      checks = forAllLinuxSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          cli = import ./vm/test.nix {
+            nixbox = self.packages.${system}.default;
+            nixpkgsFlake = nixpkgs;
+            inherit (pkgs) testers;
+          };
+        }
+      );
     };
 }

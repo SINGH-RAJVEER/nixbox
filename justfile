@@ -38,6 +38,38 @@ fix: fmt lint
 clean:
     cargo clean
 
+# ── Test VM ────────────────────────────────────────────────────────────────────
+
+# Flakes read the git tree, so a file added under vm/ is invisible to the
+# build until it is tracked. `path:.` would sidestep that, at the cost of
+# copying target/ into the store on every build.
+
+# Build the throwaway NixOS test VM
+vm-build:
+    nixos-rebuild build-vm --flake .#nixbox-testvm
+
+# Build and boot the test VM (login: tester/tester, quit with ctrl-a x)
+vm: vm-build
+    ./result/bin/run-nixos-vm
+
+# The config dir under ~/.config/nixos is seeded once, by an activation
+# script that skips itself if the directory is already there. Exercising
+# that path needs the old disk gone first.
+
+# Boot the test VM from a clean disk
+vm-fresh: vm-clean vm
+
+# Delete the test VM's disk image and build result
+vm-clean:
+    rm -f nixos.qcow2 result
+
+# --no-link because vm-build and vm own ./result: without it a bare vm-test
+# leaves the check's output there and `just vm` boots the wrong thing.
+
+# Run the automated VM check
+vm-test:
+    nix build --no-link --print-build-logs ".#checks.$(nix eval --raw --impure --expr builtins.currentSystem).cli"
+
 # ── Dev ────────────────────────────────────────────────────────────────────────
 
 # Enter the devenv shell
@@ -54,3 +86,6 @@ dev-test:
 
 # Full pre-commit gate: format, lint, test
 ci: fmt lint test
+
+# Full gate plus the VM check, which boots a machine and takes minutes
+ci-vm: ci vm-test

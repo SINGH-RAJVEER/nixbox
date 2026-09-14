@@ -9,9 +9,11 @@
 ├── crates
 │	├── nixbox
 │	├── nixbox-config
+│	├── nixbox-core
 │	├── nixbox-nix
 │	└── nixbox-tui
 ├── docs
+├── vm
 ├── flake.nix
 ├── flake.lock
 ├── devenv.nix
@@ -52,6 +54,12 @@ Using the shell matters on NixOS because a Rustup toolchain can retain linker wr
 | `just dev-update` | Update pinned devenv inputs. |
 | `just dev-test` | Evaluate devenv and run its configured test command. |
 | `just ci` | Run format, lint, and test in that order. |
+| `just ci-vm` | Run `just ci` and then the automated VM check. |
+| `just vm-build` | Build the throwaway NixOS test VM. |
+| `just vm` | Build and boot the test VM. |
+| `just vm-fresh` | Boot the test VM from a clean disk. |
+| `just vm-clean` | Delete the test VM's disk image and build result. |
+| `just vm-test` | Run the automated VM check. |
 
 The pre-commit gate is:
 
@@ -78,7 +86,35 @@ Run ignored tests deliberately and one at a time after reading their source:
 cargo test --workspace -- --ignored --nocapture
 ```
 
-The project does not contain end-to-end terminal snapshot tests or a disposable NixOS VM. Unit tests cannot prove that an arbitrary user flake will rebuild successfully, especially where source-text mutation heuristics are involved.
+The project does not contain end-to-end terminal snapshot tests. Unit tests cannot prove that an arbitrary user flake will rebuild successfully, especially where source-text mutation heuristics are involved, which is what the disposable NixOS VM below is for.
+
+## Testing in a VM
+
+NixBox edits a NixOS configuration and runs rebuilds, so the useful way to try a change is against a throwaway machine rather than your own:
+
+```sh
+just vm         # build and boot the test VM
+just vm-test    # run the automated check
+just vm-clean   # delete the VM's disk image and build result
+```
+
+The VM logs in as `tester` (password `tester`, passwordless sudo) with NixBox already on `PATH`. Quit QEMU with `Ctrl-a x`. Inside, `~/.config/nixos` is seeded with a git-tracked flake that exposes `nixosConfigurations.nixos` — which is what NixBox rebuilds — and a `configuration.nix` that declares `hello` by hand, so `nixbox scan` and `nixbox migrate` have something to work with. The VM keeps its state in `nixos.qcow2`; delete it for a clean boot.
+
+A handful of settings in `vm/guest.nix` are what make the guest usable, and none of them are optional:
+
+| setting | why |
+| --- | --- |
+| `virtualisation.writableStore` | Layers a writable overlay over the host's read-only store. Without it nothing inside the VM can rebuild. |
+| `virtualisation.writableStoreUseTmpfs = false` | Puts that overlay on disk instead of in RAM, so an inner rebuild does not run the VM out of memory. |
+| `virtualisation.qemu.enableSharedMemory` | virtiofs is vhost-user, so the daemon must be able to map the guest's RAM. Without it every virtiofs mount hangs in uninterruptible sleep and the boot strands in stage 1. The NixOS test driver sets this itself, so only the interactive VM ever needed it spelled out. |
+| `boot.loader.grub.enable = false` | QEMU is handed the kernel directly, so there is nothing to install. `grub-install` refuses this disk, and it runs before activation, so leaving GRUB on would fail every rebuild after having built the whole system. |
+| `nix.settings.flake-registry` | Locking a flake input resolves indirect references against the global registry only, not the system one, so the default would send every rebuild to channels.nixos.org. It points at the same pin `nix.registry` generates. |
+
+`vm/guest.nix` is shared by the outer VM and the copy seeded inside it. A rebuild started in the guest stops any unit the new configuration does not declare, so the two have to agree about `virtualisation` or the switch would unmount the Nix store out from under itself.
+
+`just vm-test` boots the same machine headless and drives it with the NixOS test driver. Those VMs have no network, so it covers what works offline: `status`, `doctor`, `scan`, `migrate`, `list`, `remove`, `apply`, `config`, the confirmation guard, `--dry-run`, and — because the guest registry pins nixpkgs to a store path — `search` and `install` as far as the managed file. A real rebuild is the one thing it cannot do, since anything outside the system closure would have to come from a substituter, so `just vm` is where the `install`/`migrate`/`remove` round trip gets exercised against an actual `nixos-rebuild switch`.
+
+Only `nixos-rebuild build-vm` is ever used here; it builds and never activates, so your own system is untouched. Do not run `nixos-rebuild switch` against `.#nixbox-testvm` — that would apply the test machine's configuration, passwordless sudo and all, to your host.
 
 ## Clippy policy
 
