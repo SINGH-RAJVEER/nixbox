@@ -143,38 +143,61 @@ pub(crate) async fn handle_terminal_event(
                     }
                 }
             },
-            VimMode::Normal => match key.code {
-                KeyCode::Down | KeyCode::Char('j') => move_selection(app, 1),
-                KeyCode::Up | KeyCode::Char('k') => move_selection(app, -1),
-                KeyCode::Left | KeyCode::Char('h') => app.input.move_left(),
-                KeyCode::Right | KeyCode::Char('l') => app.input.move_right(),
-                KeyCode::Char('b') => app.input.move_prev_word(),
-                KeyCode::Char('w') => app.input.move_next_word(),
-                KeyCode::Char('0') => app.input.move_start(),
-                KeyCode::Char('$') => app.input.move_end(),
-                KeyCode::Char('v') => app.input.enter_visual(),
-                KeyCode::Char('x') => {
-                    if app.input.delete_char() {
-                        schedule_search(app, tx.clone());
-                    }
+            VimMode::Normal => {
+                if !matches!(key.code, KeyCode::Char('d')) {
+                    app.input.clear_pending_d();
                 }
-                KeyCode::Char('D') => {
-                    if app.input.delete_to_end() {
-                        schedule_search(app, tx.clone());
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => move_selection(app, 1),
+                    KeyCode::Up | KeyCode::Char('k') => move_selection(app, -1),
+                    KeyCode::Left | KeyCode::Char('h') => app.input.move_left(),
+                    KeyCode::Right | KeyCode::Char('l') => app.input.move_right(),
+                    KeyCode::Char('b') => app.input.move_prev_word(),
+                    KeyCode::Char('B') => app.input.move_prev_big_word(),
+                    KeyCode::Char('w') => app.input.move_next_word(),
+                    KeyCode::Char('W') => app.input.move_next_big_word(),
+                    KeyCode::Char('e') => app.input.move_word_end(),
+                    KeyCode::Char('E') => app.input.move_big_word_end(),
+                    KeyCode::Char('0') => app.input.move_start(),
+                    KeyCode::Char('$') => app.input.move_end(),
+                    KeyCode::Char('v') => app.input.enter_visual(),
+                    KeyCode::Char('x') => {
+                        if app.input.delete_char() {
+                            schedule_search(app, tx.clone());
+                        }
                     }
+                    KeyCode::Char('d') => {
+                        if app.input.has_pending_d() {
+                            app.input.clear_pending_d();
+                            if app.input.delete_line() {
+                                schedule_search(app, tx.clone());
+                            }
+                        } else {
+                            app.input.set_pending_d();
+                        }
+                    }
+                    KeyCode::Char('D') => {
+                        if app.input.delete_to_end() {
+                            schedule_search(app, tx.clone());
+                        }
+                    }
+                    KeyCode::Enter => install_selected(app, tx).await?,
+                    KeyCode::Char('i') | KeyCode::Char('/') => app.input.enter_insert_before(),
+                    KeyCode::Char('a') => app.input.enter_insert_after(),
+                    KeyCode::Char('I') => app.input.enter_insert_start(),
+                    KeyCode::Char('A') => app.input.enter_insert_end(),
+                    _ => {}
                 }
-                KeyCode::Enter => install_selected(app, tx).await?,
-                KeyCode::Char('i') | KeyCode::Char('/') => app.input.enter_insert_before(),
-                KeyCode::Char('a') => app.input.enter_insert_after(),
-                KeyCode::Char('I') => app.input.enter_insert_start(),
-                KeyCode::Char('A') => app.input.enter_insert_end(),
-                _ => {}
-            },
+            }
             VimMode::Visual => match key.code {
                 KeyCode::Left | KeyCode::Char('h') => app.input.move_left(),
                 KeyCode::Right | KeyCode::Char('l') => app.input.move_right(),
                 KeyCode::Char('b') => app.input.move_prev_word(),
+                KeyCode::Char('B') => app.input.move_prev_big_word(),
                 KeyCode::Char('w') => app.input.move_next_word(),
+                KeyCode::Char('W') => app.input.move_next_big_word(),
+                KeyCode::Char('e') => app.input.move_word_end(),
+                KeyCode::Char('E') => app.input.move_big_word_end(),
                 KeyCode::Char('0') => app.input.move_start(),
                 KeyCode::Char('$') => app.input.move_end(),
                 KeyCode::Char('d') | KeyCode::Char('x') => {
@@ -206,44 +229,69 @@ pub(crate) async fn handle_terminal_event(
                     }
                 }
             },
-            VimMode::Normal => match key.code {
-                KeyCode::Down | KeyCode::Char('j') => {
-                    move_flake_selection(app, 1);
-                    schedule_flake_details(app, tx.clone());
+            VimMode::Normal => {
+                if !matches!(key.code, KeyCode::Char('d')) {
+                    app.flake_input.clear_pending_d();
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    move_flake_selection(app, -1);
-                    schedule_flake_details(app, tx.clone());
-                }
-                KeyCode::Left | KeyCode::Char('h') => app.flake_input.move_left(),
-                KeyCode::Right | KeyCode::Char('l') => app.flake_input.move_right(),
-                KeyCode::Char('b') => app.flake_input.move_prev_word(),
-                KeyCode::Char('w') => app.flake_input.move_next_word(),
-                KeyCode::Char('0') => app.flake_input.move_start(),
-                KeyCode::Char('$') => app.flake_input.move_end(),
-                KeyCode::Char('v') => app.flake_input.enter_visual(),
-                KeyCode::Char('x') => {
-                    if app.flake_input.delete_char() {
-                        schedule_flake_search(app, tx.clone());
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        move_flake_selection(app, 1);
+                        schedule_flake_details(app, tx.clone());
                     }
-                }
-                KeyCode::Char('D') => {
-                    if app.flake_input.delete_to_end() {
-                        schedule_flake_search(app, tx.clone());
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        move_flake_selection(app, -1);
+                        schedule_flake_details(app, tx.clone());
                     }
+                    KeyCode::Left | KeyCode::Char('h') => app.flake_input.move_left(),
+                    KeyCode::Right | KeyCode::Char('l') => app.flake_input.move_right(),
+                    KeyCode::Char('b') => app.flake_input.move_prev_word(),
+                    KeyCode::Char('B') => app.flake_input.move_prev_big_word(),
+                    KeyCode::Char('w') => app.flake_input.move_next_word(),
+                    KeyCode::Char('W') => app.flake_input.move_next_big_word(),
+                    KeyCode::Char('e') => app.flake_input.move_word_end(),
+                    KeyCode::Char('E') => app.flake_input.move_big_word_end(),
+                    KeyCode::Char('0') => app.flake_input.move_start(),
+                    KeyCode::Char('$') => app.flake_input.move_end(),
+                    KeyCode::Char('v') => app.flake_input.enter_visual(),
+                    KeyCode::Char('x') => {
+                        if app.flake_input.delete_char() {
+                            schedule_flake_search(app, tx.clone());
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if app.flake_input.has_pending_d() {
+                            app.flake_input.clear_pending_d();
+                            if app.flake_input.delete_line() {
+                                schedule_flake_search(app, tx.clone());
+                            }
+                        } else {
+                            app.flake_input.set_pending_d();
+                        }
+                    }
+                    KeyCode::Char('D') => {
+                        if app.flake_input.delete_to_end() {
+                            schedule_flake_search(app, tx.clone());
+                        }
+                    }
+                    KeyCode::Enter => install_selected_flake(app, tx).await?,
+                    KeyCode::Char('i') | KeyCode::Char('/') => {
+                        app.flake_input.enter_insert_before();
+                    }
+                    KeyCode::Char('a') => app.flake_input.enter_insert_after(),
+                    KeyCode::Char('I') => app.flake_input.enter_insert_start(),
+                    KeyCode::Char('A') => app.flake_input.enter_insert_end(),
+                    _ => {}
                 }
-                KeyCode::Enter => install_selected_flake(app, tx).await?,
-                KeyCode::Char('i') | KeyCode::Char('/') => app.flake_input.enter_insert_before(),
-                KeyCode::Char('a') => app.flake_input.enter_insert_after(),
-                KeyCode::Char('I') => app.flake_input.enter_insert_start(),
-                KeyCode::Char('A') => app.flake_input.enter_insert_end(),
-                _ => {}
-            },
+            }
             VimMode::Visual => match key.code {
                 KeyCode::Left | KeyCode::Char('h') => app.flake_input.move_left(),
                 KeyCode::Right | KeyCode::Char('l') => app.flake_input.move_right(),
                 KeyCode::Char('b') => app.flake_input.move_prev_word(),
+                KeyCode::Char('B') => app.flake_input.move_prev_big_word(),
                 KeyCode::Char('w') => app.flake_input.move_next_word(),
+                KeyCode::Char('W') => app.flake_input.move_next_big_word(),
+                KeyCode::Char('e') => app.flake_input.move_word_end(),
+                KeyCode::Char('E') => app.flake_input.move_big_word_end(),
                 KeyCode::Char('0') => app.flake_input.move_start(),
                 KeyCode::Char('$') => app.flake_input.move_end(),
                 KeyCode::Char('d') | KeyCode::Char('x') => {
@@ -273,7 +321,11 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Char('h') => app.installed_input.move_left(),
                 KeyCode::Char('l') => app.installed_input.move_right(),
                 KeyCode::Char('b') => app.installed_input.move_prev_word(),
+                KeyCode::Char('B') => app.installed_input.move_prev_big_word(),
                 KeyCode::Char('w') => app.installed_input.move_next_word(),
+                KeyCode::Char('W') => app.installed_input.move_next_big_word(),
+                KeyCode::Char('e') => app.installed_input.move_word_end(),
+                KeyCode::Char('E') => app.installed_input.move_big_word_end(),
                 KeyCode::Char('0') => app.installed_input.move_start(),
                 KeyCode::Char('$') => app.installed_input.move_end(),
                 KeyCode::Char('v') => app.installed_input.enter_visual(),
@@ -302,7 +354,11 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Char('h') => app.installed_input.move_left(),
                 KeyCode::Char('l') => app.installed_input.move_right(),
                 KeyCode::Char('b') => app.installed_input.move_prev_word(),
+                KeyCode::Char('B') => app.installed_input.move_prev_big_word(),
                 KeyCode::Char('w') => app.installed_input.move_next_word(),
+                KeyCode::Char('W') => app.installed_input.move_next_big_word(),
+                KeyCode::Char('e') => app.installed_input.move_word_end(),
+                KeyCode::Char('E') => app.installed_input.move_big_word_end(),
                 KeyCode::Char('0') => app.installed_input.move_start(),
                 KeyCode::Char('$') => app.installed_input.move_end(),
                 KeyCode::Char('d') | KeyCode::Char('x') => {
@@ -477,6 +533,29 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
                 app.status = format!("search failed: {}", error);
             }
         }
+        AppEvent::CatalogReady(catalog) => {
+            app.catalog_task = None;
+            app.catalog_loading = false;
+            let revision: String = catalog.revision().chars().take(12).collect();
+            app.package_catalog = Some(catalog);
+            if app.input.value().is_empty() && !app.build_in_progress && app.last_error.is_none() {
+                app.status = format!("Package catalog ready at {revision}.");
+            } else if !app.input.value().is_empty() {
+                schedule_search(app, tx.clone());
+            }
+        }
+        AppEvent::CatalogFailed(error) => {
+            app.catalog_task = None;
+            app.catalog_loading = false;
+            app.package_catalog = None;
+            if app.input.value().is_empty() && !app.build_in_progress && app.last_error.is_none() {
+                app.status =
+                    format!("Package catalog unavailable; live search will be used: {error}");
+            } else if !app.input.value().is_empty() {
+                app.status = format!("Package catalog unavailable; using live search: {error}");
+                schedule_search(app, tx.clone());
+            }
+        }
         AppEvent::FlakeSearchDone { epoch, hits } => {
             if epoch == app.flake_search_epoch {
                 app.flake_search_task = None;
@@ -633,6 +712,33 @@ mod tests {
 
         press(&mut app, KeyCode::BackTab).await;
         assert_eq!(app.tab, Tab::Search);
+    }
+
+    #[tokio::test]
+    async fn double_d_deletes_the_search_line() {
+        let mut app = test_app();
+        app.input = VimInput::new("ripgrep".into());
+
+        press(&mut app, KeyCode::Char('d')).await;
+        assert!(app.input.has_pending_d());
+        assert_eq!(app.input.value(), "ripgrep");
+
+        press(&mut app, KeyCode::Char('d')).await;
+        assert_eq!(app.input.value(), "");
+        assert!(!app.input.has_pending_d());
+    }
+
+    #[tokio::test]
+    async fn pending_delete_cancels_on_other_keys() {
+        let mut app = test_app();
+        app.input = VimInput::new("ab".into());
+
+        press(&mut app, KeyCode::Char('d')).await;
+        assert!(app.input.has_pending_d());
+
+        press(&mut app, KeyCode::Char('e')).await;
+        assert!(!app.input.has_pending_d());
+        assert_eq!(app.input.value(), "ab");
     }
 
     #[tokio::test]

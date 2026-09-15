@@ -1,0 +1,1 @@
+- setup testing and compiling pipleine using watchexec and nextest

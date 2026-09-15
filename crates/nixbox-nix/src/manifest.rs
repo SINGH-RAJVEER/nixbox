@@ -41,11 +41,16 @@ pub struct Manifest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlakeManifest {
     pub modules: BTreeMap<String, String>,
+    pub packages: BTreeMap<String, String>,
 }
 
 impl FlakeManifest {
     pub fn add(&mut self, input: String, module: String) -> bool {
         self.modules.insert(input, module).is_none()
+    }
+
+    pub fn add_package(&mut self, input: String, package: String) -> bool {
+        self.packages.insert(input, package).is_none()
     }
 }
 
@@ -116,46 +121,86 @@ impl ManagedFlakeFile {
         }
         let raw = fs::read_to_string(&self.path)
             .with_context(|| format!("reading {}", self.path.display()))?;
-        let mut modules = BTreeMap::new();
-        let mut in_block = false;
+        let mut manifest = FlakeManifest::default();
+        let mut in_module_block = false;
+        let mut in_package_block = false;
         for line in raw.lines() {
             let line = line.trim();
             if line == "# nixbox:flakes:start" {
-                in_block = true;
+                in_module_block = true;
                 continue;
             }
             if line == "# nixbox:flakes:end" {
-                break;
+                in_module_block = false;
+                continue;
             }
-            if !in_block {
+            if line == "# nixbox:flake-packages:start" {
+                in_package_block = true;
+                continue;
+            }
+            if line == "# nixbox:flake-packages:end" {
+                in_package_block = false;
                 continue;
             }
             let Some(path) = line.strip_prefix("inputs.\"") else {
                 continue;
             };
-            let Some((input, module)) = path.split_once("\".") else {
+            let Some((input, output)) = path.split_once("\".") else {
                 continue;
             };
-            modules.insert(input.to_string(), module.to_string());
+            if in_module_block {
+                manifest
+                    .modules
+                    .insert(input.to_string(), output.to_string());
+            } else if in_package_block
+                && let Some(package) = output
+                    .strip_prefix("packages.${pkgs.system}.\"")
+                    .and_then(|value| value.strip_suffix('"'))
+            {
+                manifest
+                    .packages
+                    .insert(input.to_string(), package.to_string());
+            }
         }
-        Ok(FlakeManifest { modules })
+        Ok(manifest)
     }
 
-    pub fn write(&self, manifest: &FlakeManifest) -> Result<()> {
+    pub fn write_home_manager(&self, manifest: &FlakeManifest) -> Result<()> {
+        self.write(manifest, "home.packages")
+    }
+
+    pub fn write_nixos(&self, manifest: &FlakeManifest) -> Result<()> {
+        self.write(manifest, "environment.systemPackages")
+    }
+
+    fn write(&self, manifest: &FlakeManifest, package_option: &str) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
         let mut imports = String::new();
-        imports.push_str("    # nixbox:flakes:start\n");
+        imports.push_str("\t\t# nixbox:flakes:start\n");
         for (input, module) in &manifest.modules {
-            imports.push_str(&format!("    inputs.\"{input}\".{module}\n"));
+            imports.push_str(&format!("\t\tinputs.\"{input}\".{module}\n"));
         }
-        imports.push_str("    # nixbox:flakes:end\n");
+        imports.push_str("\t\t# nixbox:flakes:end\n");
+        let mut packages = String::new();
+        packages.push_str("\t\t# nixbox:flake-packages:start\n");
+        for (input, package) in &manifest.packages {
+            packages.push_str(&format!(
+                "\t\tinputs.\"{input}\".packages.${{pkgs.system}}.\"{}\"\n",
+                escape_nix_string(package)
+            ));
+        }
+        packages.push_str("\t\t# nixbox:flake-packages:end\n");
         let content = format!(
-            "# Managed by nixbox. Do not edit by hand.\n{{ inputs, ... }}:\n{{\n  imports = [\n{imports}  ];\n}}\n"
+            "# Managed by nixbox. Do not edit by hand.\n{{ inputs, pkgs, ... }}:\n{{\n\timports = [\n{imports}\t];\n\t{package_option} = [\n{packages}\t];\n}}\n"
         );
         fs::write(&self.path, content).with_context(|| format!("writing {}", self.path.display()))
     }
+}
+
+fn escape_nix_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn parse(raw: &str) -> Manifest {
@@ -548,10 +593,35 @@ mod tests {
         let managed = ManagedFlakeFile::new(&path);
         let mut manifest = FlakeManifest::default();
         manifest.add("owner/module".into(), "homeManagerModules.default".into());
+        manifest.add_package("owner/package".into(), "default".into());
 
-        managed.write(&manifest).unwrap();
+        managed.write_home_manager(&manifest).unwrap();
 
-        assert_eq!(managed.load().unwrap().modules, manifest.modules);
+        let loaded = managed.load().unwrap();
+        assert_eq!(loaded.modules, manifest.modules);
+        assert_eq!(loaded.packages, manifest.packages);
+        let rendered = fs::read_to_string(&path).unwrap();
+        assert!(rendered.contains("inputs.\"owner/package\".packages.${pkgs.system}.\"default\""));
+        assert!(rendered.contains("home.packages = ["));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn flake_manifest_renders_nixos_packages() {
+        let path =
+            std::env::temp_dir().join(format!("nixbox-system-flakes-{}.nix", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let managed = ManagedFlakeFile::new(&path);
+        let mut manifest = FlakeManifest::default();
+        manifest.add_package("owner/package".into(), "bun-latest".into());
+
+        managed.write_nixos(&manifest).unwrap();
+
+        let rendered = fs::read_to_string(&path).unwrap();
+        assert!(rendered.contains("environment.systemPackages = ["));
+        assert!(
+            rendered.contains("inputs.\"owner/package\".packages.${pkgs.system}.\"bun-latest\"")
+        );
         let _ = fs::remove_file(path);
     }
 }

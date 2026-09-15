@@ -1,90 +1,104 @@
 # NixBox
 
-A NixOS TUI package manager. Search a nixpkgs channel, pick a package, and NixBox writes it into your home-manager or NixOS config and runs the rebuild — without ever leaving the terminal.
+NixBox is a terminal package manager for NixOS and Home Manager. It searches the nixpkgs revision locked by your configuration, writes selected packages into generated Nix modules, imports those modules into your configuration, and runs the matching rebuild command.
 
 ## What it does
 
-- Live search against `nix search --json` over a configurable flake input (default `nixpkgs`).
-- Maintains two managed files in your config directory — `nixbox-home-packages.nix` and `nixbox-system-packages.nix` — and owns them end-to-end. Your hand-written config is never touched outside of a single `imports` line.
-- On install/uninstall it updates the managed file, makes sure it's imported by your `home.nix` / `configuration.nix`, then runs the appropriate rebuild and streams the output into the TUI.
-- Works whether your home-manager is exposed as a standalone `homeConfigurations.<user>` flake output, or wired in as a NixOS module — NixBox auto-detects which one you have and picks the right rebuild command.
-- Scans your existing config for externally-declared packages and lets you "migrate" them into the managed file with `m` (or `M` for all of them).
-- Settings (channel, target, theme, paths) persist in `~/.config/nixbox/settings.json`.
+- Builds and caches a searchable package catalog from the direct `nixpkgs` input in your configuration's `flake.lock`.
+- Installs packages into separate generated modules for Home Manager and NixOS.
+- Finds supported package declarations in existing configuration files and can move simple declarations into NixBox management.
+- Searches GitHub for repositories with a root `flake.nix` and can install a default NixOS or Home Manager module, or a package output, from a conventional flake.
+- Queues changes by target, combines changes that can share a rebuild, streams build output, and restores interrupted work after restart.
+- Supports normal text input or Vim-style Normal, Insert, and Visual modes.
 
-## How it wires itself in
+## Requirements
 
-The first time you install or migrate a package, NixBox does three things automatically:
-
-1. Writes the managed file (`nixbox-home-packages.nix` for home-manager, `nixbox-system-packages.nix` for NixOS).
-2. Inserts `./nixbox-home-packages.nix` (or `…-system-…`) into the `imports = [ … ]` list of your `home.nix` / `configuration.nix`. Existing imports-list style is preserved, and the insertion is idempotent.
-3. Stages the managed file with `git add -N` if your config dir is a git work tree, so flakes (which ignore untracked files) can actually evaluate it.
-
-If you want to override where NixBox looks for the "main" config file, set `home_manager_main_file` or `nixos_main_file` in `~/.config/nixbox/settings.json`.
-
-Inside the managed file, NixBox owns everything between `# nixbox:packages:start` and `# nixbox:packages:end`. Don't edit those by hand.
+- A working Nix installation with flakes enabled.
+- A flake-based NixOS or Home Manager configuration. NixBox looks in `~/.config/nixos` unless `NIXBOX_CONFIG_DIR` changes that location.
+- `sudo` access for NixOS rebuilds.
+- An authenticated GitHub CLI session from `gh auth login` if you use the flake browser.
 
 ## Install
+
+Install the published crate:
 
 ```sh
 cargo install nixbox
 ```
 
-NixBox requires a working Nix installation and a configured NixOS or home-manager flake. The `nix` and rebuild commands are executed locally, so make sure the selected flake can be evaluated before installing packages.
-
-Or build from source:
+Run NixBox directly from its flake:
 
 ```sh
-devenv shell
-cargo build --release
+nix run github:SINGH-RAJVEER/nix-box
 ```
+
+Add NixBox to another flake:
+
+```nix
+{
+	inputs.nixbox.url = "github:SINGH-RAJVEER/nix-box";
+
+	outputs = inputs@{ self, nixpkgs, nixbox, ... }: {
+		nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
+			specialArgs = { inherit inputs; };
+			modules = [
+				./configuration.nix
+				({ pkgs, ... }: {
+					environment.systemPackages = [ nixbox.packages.${pkgs.system}.default ];
+				})
+			];
+		};
+	};
+}
+```
+
+The flake also exports `overlays.default`, which adds `pkgs.nixbox`:
+
+```nix
+nixpkgs.overlays = [ inputs.nixbox.overlays.default ];
+environment.systemPackages = [ pkgs.nixbox ];
+```
+
+Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
 
 ## Run
 
 ```sh
-nixbox          # if cargo-installed
-devenv shell -- just run  # from a checkout
+nixbox
 ```
 
-NixBox stores its settings and managed package files separately from this repository. By default, settings are written to `~/.config/nixbox/settings.json`; paths and the active target can be changed from the settings screen with `Ctrl-S`.
+The binary accepts Clap's generated `--help` and `--version` flags. It has no headless subcommands; a normal invocation starts the TUI.
+
+## First run
+
+NixBox loads both generated package modules, scans the configured Home Manager and NixOS entry files, restores queued work from `~/.config/nixbox/state.json`, and starts preparing the package catalog. If the catalog cache does not match the locked nixpkgs revision, Nix evaluates the full package set once. Later searches use the cache without starting Nix.
+
+Installing a package writes a generated module before the rebuild starts. NixBox does not roll back that file if the rebuild fails, so the generated module continues to describe the requested state and the failure remains visible on the next launch.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [User guide](docs/USER_GUIDE.md)
+- [Configuration and stored state](docs/CONFIGURATION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Package search](docs/SEARCH.md)
+- [Managed files and package operations](docs/MANAGED_FILES.md)
+- [GitHub flake browser](docs/FLAKE_BROWSER.md)
+- [Development and testing](docs/DEVELOPMENT.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Release notes](docs/RELEASE_NOTES.md)
 
 ## Development
 
-The reproducible development environment is managed by [devenv](https://devenv.sh/):
+Use the pinned devenv shell so Cargo, Rust, Nix, and Clippy come from one toolchain:
 
 ```sh
-devenv shell  # Rust toolchain, Nix tooling, and just
-just ci       # format, lint, and test the workspace
-devenv test   # evaluate the environment and run just ci
-devenv update # update pinned inputs
+devenv shell
+just ci
 ```
 
-With direnv installed, run `direnv allow` once to activate the environment automatically.
+See the [development guide](docs/DEVELOPMENT.md) for repository layout, commands, tests, lint policy, Nix packaging, Jujutsu usage, and release preparation.
 
-## Layout
+## License
 
-Cargo workspace:
-
-- `crates/nixbox` — binary entrypoint
-- `crates/nixbox-tui` — ratatui app, search / installed / build views
-- `crates/nixbox-nix` — `nix search` wrapper, managed-file writer, import inserter, rebuild runner
-- `crates/nixbox-config` — persisted user settings (channel, target, theme, input mode, path overrides)
-
-## Keys
-
-| key                   | action                                      |
-| --------------------- | ------------------------------------------- |
-| `/` / `i` / `a`       | enter insert mode in a search bar           |
-| `v`                   | enter visual mode in a search bar           |
-| `h` `l` / `b` `w`     | move by character / word                    |
-| `0` / `$`             | move to start / end                          |
-| `x` / `D`             | delete character / to end                   |
-| `d` / `x` / `c`       | delete or change a visual selection         |
-| `↑` `↓` / `k` `j`     | move package selection                      |
-| Enter                 | install selected package                    |
-| `d` / Delete          | uninstall selected (Installed tab)          |
-| `m` / `M`             | migrate selected / all external packages    |
-| `c`                   | cancel active build (Building tab)          |
-| Tab                   | next tab (Search → Installed → Build)       |
-| Shift-Tab             | previous tab                                |
-| Ctrl-S                | open settings                               |
-| Esc / Ctrl-C          | return to normal mode / quit                |
+NixBox is licensed under Apache-2.0. See [LICENSE](LICENSE).

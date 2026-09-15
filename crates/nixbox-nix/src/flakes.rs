@@ -1,12 +1,19 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::OnceLock;
+use std::time::Duration;
 use std::{fs, process::Stdio};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio::process::Command;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
 
 pub const MAX_FLAKE_RESULTS: usize = 20;
+const MAX_FLAKE_CANDIDATES: usize = 12;
+const FLAKE_EVALUATION_TIMEOUT: Duration = Duration::from_secs(15);
+const UPSTREAM_FLAKE_EVALUATION_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Debug, Clone)]
 pub struct FlakeHit {
@@ -14,7 +21,18 @@ pub struct FlakeHit {
     pub repo_url: String,
     pub path: String,
     pub match_fragment: Option<String>,
+    pub packages: Vec<FlakePackage>,
+    pub nixos_module: Option<String>,
+    pub home_manager_module: Option<String>,
+    outputs: Vec<String>,
     content_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct FlakePackage {
+    pub attr: String,
+    pub name: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +49,9 @@ pub struct FlakeDetails {
     pub archived: bool,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    pub packages: Vec<FlakePackage>,
+    pub nixos_module: Option<String>,
+    pub home_manager_module: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -40,8 +61,6 @@ struct CodeSearchResponse {
 
 #[derive(Deserialize)]
 struct CodeSearchItem {
-    path: String,
-    url: String,
     repository: SearchRepository,
     #[serde(default)]
     text_matches: Vec<TextMatch>,
@@ -74,6 +93,37 @@ struct RankedHit {
     hit: FlakeHit,
 }
 
+struct Candidate {
+    score: u64,
+    repo: String,
+    repo_url: String,
+    match_fragment: Option<String>,
+    upstream_reference: bool,
+}
+
+#[derive(Clone)]
+struct FlakeInspection {
+    output_names: Vec<String>,
+    packages: Vec<FlakePackage>,
+    nixos_module: bool,
+    home_manager_module: bool,
+    home_module: bool,
+}
+
+#[derive(Deserialize)]
+struct EvaluatedOutputs {
+    output_names: Vec<String>,
+    package_attrs: Vec<String>,
+    nixos_module: bool,
+    home_manager_module: bool,
+    home_module: bool,
+}
+
+#[derive(Deserialize)]
+struct GitHubCommit {
+    sha: String,
+}
+
 #[derive(Deserialize)]
 struct Repository {
     #[serde(default)]
@@ -95,28 +145,23 @@ pub async fn search_flakes(query: &str) -> Result<Vec<FlakeHit>> {
     let query = query.trim();
     let (code_items, repositories) =
         tokio::try_join!(search_code(query), search_repositories(query))?;
-    let mut direct = Vec::new();
-    let mut candidates: BTreeMap<String, u64> = BTreeMap::new();
+    let mut candidates: BTreeMap<String, Candidate> = BTreeMap::new();
 
     for item in code_items {
         let name_score = repository_name_score(query, &item.repository.full_name);
-        direct.push(RankedHit {
-            score: 100 + name_score,
-            hit: FlakeHit {
-                repo: item.repository.full_name,
+        insert_candidate(
+            &mut candidates,
+            Candidate {
+                score: 100 + name_score,
+                repo: item.repository.full_name.clone(),
                 repo_url: item.repository.html_url,
-                path: item.path,
                 match_fragment: item
                     .text_matches
                     .first()
                     .map(|matched| compact_fragment(&matched.fragment)),
-                content_url: item
-                    .url
-                    .strip_prefix("https://api.github.com/")
-                    .unwrap_or(&item.url)
-                    .to_string(),
+                upstream_reference: false,
             },
-        });
+        );
         for reference in item
             .text_matches
             .iter()
@@ -124,46 +169,50 @@ pub async fn search_flakes(query: &str) -> Result<Vec<FlakeHit>> {
         {
             let score = repository_name_score(query, &reference);
             if score > 0 {
-                candidates
-                    .entry(reference)
-                    .and_modify(|existing| *existing = (*existing).max(1_000 + score))
-                    .or_insert(1_000 + score);
+                insert_candidate(
+                    &mut candidates,
+                    Candidate {
+                        score: 1_000 + score,
+                        repo_url: format!("https://github.com/{reference}"),
+                        repo: reference,
+                        match_fragment: None,
+                        upstream_reference: true,
+                    },
+                );
             }
         }
     }
 
     for repository in repositories {
         let score = repository_name_score(query, &repository.full_name);
-        candidates
-            .entry(repository.full_name)
-            .and_modify(|existing| *existing = (*existing).max(500 + score))
-            .or_insert(500 + score + repository.stargazers_count.min(10_000) / 1_000);
+        insert_candidate(
+            &mut candidates,
+            Candidate {
+                score: 500 + score + repository.stargazers_count.min(10_000) / 1_000,
+                repo_url: format!("https://github.com/{}", repository.full_name),
+                repo: repository.full_name,
+                match_fragment: None,
+                upstream_reference: false,
+            },
+        );
     }
+
+    let mut candidates: Vec<Candidate> = candidates.into_values().collect();
+    candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.repo.cmp(&b.repo)));
+    candidates.truncate(MAX_FLAKE_CANDIDATES);
 
     let mut tasks = tokio::task::JoinSet::new();
-    for (repo, score) in candidates {
-        tasks.spawn(async move {
-            root_flake_hit(repo)
-                .await
-                .map(|hit| RankedHit { score, hit })
-        });
+    for candidate in candidates {
+        let query = query.to_string();
+        tasks.spawn(async move { inspect_candidate(&query, candidate).await });
     }
+    let mut ranked = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        if let Ok(Ok(hit)) = result {
-            direct.push(hit);
+        if let Ok(Ok(Some(hit))) = result {
+            ranked.push(hit);
         }
     }
 
-    let mut deduped: BTreeMap<String, RankedHit> = BTreeMap::new();
-    for candidate in direct {
-        match deduped.get(&candidate.hit.repo) {
-            Some(existing) if existing.score >= candidate.score => {}
-            _ => {
-                deduped.insert(candidate.hit.repo.clone(), candidate);
-            }
-        }
-    }
-    let mut ranked: Vec<RankedHit> = deduped.into_values().collect();
     ranked.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
@@ -202,9 +251,9 @@ async fn search_repositories(query: &str) -> Result<Vec<RepositorySearchItem>> {
         "Accept: application/vnd.github+json".into(),
         "search/repositories".into(),
         "-f".into(),
-        format!("q={query} in:name,description,topics archived:false"),
+        format!("q={}", repository_search_query(query)),
         "-f".into(),
-        "per_page=10".into(),
+        "per_page=20".into(),
     ])
     .await?;
     let response: RepositorySearchResponse =
@@ -212,21 +261,71 @@ async fn search_repositories(query: &str) -> Result<Vec<RepositorySearchItem>> {
     Ok(response.items)
 }
 
-async fn root_flake_hit(repo: String) -> Result<FlakeHit> {
-    gh_api(vec![
-        "-H".into(),
-        "Accept: application/vnd.github.raw+json".into(),
-        format!("repos/{repo}/contents/flake.nix"),
-    ])
-    .await?;
-    let content_url = format!("repos/{repo}/contents/flake.nix");
-    Ok(FlakeHit {
-        repo_url: format!("https://github.com/{repo}"),
-        repo,
-        path: "flake.nix".into(),
-        match_fragment: None,
-        content_url,
-    })
+fn repository_search_query(query: &str) -> String {
+    format!("{query} flake in:name,description,topics archived:false")
+}
+
+fn insert_candidate(candidates: &mut BTreeMap<String, Candidate>, candidate: Candidate) {
+    match candidates.get_mut(&candidate.repo) {
+        Some(existing) => {
+            let upstream_reference = existing.upstream_reference || candidate.upstream_reference;
+            if candidate.score > existing.score {
+                *existing = candidate;
+            }
+            existing.upstream_reference = upstream_reference;
+        }
+        None => {
+            candidates.insert(candidate.repo.clone(), candidate);
+        }
+    }
+}
+
+async fn inspect_candidate(query: &str, candidate: Candidate) -> Result<Option<RankedHit>> {
+    let evaluation_timeout = if candidate.upstream_reference {
+        UPSTREAM_FLAKE_EVALUATION_TIMEOUT
+    } else {
+        FLAKE_EVALUATION_TIMEOUT
+    };
+    let mut inspection = inspect_flake(&candidate.repo, evaluation_timeout).await?;
+    if inspection.packages.is_empty()
+        && !inspection.nixos_module
+        && !inspection.home_manager_module
+        && !inspection.home_module
+    {
+        return Ok(None);
+    }
+    sort_packages(query, &mut inspection.packages);
+    let package_score = inspection
+        .packages
+        .first()
+        .map_or(0, |package| flake_package_score(query, package));
+    let outputs = classify_output_names(&inspection);
+    let home_manager_module = if inspection.home_manager_module {
+        Some("homeManagerModules.default".into())
+    } else if inspection.home_module {
+        Some("homeModules.default".into())
+    } else {
+        None
+    };
+    let nixos_module = inspection
+        .nixos_module
+        .then(|| "nixosModules.default".into());
+    let repo = candidate.repo;
+
+    Ok(Some(RankedHit {
+        score: candidate.score + package_score,
+        hit: FlakeHit {
+            repo_url: candidate.repo_url,
+            path: "flake.nix".into(),
+            match_fragment: candidate.match_fragment,
+            packages: inspection.packages,
+            nixos_module,
+            home_manager_module,
+            outputs,
+            content_url: format!("repos/{repo}/contents/flake.nix"),
+            repo,
+        },
+    }))
 }
 
 fn repository_name_score(query: &str, repo: &str) -> u64 {
@@ -251,6 +350,164 @@ fn normalize(value: &str) -> String {
         .filter(|ch| ch.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect()
+}
+
+fn inspection_cache() -> &'static Mutex<BTreeMap<String, FlakeInspection>> {
+    static CACHE: OnceLock<Mutex<BTreeMap<String, FlakeInspection>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+async fn inspect_flake(repo: &str, evaluation_timeout: Duration) -> Result<FlakeInspection> {
+    if let Some(inspection) = inspection_cache().lock().await.get(repo).cloned() {
+        return Ok(inspection);
+    }
+    if !repo
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/'))
+    {
+        bail!("invalid GitHub repository name: {repo}");
+    }
+
+    let revision = repository_revision(repo).await?;
+    let system = nix_system().context("unsupported platform for flake package inspection")?;
+    let expression = format!(
+        r#"
+let
+	flake = builtins.getFlake "github:{repo}/{revision}";
+	packages =
+		if flake ? packages && builtins.hasAttr "{system}" flake.packages
+		then builtins.getAttr "{system}" flake.packages
+		else {{}};
+	is_derivation = attr:
+		let result = builtins.tryEval ((builtins.getAttr attr packages).type or null);
+		in result.success && result.value == "derivation";
+in {{
+	output_names = builtins.attrNames flake;
+	package_attrs = builtins.filter is_derivation (builtins.attrNames packages);
+	nixos_module = flake ? nixosModules && builtins.hasAttr "default" flake.nixosModules;
+	home_manager_module = flake ? homeManagerModules && builtins.hasAttr "default" flake.homeManagerModules;
+	home_module = flake ? homeModules && builtins.hasAttr "default" flake.homeModules;
+}}
+"#
+    );
+    let command = Command::new("nix")
+        .args(["eval", "--json", "--expr", &expression])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .output();
+    let output = timeout(evaluation_timeout, command)
+        .await
+        .with_context(|| format!("timed out evaluating github:{repo}"))??;
+    if !output.status.success() {
+        bail!(
+            "Nix flake evaluation failed for github:{repo}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let evaluated: EvaluatedOutputs = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parsing evaluated outputs for github:{repo}"))?;
+    let inspection = inspection_from_evaluation(evaluated);
+    inspection_cache()
+        .lock()
+        .await
+        .insert(repo.to_string(), inspection.clone());
+    Ok(inspection)
+}
+
+async fn repository_revision(repo: &str) -> Result<String> {
+    let raw = gh_api(vec![
+        "-H".into(),
+        "Accept: application/vnd.github+json".into(),
+        format!("repos/{repo}/commits/HEAD"),
+    ])
+    .await?;
+    let commit: GitHubCommit = serde_json::from_slice(&raw)
+        .with_context(|| format!("parsing the HEAD revision for github:{repo}"))?;
+    Ok(commit.sha)
+}
+
+fn nix_system() -> Option<&'static str> {
+    match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "linux") => Some("x86_64-linux"),
+        ("aarch64", "linux") => Some("aarch64-linux"),
+        ("x86_64", "macos") => Some("x86_64-darwin"),
+        ("aarch64", "macos") => Some("aarch64-darwin"),
+        _ => None,
+    }
+}
+
+fn inspection_from_evaluation(evaluated: EvaluatedOutputs) -> FlakeInspection {
+    FlakeInspection {
+        output_names: evaluated.output_names,
+        packages: evaluated
+            .package_attrs
+            .into_iter()
+            .map(|attr| FlakePackage {
+                name: attr.clone(),
+                attr,
+                version: String::new(),
+            })
+            .collect(),
+        nixos_module: evaluated.nixos_module,
+        home_manager_module: evaluated.home_manager_module,
+        home_module: evaluated.home_module,
+    }
+}
+
+fn flake_package_score(query: &str, package: &FlakePackage) -> u64 {
+    let query = normalize(query);
+    let attr = normalize(&package.attr);
+    let name = normalize(&package.name);
+    if attr == "default" && (name == query || name.starts_with(&query)) {
+        450
+    } else if attr == query {
+        400
+    } else if name == query {
+        350
+    } else if attr.starts_with(&query) || name.starts_with(&query) {
+        250
+    } else if attr.contains(&query) || name.contains(&query) {
+        150
+    } else {
+        0
+    }
+}
+
+fn sort_packages(query: &str, packages: &mut [FlakePackage]) {
+    packages.sort_by(|a, b| {
+        let a_default = a.attr == "default";
+        let b_default = b.attr == "default";
+        b_default
+            .cmp(&a_default)
+            .then_with(|| flake_package_score(query, b).cmp(&flake_package_score(query, a)))
+            .then_with(|| b.version.cmp(&a.version))
+            .then_with(|| a.attr.cmp(&b.attr))
+    });
+}
+
+fn classify_output_names(inspection: &FlakeInspection) -> Vec<String> {
+    const OUTPUTS: [(&str, &str); 7] = [
+        ("nixosModules", "NixOS modules"),
+        ("homeManagerModules", "Home Manager modules"),
+        ("homeModules", "Home Manager modules"),
+        ("overlays", "overlays"),
+        ("devShells", "dev shells"),
+        ("apps", "apps"),
+        ("formatter", "formatter"),
+    ];
+    let mut outputs = Vec::new();
+    if !inspection.packages.is_empty() {
+        outputs.push("packages".to_string());
+    }
+    for (name, label) in OUTPUTS {
+        if inspection.output_names.iter().any(|output| output == name)
+            && !outputs.iter().any(|output| output == label)
+        {
+            outputs.push(label.to_string());
+        }
+    }
+    outputs
 }
 
 fn github_references(fragment: &str) -> Vec<String> {
@@ -315,12 +572,15 @@ pub async fn fetch_flake_details(hit: &FlakeHit) -> Result<FlakeDetails> {
         pushed_at: repository.pushed_at,
         archived: repository.archived,
         inputs: classify_inputs(&source),
-        outputs: classify_outputs(&source),
+        outputs: hit.outputs.clone(),
+        packages: hit.packages.clone(),
+        nixos_module: hit.nixos_module.clone(),
+        home_manager_module: hit.home_manager_module.clone(),
     })
 }
 
 /// Adds a GitHub flake as a root input and makes `inputs` available to the
-/// selected configuration constructor's modules.
+/// selected configuration constructor.
 pub fn ensure_flake_input(
     flake_file: &Path,
     repo: &str,
@@ -331,7 +591,7 @@ pub fn ensure_flake_input(
         .with_context(|| format!("reading {}", flake_file.display()))?;
     if !source.contains("outputs = inputs@") {
         bail!(
-            "{} must bind `inputs` in its outputs function before nixbox can import flake modules",
+            "{} must bind `inputs` in its outputs function before nixbox can install flake outputs",
             flake_file.display()
         );
     }
@@ -345,7 +605,7 @@ pub fn ensure_flake_input(
         let open = inputs_pos + "inputs = ".len();
         let close = matching_brace(&updated, open)
             .context("could not find the end of the flake inputs block")?;
-        updated.insert_str(close, &format!("  {input}.url = \"github:{repo}\";\n"));
+        updated.insert_str(close, &format!("\t{input}.url = \"github:{repo}\";\n"));
     }
 
     if !updated.contains(special_args) {
@@ -358,7 +618,7 @@ pub fn ensure_flake_input(
             .context("could not find configuration arguments")?;
         updated.insert_str(
             open + 1,
-            &format!("\n    {special_args} = {{ inherit inputs; }};"),
+            &format!("\n\t\t{special_args} = {{ inherit inputs; }};"),
         );
     }
 
@@ -446,41 +706,15 @@ fn balanced_block(source: &str, open: usize) -> Option<&str> {
     None
 }
 
-fn classify_outputs(source: &str) -> Vec<String> {
-    const OUTPUTS: [(&str, &str); 8] = [
-        ("packages", "packages"),
-        ("nixosModules", "NixOS modules"),
-        ("homeManagerModules", "Home Manager modules"),
-        ("homeModules", "Home Manager modules"),
-        ("overlays", "overlays"),
-        ("devShells", "dev shells"),
-        ("apps", "apps"),
-        ("formatter", "formatter"),
-    ];
-    let mut outputs = Vec::new();
-    for (name, label) in OUTPUTS {
-        if contains_identifier(source, name) && !outputs.iter().any(|output| output == label) {
-            outputs.push(label.to_string());
-        }
-    }
-    outputs
-}
-
-fn contains_identifier(source: &str, name: &str) -> bool {
-    source.match_indices(name).any(|(start, _)| {
-        let before = source[..start].chars().next_back();
-        let after = source[start + name.len()..].chars().next();
-        before.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            && after.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_inputs, classify_outputs, compact_fragment, ensure_flake_input, github_references,
-        repository_name_score,
+        Candidate, EvaluatedOutputs, FlakeInspection, FlakePackage, classify_inputs,
+        classify_output_names, compact_fragment, ensure_flake_input, github_references,
+        insert_candidate, inspection_from_evaluation, repository_name_score,
+        repository_search_query,
     };
+    use std::collections::BTreeMap;
     use std::fs;
 
     #[test]
@@ -510,25 +744,37 @@ mod tests {
     }
 
     #[test]
-    fn classifies_common_flake_properties() {
-        let source = r#"
-            {
-              inputs = {
-                nixpkgs.url = "github:NixOS/nixpkgs";
-                home-manager.url = "github:nix-community/home-manager";
-              };
-              outputs = { nixpkgs, ... }: {
-                packages.x86_64-linux.default = nixpkgs.legacyPackages.x86_64-linux.hello;
-                nixosModules.default = { };
-                homeManagerModules.default = { };
-                devShells.x86_64-linux.default = { };
-              };
-            }
-        "#;
-
-        assert_eq!(classify_inputs(source), ["nixpkgs", "home-manager"]);
+    fn classifies_evaluated_flake_properties() {
         assert_eq!(
-            classify_outputs(source),
+            classify_inputs(
+                r#"{
+	inputs = {
+		nixpkgs.url = "github:NixOS/nixpkgs";
+		home-manager.url = "github:nix-community/home-manager";
+	};
+}"#
+            ),
+            ["nixpkgs", "home-manager"]
+        );
+        let inspection = FlakeInspection {
+            output_names: vec![
+                "packages".into(),
+                "nixosModules".into(),
+                "homeManagerModules".into(),
+                "devShells".into(),
+            ],
+            packages: vec![FlakePackage {
+                attr: "default".into(),
+                name: "bun".into(),
+                version: "1.4.2".into(),
+            }],
+            nixos_module: true,
+            home_manager_module: true,
+            home_module: false,
+        };
+
+        assert_eq!(
+            classify_output_names(&inspection),
             [
                 "packages",
                 "NixOS modules",
@@ -536,6 +782,64 @@ mod tests {
                 "dev shells"
             ]
         );
+    }
+
+    #[test]
+    fn repository_search_prefers_flake_projects() {
+        assert_eq!(
+            repository_search_query("bun"),
+            "bun flake in:name,description,topics archived:false"
+        );
+    }
+
+    #[test]
+    fn preserves_upstream_provenance_when_candidates_are_deduplicated() {
+        let mut candidates = BTreeMap::new();
+        insert_candidate(
+            &mut candidates,
+            Candidate {
+                score: 1_010,
+                repo: "owner/bun".into(),
+                repo_url: "https://github.com/owner/bun".into(),
+                match_fragment: None,
+                upstream_reference: false,
+            },
+        );
+        insert_candidate(
+            &mut candidates,
+            Candidate {
+                score: 900,
+                repo: "owner/bun".into(),
+                repo_url: "https://github.com/owner/bun".into(),
+                match_fragment: None,
+                upstream_reference: true,
+            },
+        );
+
+        let candidate = candidates.get("owner/bun").unwrap();
+        assert_eq!(candidate.score, 1_010);
+        assert!(candidate.upstream_reference);
+    }
+
+    #[test]
+    fn converts_current_system_package_attributes_into_installable_outputs() {
+        let inspection = inspection_from_evaluation(EvaluatedOutputs {
+            output_names: vec!["devShells".into(), "packages".into()],
+            package_attrs: vec!["bun".into(), "default".into()],
+            nixos_module: false,
+            home_manager_module: false,
+            home_module: false,
+        });
+
+        assert_eq!(inspection.packages.len(), 2);
+        assert!(
+            inspection
+                .packages
+                .iter()
+                .all(|package| package.name == package.attr)
+        );
+        assert!(!inspection.nixos_module);
+        assert!(!inspection.home_manager_module);
     }
 
     #[test]
@@ -572,6 +876,27 @@ mod tests {
         assert_eq!(
             hits.first().map(|hit| hit.repo.as_str()),
             Some("0xc000022070/zen-browser-flake")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires authenticated gh access, Nix evaluation, and GitHub search quota"]
+    async fn live_bun_search_finds_an_installable_community_flake() {
+        let hits = super::search_flakes("bun").await.unwrap();
+
+        assert_eq!(
+            hits.first().map(|hit| hit.repo.as_str()),
+            Some("alleneubank/bun-overlay")
+        );
+        assert!(hits.iter().all(|hit| hit.repo != "oven-sh/bun"));
+        assert!(
+            hits.first()
+                .and_then(|hit| hit.packages.first())
+                .is_some_and(|package| package.attr == "default")
+        );
+        assert!(
+            hits.first()
+                .is_some_and(|hit| hit.packages.iter().any(|package| package.attr == "bun"))
         );
     }
 }
