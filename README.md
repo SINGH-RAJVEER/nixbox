@@ -100,6 +100,11 @@ devenv update # update pinned inputs
 
 With direnv installed, run `direnv allow` once to activate the environment automatically.
 
+## Release history
+
+See [the release notes](docs/RELEASE_NOTES.md) for changes from `0.1.0` through
+the next release planned from `dev`.
+
 ## Layout
 
 Cargo workspace:
