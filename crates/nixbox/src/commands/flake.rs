@@ -318,7 +318,7 @@ async fn details_for(repo: &str) -> Result<FlakeDetails> {
     if parts.len() != 2 || parts.iter().any(|part| part.is_empty()) {
         bail!("`{repo}` is not a repository. Use `owner/repo`.");
     }
-    fetch_flake_details(&FlakeHit::for_repo(trimmed)).await
+    fetch_flake_details(&FlakeHit::for_repo(trimmed).await?).await
 }
 
 fn join_or_dash(values: &[String]) -> String {

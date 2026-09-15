@@ -73,11 +73,12 @@ devenv shell -- just ci
 
 The workspace has unit and asynchronous tests in every functional module. The tests cover settings defaults and serialization, package and flake manifest rendering, import insertion, package scanning and removal, search parsing and ranking, lock-file catalog resolution, bounded process output, build cancellation, GitHub result parsing and flake mutation, application epochs and state transitions, keyboard handling, queue batching, recovery serialization, and Unicode-aware Vim motions.
 
-Four tests are ignored during a normal run because they depend on live machine or network state:
+Five tests are ignored during a normal run because they depend on live machine or network state:
 
 - `scan::tests::real_config_detection` reads the maintainer's live Nix configuration paths.
 - The ignored Zen Browser flake search test requires authenticated GitHub access and consumes API quota.
 - The ignored Bun flake search test requires authenticated GitHub access, Nix evaluation, and GitHub search quota.
+- `flakes::tests::for_repo_evaluates_the_flake_it_names` requires authenticated GitHub access and Nix evaluation.
 - The ignored live search test requires Nix and a configured nixpkgs registry.
 
 Run ignored tests deliberately and one at a time after reading their source:

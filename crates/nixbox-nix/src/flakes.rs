@@ -36,23 +36,56 @@ pub struct FlakePackage {
 }
 
 impl FlakeHit {
-    /// A hit pointing at `flake.nix` in the root of `owner/repo`, for when
-    /// the user names a repository outright instead of searching for one.
+    /// A hit for `flake.nix` in the root of `owner/repo`, for when the user
+    /// names a repository outright instead of searching for one.
     ///
-    /// The evaluated fields stay empty: nothing has inspected the flake yet,
-    /// and `fetch_flake_details` is what fills them in.
-    #[must_use]
-    pub fn for_repo(repo: &str) -> Self {
+    /// This evaluates the flake. `fetch_flake_details` reads the module and
+    /// package fields straight off the hit rather than evaluating anything
+    /// itself, so a hit that skipped inspection would report a flake with no
+    /// installable outputs at all.
+    pub async fn for_repo(repo: &str) -> Result<Self> {
+        let mut inspection = inspect_flake(repo, UPSTREAM_FLAKE_EVALUATION_TIMEOUT).await?;
+        // `sort_packages` puts `default` first whatever the query is; the
+        // repository name only breaks ties below it.
+        let name = repo.rsplit('/').next().unwrap_or(repo).to_string();
+        sort_packages(&name, &mut inspection.packages);
+        Ok(Self::from_inspection(
+            repo.to_string(),
+            format!("https://github.com/{repo}"),
+            None,
+            inspection,
+        ))
+    }
+
+    /// Builds a hit from an evaluated flake, so search results and named
+    /// repositories describe their outputs the same way.
+    fn from_inspection(
+        repo: String,
+        repo_url: String,
+        match_fragment: Option<String>,
+        inspection: FlakeInspection,
+    ) -> Self {
+        let outputs = classify_output_names(&inspection);
+        let home_manager_module = if inspection.home_manager_module {
+            Some("homeManagerModules.default".into())
+        } else if inspection.home_module {
+            Some("homeModules.default".into())
+        } else {
+            None
+        };
+        let nixos_module = inspection
+            .nixos_module
+            .then(|| "nixosModules.default".into());
         Self {
-            repo: repo.to_string(),
-            repo_url: format!("https://github.com/{repo}"),
-            path: "flake.nix".to_string(),
-            match_fragment: None,
-            packages: Vec::new(),
-            nixos_module: None,
-            home_manager_module: None,
-            outputs: Vec::new(),
             content_url: format!("repos/{repo}/contents/flake.nix"),
+            repo,
+            repo_url,
+            path: "flake.nix".into(),
+            match_fragment,
+            packages: inspection.packages,
+            nixos_module,
+            home_manager_module,
+            outputs,
         }
     }
 }
@@ -321,32 +354,15 @@ async fn inspect_candidate(query: &str, candidate: Candidate) -> Result<Option<R
         .packages
         .first()
         .map_or(0, |package| flake_package_score(query, package));
-    let outputs = classify_output_names(&inspection);
-    let home_manager_module = if inspection.home_manager_module {
-        Some("homeManagerModules.default".into())
-    } else if inspection.home_module {
-        Some("homeModules.default".into())
-    } else {
-        None
-    };
-    let nixos_module = inspection
-        .nixos_module
-        .then(|| "nixosModules.default".into());
-    let repo = candidate.repo;
 
     Ok(Some(RankedHit {
         score: candidate.score + package_score,
-        hit: FlakeHit {
-            repo_url: candidate.repo_url,
-            path: "flake.nix".into(),
-            match_fragment: candidate.match_fragment,
-            packages: inspection.packages,
-            nixos_module,
-            home_manager_module,
-            outputs,
-            content_url: format!("repos/{repo}/contents/flake.nix"),
-            repo,
-        },
+        hit: FlakeHit::from_inspection(
+            candidate.repo,
+            candidate.repo_url,
+            candidate.match_fragment,
+            inspection,
+        ),
     }))
 }
 
@@ -923,6 +939,25 @@ mod tests {
         assert!(updated.contains("\"owner/module\".url = \"github:owner/module\";"));
         assert!(updated.contains("extraSpecialArgs = { inherit inputs; };"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires authenticated gh access and Nix evaluation"]
+    async fn for_repo_evaluates_the_flake_it_names() {
+        // `fetch_flake_details` reads these fields straight off the hit, so a
+        // `for_repo` that skipped evaluation would describe every named
+        // repository as having nothing installable.
+        let hit = super::FlakeHit::for_repo("nix-community/nix-index-database")
+            .await
+            .unwrap();
+
+        assert_eq!(hit.nixos_module.as_deref(), Some("nixosModules.default"));
+        assert_eq!(
+            hit.home_manager_module.as_deref(),
+            Some("homeModules.default")
+        );
+        assert!(hit.packages.iter().any(|package| package.attr == "default"));
+        assert!(hit.outputs.iter().any(|output| output == "NixOS modules"));
     }
 
     #[tokio::test]
