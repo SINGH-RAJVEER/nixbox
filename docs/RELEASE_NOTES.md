@@ -6,6 +6,10 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 This is the release that will be cut when the current `dev` branch is merged. The version and release date are not set yet.
 
+- No changes yet.
+
+## 0.2.1 - 2026-09-15
+
 - Replaced a separate `nix search` evaluation for every query with a local package catalog built from the exact `nixpkgs` revision in the target configuration's `flake.lock`.
 - Cached the catalog at `~/.cache/nixbox/package-catalog.json` and rebuild it when the locked `nixpkgs` revision changes. Search falls back to the configured live channel if the catalog cannot be prepared.
 - Reduced measured warm searches from 15.9 seconds or more to 53-75 ms in a debug build. Loading an existing 112,847-package catalog took 425 ms in the same test.
@@ -15,6 +19,7 @@ This is the release that will be cut when the current `dev` branch is merged. Th
 - Added an installable Nix flake with packages, a runnable app, and an overlay for `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
 - Expanded Vim-style editing in search fields with distinct word and WORD motions, end-of-word motions, and `dd` line deletion.
 - Enabled stricter workspace-wide Clippy checks, including bans on unchecked indexing, arithmetic, panics, `unwrap`, and `expect`.
+- Switched the pinned devenv Rust toolchain to the nightly channel.
 
 ## 0.2.0 - 2026-08-13
 

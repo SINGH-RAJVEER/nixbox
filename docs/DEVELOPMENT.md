@@ -31,7 +31,7 @@ The supported development path is the pinned devenv shell:
 devenv shell
 ```
 
-`devenv.nix` enables stable Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, and `just`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
+`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, and `just`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
 
 Using the shell matters on NixOS because a Rustup toolchain can retain linker wrappers that point at garbage-collected Nix store paths. If plain Cargo fails inside a Rust linker wrapper while the devenv build succeeds, treat that as a host toolchain problem rather than changing NixBox source.
 
@@ -151,7 +151,7 @@ Published crates must use one version across the workspace. Before merging a rel
 
 `.github/workflows/publish.yml` runs on pushes to `master`, checks the locked workspace, and publishes `nixbox-config`, `nixbox-nix`, `nixbox-tui`, and `nixbox` in dependency order. It treats an already-published version as a skip. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret.
 
-The current `dev` manifest still says `0.2.0`, which already exists on crates.io. A version bump is required before the next merge can publish a new release.
+The current `dev` manifest says `0.2.1`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
 
 ## Documentation style
 
