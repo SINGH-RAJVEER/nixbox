@@ -57,7 +57,9 @@ jobs:
           set -euo pipefail
 
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          crates=(nixbox-config nixbox-nix nixbox-tui nixbox)
+          # Dependency order: nixbox-core sits on the two leaf libraries,
+          # and both nixbox-tui and nixbox depend on it.
+          crates=(nixbox-config nixbox-nix nixbox-core nixbox-tui nixbox)
 
           for crate in "${crates[@]}"; do
             echo "Publishing ${crate} ${version}"
