@@ -13,13 +13,28 @@ use crate::commands;
 /// one that failed outright.
 pub const EXIT_FAILURE: u8 = 1;
 
+/// `--help` has to describe the binary that was actually built, and a CLI-only
+/// build has no terminal UI to point at. The crate description cannot do this
+/// job, because it is one string for both builds.
+#[cfg(feature = "tui")]
+const ABOUT: &str = "TUI package manager for NixOS and Home Manager";
+#[cfg(not(feature = "tui"))]
+const ABOUT: &str = "Command-line package manager for NixOS and Home Manager";
+
+#[cfg(feature = "tui")]
+const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into your home-manager \
+                          or NixOS configuration and rebuild. Run without a subcommand for the \
+                          terminal UI.";
+#[cfg(not(feature = "tui"))]
+const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into your home-manager \
+                          or NixOS configuration and rebuild. This build has no terminal UI.";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "nixbox",
     version,
-    about,
-    long_about = "Search nixpkgs, and let nixbox write the result into your home-manager or NixOS \
-                  configuration and rebuild. Run without a subcommand for the terminal UI."
+    about = ABOUT,
+    long_about = LONG_ABOUT
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -86,6 +101,7 @@ impl From<TargetArg> for Target {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Launch the terminal UI (what you get with no subcommand).
+    #[cfg(feature = "tui")]
     Tui,
 
     /// Search a nixpkgs channel.
@@ -103,6 +119,9 @@ pub enum Command {
 
     /// Rewrite the managed file and rebuild without changing the package set.
     Apply(commands::apply::ApplyArgs),
+
+    /// Finish work a previous run left behind.
+    Resume(commands::resume::ResumeArgs),
 
     /// List the packages nixbox manages.
     List(commands::list::ListArgs),
@@ -138,15 +157,29 @@ pub enum Command {
 impl Cli {
     pub async fn run(self) -> Result<ExitCode> {
         match self.command {
+            #[cfg(feature = "tui")]
             None | Some(Command::Tui) => {
                 nixbox_tui::run().await?;
                 Ok(ExitCode::SUCCESS)
+            }
+            // Built without the TUI: there is nothing to fall back to, so say
+            // what this binary can do instead of exiting silently.
+            #[cfg(not(feature = "tui"))]
+            None => {
+                use clap::CommandFactory;
+                Cli::command().print_help()?;
+                eprintln!(
+                    "\nThis build has no terminal UI. Install nixbox with the `tui` feature for \
+                     one."
+                );
+                Ok(ExitCode::from(EXIT_FAILURE))
             }
             Some(Command::Search(args)) => commands::search::run(&args, &self.global).await,
             Some(Command::Install(args)) => commands::install::run(&args, &self.global).await,
             Some(Command::Remove(args)) => commands::remove::run(&args, &self.global).await,
             Some(Command::Migrate(args)) => commands::migrate::run(&args, &self.global).await,
             Some(Command::Apply(args)) => commands::apply::run(&args, &self.global).await,
+            Some(Command::Resume(args)) => commands::resume::run(&args, &self.global).await,
             Some(Command::List(args)) => commands::list::run(&args, &self.global),
             Some(Command::Scan) => commands::scan::run(&self.global),
             Some(Command::Status) => commands::status::run(&self.global),
@@ -173,9 +206,19 @@ mod tests {
     }
 
     #[test]
-    fn no_subcommand_means_the_tui() {
+    fn a_bare_invocation_carries_no_subcommand() {
         let cli = Cli::parse_from(["nixbox"]);
         assert!(cli.command.is_none());
+    }
+
+    /// The feature gate decides whether a bare `nixbox` opens a UI or prints
+    /// help, so the subcommand has to track it in both configurations.
+    #[test]
+    fn the_tui_subcommand_exists_only_in_a_tui_build() {
+        let offered = Cli::command()
+            .get_subcommands()
+            .any(|sub| sub.get_name() == "tui");
+        assert_eq!(offered, cfg!(feature = "tui"));
     }
 
     #[test]

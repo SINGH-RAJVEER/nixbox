@@ -23,6 +23,19 @@ test:
 run:
     cargo run
 
+# The TUI is a default-on feature, and cargo unifies features across a
+# workspace build, so `cargo test --workspace` always turns it on. The
+# CLI-only configuration only gets covered if it is built on its own.
+
+# Lint and test the CLI-only build
+cli:
+    cargo clippy -p nixbox --no-default-features --all-targets -- -D warnings
+    cargo test -p nixbox --no-default-features
+
+# Build the CLI-only release binary
+release-cli:
+    cargo build --release -p nixbox --no-default-features
+
 # Format all crates
 fmt:
     cargo fmt --all
@@ -84,8 +97,8 @@ dev-update:
 dev-test:
     devenv test
 
-# Full pre-commit gate: format, lint, test
-ci: fmt lint test
+# Full pre-commit gate: format, lint, test, CLI-only build
+ci: fmt lint test cli
 
 # Full gate plus the VM check, which boots a machine and takes minutes
 ci-vm: ci vm-test

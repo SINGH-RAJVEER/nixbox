@@ -10,7 +10,10 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Args;
 use nixbox_config::Target;
-use nixbox_core::{Engine, HOME_FALLBACK_NOTE, Op, Reporter, rebuild::resolve as resolve_rebuild};
+use nixbox_core::{
+    Engine, HOME_FALLBACK_NOTE, InProgress, Op, PersistedState, Reporter,
+    rebuild::resolve as resolve_rebuild,
+};
 use nixbox_nix::build::{BuildEvent, rebuild};
 use tokio::sync::{mpsc, oneshot};
 
@@ -92,7 +95,11 @@ pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Resul
         return Ok(ExitCode::SUCCESS);
     }
 
-    run_rebuild(engine, plan.scope).await
+    let label = match plan.summary.as_slice() {
+        [only] => only.clone(),
+        rest => format!("{} change(s)", rest.len()),
+    };
+    run_rebuild(engine, plan.scope, &label).await
 }
 
 /// Asks before changing anything. A non-interactive stdin has to pass
@@ -121,7 +128,14 @@ fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
-async fn run_rebuild(engine: &Engine, scope: Target) -> Result<ExitCode> {
+/// Runs the rebuild, recording it as in progress first.
+///
+/// The configuration is already written by the time this is called, so a
+/// process that dies here leaves files that are correct and a system that has
+/// not been switched. Recording it is what lets `nixbox resume` — or the TUI —
+/// pick that up instead of leaving it to be noticed by accident.
+pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> Result<ExitCode> {
+    mark_in_progress(scope, label);
     let config_dir = engine.config.home_manager_dir();
     let command = resolve_rebuild(&config_dir, scope).await;
     if command.via_nixos_fallback {
@@ -174,16 +188,46 @@ async fn run_rebuild(engine: &Engine, scope: Target) -> Result<ExitCode> {
     let _ = task.await;
 
     match &outcome {
-        Outcome::Succeeded => eprintln!("Done."),
-        Outcome::Cancelled => eprintln!(
-            "Cancelled. Your configuration is already written — run `nixbox apply` to finish."
-        ),
+        Outcome::Succeeded => {
+            finish_in_progress(None);
+            eprintln!("Done.");
+        }
+        Outcome::Cancelled => {
+            finish_in_progress(None);
+            eprintln!(
+                "Cancelled. Your configuration is already written — run `nixbox apply` to finish."
+            );
+        }
         Outcome::Failed(error) => {
+            finish_in_progress(Some(error.clone()));
             eprintln!("Rebuild failed: {error}");
             eprintln!("Your configuration is written; fix the error and run `nixbox apply`.");
         }
     }
     Ok(ExitCode::from(exit_code_for(&outcome)))
+}
+
+/// Records the rebuild about to start, leaving any queue the TUI saved alone.
+///
+/// Failing to write the file is not worth stopping a rebuild over; it only
+/// costs the ability to resume one that gets killed.
+fn mark_in_progress(scope: Target, label: &str) {
+    let mut state = PersistedState::load().unwrap_or_default();
+    state.in_progress = Some(InProgress {
+        scope,
+        label: label.to_string(),
+    });
+    state.last_error = None;
+    let _ = state.save();
+}
+
+/// Clears the record once the rebuild has reached a verdict, keeping the error
+/// so the next run can explain what happened.
+fn finish_in_progress(error: Option<String>) {
+    let mut state = PersistedState::load().unwrap_or_default();
+    state.in_progress = None;
+    state.last_error = error;
+    let _ = state.save();
 }
 
 /// How a rebuild ended.

@@ -6,6 +6,10 @@ Running `nix search` for every edit makes interactive latency depend on evaluati
 
 There is no webhook or background service. NixBox detects changes by reading `flake.lock` before searches and installs.
 
+Both front-ends use the same catalog and the same cache file. `nixbox search` and the name resolution inside `nixbox install` go through it, so a name that resolves in the TUI resolves identically on the command line. Passing `--channel` is the explicit request for a live search against that channel instead.
+
+On the command line a catalog build that has not finished within two seconds prints a one-line notice, because evaluating the package set takes minutes and a silent command would look hung. A cached load, or a lock file the catalog cannot use, finishes well inside that and prints nothing.
+
 ## Catalog source
 
 At startup `PackageCatalog::load_or_build` reads `<configuration-root>/flake.lock` and follows this exact path through its JSON structure:

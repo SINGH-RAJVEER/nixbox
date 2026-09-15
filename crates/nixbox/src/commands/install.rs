@@ -5,11 +5,11 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Args;
 use nixbox_core::{Engine, Op, scope_matches};
-use nixbox_nix::search::{SearchHit, search};
+use nixbox_nix::search::SearchHit;
 
 use crate::apply::{ApplyOpts, Plan, execute};
 use crate::cli::GlobalArgs;
-use crate::commands::target_name;
+use crate::commands::{search_packages, target_name};
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {
@@ -29,7 +29,7 @@ pub async fn run(args: &InstallArgs, global: &GlobalArgs) -> Result<ExitCode> {
     let mut ops = Vec::new();
     let mut summary = Vec::new();
     for name in &args.packages {
-        let hit = resolve(&engine, name).await?;
+        let hit = resolve(&engine, global, name).await?;
         if engine.is_tracked(&hit.attr, scope) {
             eprintln!(
                 "{} is already managed for {}.",
@@ -79,9 +79,9 @@ pub async fn run(args: &InstallArgs, global: &GlobalArgs) -> Result<ExitCode> {
 /// An exact attribute wins outright; otherwise a single package whose name
 /// matches is accepted, and anything ambiguous is handed back to the user
 /// rather than guessed at.
-async fn resolve(engine: &Engine, name: &str) -> Result<SearchHit> {
+async fn resolve(engine: &Engine, global: &GlobalArgs, name: &str) -> Result<SearchHit> {
     let channel = &engine.config.channel;
-    let hits = search(channel, name).await?;
+    let hits = search_packages(engine, global, name).await?;
 
     if let Some(exact) = hits.iter().find(|hit| hit.attr == name) {
         return Ok(exact.clone());

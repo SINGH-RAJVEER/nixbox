@@ -4,11 +4,10 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Args;
-use nixbox_nix::search::search;
 use serde::Serialize;
 
 use crate::cli::GlobalArgs;
-use crate::commands::package_status;
+use crate::commands::{package_status, search_packages};
 use crate::render;
 
 #[derive(Args, Debug)]
@@ -35,7 +34,7 @@ struct Row {
 pub async fn run(args: &SearchArgs, global: &GlobalArgs) -> Result<ExitCode> {
     let engine = global.engine()?;
     let query = args.query.join(" ");
-    let hits = search(&engine.config.channel, &query).await?;
+    let hits = search_packages(&engine, global, &query).await?;
 
     let rows: Vec<Row> = hits
         .into_iter()

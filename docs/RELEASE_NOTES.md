@@ -14,6 +14,11 @@ This is the release that will be cut when the current `dev` branch is merged. Th
 - Separated the exit code for a failed rebuild from the exit code for a failed command, so a caller can tell a written-but-unbuilt configuration from a refused one. The former is recoverable with `nixbox apply`.
 - Extracted the engine behind both front-ends into a new `nixbox-core` crate. A change made from the command line and the same change made in the TUI now take the identical code path and persist the identical `state.json` queue.
 - Extended flake installation to the command line, including removal of a flake's input and generated output, which the TUI does not offer.
+- Made the terminal UI an optional Cargo feature. `cargo install nixbox --no-default-features` builds the command line alone, dropping the dependency tree from 107 packages to 59. The flake exposes the same build as `packages.nixbox-cli`.
+- Moved the theme names and the `state.json` format out of the UI crate into `nixbox-config` and `nixbox-core`, so `nixbox config set theme` and `nixbox resume` work in a build with no terminal UI.
+- Routed `nixbox search` and `nixbox install` through the local package catalog, matching the TUI. An explicit `--channel` still searches the channel live, and a missing catalog falls back to live search with a note.
+- Added `nixbox resume`, which finishes an interrupted rebuild or drains a queue left by the TUI, one target at a time. `--dry-run` prints the queue and `--discard` clears it.
+- Recorded a command-line rebuild in `state.json` before it starts, so a run killed mid-rebuild can be resumed from either front-end.
 - Added a disposable NixOS virtual machine for testing NixBox against a real configuration and a real `nixos-rebuild switch` without touching the host, plus an automated headless check over the parts that work without a network.
 - Gated crate publishing on a CI `test` job that runs `cargo fmt --all --check`, Clippy with `-D warnings`, and the full test suite on the stable toolchain. The publish job now declares `needs: test` and no longer runs when that gate fails.
 - Extended the workflow to pull requests targeting `master` so the same gate reports before a release merge instead of after it.

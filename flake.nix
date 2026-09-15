@@ -18,10 +18,16 @@
       # to one system rather than generated per system.
       vmSystem = "x86_64-linux";
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      # `tui = false` builds the same binary without the terminal UI: every
+      # subcommand still works, the dependency tree drops by roughly half, and
+      # `nixbox` with no subcommand prints help instead of opening a UI.
       mkNixbox =
-        pkgs:
+        {
+          pkgs,
+          tui ? true,
+        }:
         pkgs.rustPlatform.buildRustPackage {
-          pname = "nixbox";
+          pname = if tui then "nixbox" else "nixbox-cli";
           version = cargoToml.workspace.package.version;
 
           src = pkgs.lib.fileset.toSource {
@@ -39,8 +45,17 @@
           cargoBuildFlags = [
             "--package"
             "nixbox"
-          ];
-          cargoTestFlags = [ "--workspace" ];
+          ]
+          ++ pkgs.lib.optionals (!tui) [ "--no-default-features" ];
+          cargoTestFlags =
+            if tui then
+              [ "--workspace" ]
+            else
+              [
+                "--package"
+                "nixbox"
+                "--no-default-features"
+              ];
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 
@@ -56,7 +71,11 @@
           '';
 
           meta = {
-            description = "TUI package manager for NixOS and Home Manager";
+            description =
+              if tui then
+                "TUI package manager for NixOS and Home Manager"
+              else
+                "Command-line package manager for NixOS and Home Manager";
             homepage = "https://github.com/SINGH-RAJVEER/nix-box";
             license = pkgs.lib.licenses.asl20;
             mainProgram = "nixbox";
@@ -71,7 +90,11 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          nixbox = mkNixbox pkgs;
+          nixbox = mkNixbox { inherit pkgs; };
+          nixbox-cli = mkNixbox {
+            inherit pkgs;
+            tui = false;
+          };
           default = nixbox;
         }
       );
@@ -85,7 +108,11 @@
       });
 
       overlays.default = final: _prev: {
-        nixbox = mkNixbox final;
+        nixbox = mkNixbox { pkgs = final; };
+        nixbox-cli = mkNixbox {
+          pkgs = final;
+          tui = false;
+        };
       };
 
       # A throwaway VM for exercising NixBox against a real rebuild. Build and

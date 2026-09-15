@@ -534,6 +534,7 @@ dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "directories",
  "libc",
  "nixbox-config",
  "nixbox-core",
@@ -561,6 +562,7 @@ name = "nixbox-core"
 version = "0.2.2"
 dependencies = [
  "anyhow",
+ "directories",
  "nixbox-config",
  "nixbox-nix",
  "serde",

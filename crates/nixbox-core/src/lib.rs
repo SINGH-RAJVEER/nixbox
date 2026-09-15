@@ -10,11 +10,13 @@ pub mod engine;
 pub mod op;
 pub mod rebuild;
 pub mod report;
+pub mod state;
 
 pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};
 pub use op::Op;
 pub use rebuild::{HOME_FALLBACK_NOTE, RebuildCommand};
 pub use report::{LogReporter, Reporter, SilentReporter};
+pub use state::{InProgress, PersistedState, state_path};
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -104,3 +104,49 @@ with subtest("install resolves a name and declares it"):
 	assert "pkgs.hello" in managed(), managed()
 	assert "hello" in nixbox("list")
 	nixbox("remove hello --no-rebuild --yes")
+
+# Shaped exactly as the TUI writes it: `nixbox-core::Op` is serialized
+# verbatim, so this doubles as a check that the on-disk format has not moved.
+QUEUED_STATE = """{
+  "pending_queue": [
+    {
+      "Install": {
+        "hit": {
+          "attr": "hello",
+          "pname": "hello",
+          "version": "2.12.2",
+          "description": "greeting"
+        },
+        "scope": "nixos-system"
+      }
+    }
+  ],
+  "in_progress": null,
+  "last_error": null
+}"""
+
+with subtest("resume is a no-op with nothing saved"):
+	# Progress goes to stderr, so it has to be folded in to be asserted on.
+	assert "Nothing to resume" in nixbox("resume 2>&1")
+
+with subtest("resume applies a queue the TUI could have left behind"):
+	machine.succeed(
+		"su -l tester -c 'cat > ~/.config/nixbox/state.json' <<'JSON'\n"
+		+ QUEUED_STATE
+		+ "\nJSON\n"
+	)
+	nixbox("resume --no-rebuild --yes")
+	assert "pkgs.hello" in managed(), managed()
+	# Applied work is dropped, so a second resume has nothing to do.
+	machine.fail("test -f /home/tester/.config/nixbox/state.json")
+	nixbox("remove hello --no-rebuild --yes")
+
+with subtest("resume --discard throws the queue away instead"):
+	machine.succeed(
+		"su -l tester -c 'cat > ~/.config/nixbox/state.json' <<'JSON'\n"
+		+ QUEUED_STATE
+		+ "\nJSON\n"
+	)
+	nixbox("resume --discard")
+	machine.fail("test -f /home/tester/.config/nixbox/state.json")
+	assert "hello" not in nixbox("list")

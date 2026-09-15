@@ -27,13 +27,15 @@ The workspace uses Rust edition 2024 and contains five crates. The dependency di
 
 | Crate | Responsibility | Local dependencies |
 | --- | --- | --- |
-| `nixbox-config` | Settings types, defaults, path resolution, JSON loading, and JSON saving. | None. |
+| `nixbox-config` | Settings types, defaults, path resolution, JSON loading, JSON saving, and the list of theme names. | None. |
 | `nixbox-nix` | Package search, package catalog, generated manifests, source scanning and migration, flake discovery and installation, rebuild command selection, output streaming, and cancellation. | None. |
-| `nixbox-core` | The headless engine: the `Op` type both front-ends queue, manifest mutation, import wiring, external-package scanning, flake input and output installation, and rebuild command selection. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
+| `nixbox-core` | The headless engine: the `Op` type both front-ends queue, the persisted `state.json` format, manifest mutation, import wiring, external-package scanning, flake input and output installation, and rebuild command selection. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
 | `nixbox-tui` | Application state, terminal lifecycle, event handling, asynchronous task scheduling, operation queue, recovery state, Vim input behavior, navigation, themes, and rendering. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
-| `nixbox` | Clap command tree, the non-interactive commands, output rendering, tracing setup, Tokio runtime, and the call to `nixbox_tui::run` when no subcommand is given. | All four library crates. |
+| `nixbox` | Clap command tree, the non-interactive commands, output rendering, tracing setup, Tokio runtime, and the call to `nixbox_tui::run` when no subcommand is given. | `nixbox-config`, `nixbox-core`, `nixbox-nix`, and `nixbox-tui` behind the `tui` feature. |
 
 The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, then `nixbox`. The engine sits on the two leaf libraries, and both front-ends sit on the engine.
+
+`nixbox-tui` is an optional dependency behind the default-on `tui` feature. `cargo install nixbox --no-default-features` builds the command line alone, which drops the dependency tree from 107 packages to 59 by excluding `ratatui`, `crossterm`, `tui-input`, and `nixbox-tui` itself. Nothing the CLI needs lives in the UI crate: the theme names the settings file accepts are declared in `nixbox-config` and the persisted-state format in `nixbox-core`, each with a test in the UI crate asserting the two stay in step.
 
 Both front-ends go through the same engine, so a change applied by `nixbox install` and the same change applied in the TUI take the identical code path. The engine is also what keeps `state.json` compatible between them: the queue holds `nixbox_core::Op` values verbatim, and the TUI's `QueuedOp` is a re-export of that type rather than a parallel definition.
 
@@ -110,15 +112,18 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 ### `nixbox-core`
 
 - `op.rs` defines `Op`, the unit of work both front-ends queue. Its variant and field names are an on-disk format, because the queue is persisted verbatim in `state.json`.
+- `state.rs` defines `PersistedState` and `InProgress`, the `state.json` format, and its load, save, and clear operations. It lives here rather than in the UI crate because `nixbox resume` reads the same file.
 - `engine.rs` owns `Engine`, which holds the settings and both manifests, applies an `Op`, writes the managed file, wires the import into the main config, stages files for Git-aware flake evaluation, and installs or removes flake inputs and outputs.
 - `rebuild.rs` selects the rebuild command for a target and reports when a Home Manager rebuild falls back to `nixos-rebuild`.
 - `report.rs` defines the `Reporter` trait plus a silent and a log-collecting implementation, which is how the same engine feeds the TUI's log pane and the CLI's stderr.
 
 ### `nixbox`
 
-- `cli.rs` defines the Clap command tree, the global `--target`, `--channel`, and `--json` flags, and dispatch.
+- `cli.rs` defines the Clap command tree, the global `--target`, `--channel`, and `--json` flags, and dispatch. The `tui` subcommand and the no-subcommand default are behind the `tui` feature; without it, a bare `nixbox` prints help and exits `1`.
 - `apply.rs` is the shared path for every command that changes configuration: confirmation, the dry run, writing, the rebuild, and the exit code.
 - `commands/` holds one module per subcommand.
+- `commands/mod.rs` also holds `search_packages`, the shared lookup behind `search` and `install`: it prefers the cached package catalog and falls back to live search, and an explicit `--channel` always searches live.
+- `commands/resume.rs` finishes an interrupted rebuild and drains a queue the TUI left, one target at a time.
 - `render.rs` renders tables and field lists for the non-JSON output.
 
 ### `nixbox-tui`
@@ -126,10 +131,10 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `app.rs` owns `App`, startup scanning, terminal setup, the event loop, visible-tab rules, combined installed-package state, and task cleanup.
 - `handlers.rs` translates key presses and `AppEvent` values into state changes.
 - `ops.rs` schedules searches, prepares the package catalog, validates operations, batches the queue, and starts rebuilds. The manifest mutation itself is delegated to `nixbox-core`.
-- `state.rs` serializes and restores pending operations, interrupted rebuilds, and the previous error.
+- `state.rs` restores a saved queue, interrupted rebuild, and previous error into a running `App`. The file format itself belongs to `nixbox-core`.
 - `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command.
 - `nav.rs` handles wrapped row selection, tab movement, and settings entry.
-- `theme.rs` defines six palettes and their Ratatui styles.
+- `theme.rs` defines the Ratatui styles for the six palettes named in `nixbox-config::THEMES`, with a test asserting the two lists match.
 - `ui/` renders the shared bars, package search, flake search and detail panel, installed list, build log, queue, and settings popup.
 
 ## Design constraints

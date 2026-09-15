@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
-use nixbox_config::{Config, InputMode, Target, settings_path};
+use nixbox_config::{Config, InputMode, THEMES, Target, settings_path};
 use serde_json::json;
 
 use crate::cli::GlobalArgs;
@@ -110,9 +110,8 @@ fn set(key: &str, value: &str) -> Result<ExitCode> {
         }
         "target" => config.target = parse_target(value)?,
         "theme" => {
-            let known = nixbox_tui::theme_names();
-            if !known.contains(&value) {
-                bail!("unknown theme `{value}`. Available: {}", known.join(", "));
+            if !THEMES.contains(&value) {
+                bail!("unknown theme `{value}`. Available: {}", THEMES.join(", "));
             }
             config.theme = value.to_string();
         }

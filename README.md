@@ -26,6 +26,12 @@ Install the published crate:
 cargo install nixbox
 ```
 
+The terminal UI is an optional feature. For the command line alone, which pulls in 59 dependency packages instead of 107:
+
+```sh
+cargo install nixbox --no-default-features
+```
+
 Run NixBox directly from its flake:
 
 ```sh
@@ -52,7 +58,9 @@ Add NixBox to another flake:
 }
 ```
 
-The flake also exports `overlays.default`, which adds `pkgs.nixbox`:
+The flake exposes the CLI-only build as `packages.nixbox-cli`, alongside the default `packages.nixbox`.
+
+The flake also exports `overlays.default`, which adds `pkgs.nixbox` and `pkgs.nixbox-cli`:
 
 ```nix
 nixpkgs.overlays = [ inputs.nixbox.overlays.default ];
@@ -67,7 +75,7 @@ Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch6
 nixbox
 ```
 
-The binary accepts Clap's generated `--help` and `--version` flags. It has no headless subcommands; a normal invocation starts the TUI.
+With no subcommand this starts the TUI. Every operation it performs is also a subcommand, so the same work can be scripted or run over SSH. A build without the `tui` feature has the subcommands and no TUI; there, a bare `nixbox` prints help.
 
 ## First run
 
@@ -79,6 +87,7 @@ Installing a package writes a generated module before the rebuild starts. NixBox
 
 - [Documentation index](docs/README.md)
 - [User guide](docs/USER_GUIDE.md)
+- [Command line interface](docs/CLI.md)
 - [Configuration and stored state](docs/CONFIGURATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Package search](docs/SEARCH.md)
@@ -100,6 +109,7 @@ nixbox list                      # what NixBox manages
 nixbox scan                      # packages you declared by hand
 nixbox migrate htop              # move one of them into the managed file
 nixbox apply                     # rewrite the managed file and rebuild
+nixbox resume                    # finish an interrupted rebuild or a queued batch
 nixbox status                    # target, paths, and how they are wired
 nixbox doctor                    # check what NixBox depends on
 ```
@@ -137,6 +147,8 @@ nixbox completions fish > ~/.config/fish/completions/nixbox.fish
 Anything that changes your configuration asks first. Without a terminal to ask at, it refuses unless you pass `--yes`, so a script can never trigger a rebuild by accident. `--target` and `--channel` never touch `settings.json` — only `nixbox config set` does.
 
 The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run `nixbox apply` to finish.
+
+Both front-ends share `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in the TUI and never ran; `--dry-run` shows it first and `--discard` throws it away.
 
 ### Exit codes
 

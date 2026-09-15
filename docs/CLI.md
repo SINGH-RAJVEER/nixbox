@@ -1,8 +1,10 @@
 # Command line interface
 
-NixBox is a TUI first, and running `nixbox` with no subcommand still starts it. Every operation the TUI performs is also available as a subcommand, so the same work can be scripted, run over SSH, or put in a shell alias.
+Running `nixbox` with no subcommand starts the terminal UI. Every operation the TUI performs is also available as a subcommand, so the same work can be scripted, run over SSH, or put in a shell alias.
 
-Both front-ends go through `nixbox-core`. A package installed from the command line and the same package installed in the TUI take the identical code path and produce the identical files.
+Both front-ends go through `nixbox-core`. A package installed from the command line and the same package installed in the TUI take the identical code path, read the same catalog, and produce the identical files. They also share `state.json`, so a queue built in the TUI can be finished with `nixbox resume`, and a rebuild the CLI started and lost can be picked up by either.
+
+The terminal UI is an optional Cargo feature. See [Building without the TUI](#building-without-the-tui) for a build that is only the command line.
 
 ## Global flags
 
@@ -18,7 +20,7 @@ None of these are written back to the settings file. `nixbox config set` is the 
 
 | Command | Purpose |
 | --- | --- |
-| `nixbox search <query>` | Search the active channel. `-n` limits the result count. |
+| `nixbox search <query>` | Search the active channel. `-n` limits the result count. Uses the local package catalog when one is available and falls back to live search otherwise; `--channel` always searches live. |
 | `nixbox list` | List the packages NixBox manages for the active target. `-a` covers both. |
 | `nixbox scan` | List packages declared by hand in your own configuration that NixBox does not manage. |
 | `nixbox status` | Show the active target, the files NixBox owns, and whether the import is wired up. |
@@ -32,6 +34,7 @@ None of these are written back to the settings file. `nixbox config set` is the 
 | `nixbox remove <package>...` | Drop packages and rebuild. Aliases: `rm`, `uninstall`. |
 | `nixbox migrate <package>...` | Move hand-declared packages into the managed file. `-a` migrates everything that can move cleanly. |
 | `nixbox apply` | Rewrite the managed file and rebuild without changing the package set. |
+| `nixbox resume` | Finish work a previous run left behind: an interrupted rebuild, or a queue the TUI saved. `--discard` throws it away instead. |
 
 Each of these accepts:
 
@@ -44,6 +47,12 @@ Each of these accepts:
 Without a terminal on stdin, a change requires `--yes`. This is deliberate: a script that forgets it stops rather than rebuilding a machine unattended.
 
 Writing happens before the rebuild. If a rebuild fails, the files already reflect the intent, so recovering is `nixbox apply` rather than repeating the original command.
+
+## Resuming
+
+A rebuild is recorded in `state.json` before it starts and cleared when it reaches a verdict, so a run killed mid-rebuild leaves a marker behind. `nixbox resume` re-runs that rebuild; the configuration was already written, so nothing else needs redoing.
+
+The TUI queues operations and applies them in a batch, and saves that queue to the same file. `nixbox resume` drains it one target at a time, in the order the queue first mentions each target, with one rebuild per target. `--dry-run` prints the queue without applying it, and `--discard` clears the file.
 
 ## Flakes
 
@@ -66,6 +75,24 @@ Writing happens before the rebuild. If a rebuild fails, the files already reflec
 | `nixbox config set <key> <value>` | Change one setting. An empty value clears an optional path. |
 | `nixbox config path` | Print the path of the settings file. |
 | `nixbox completions <shell>` | Print a completion script. |
+
+## Building without the TUI
+
+The `tui` feature is on by default and pulls in the terminal UI. Turning it off produces a binary with every subcommand and no terminal UI, and cuts the dependency tree from 107 packages to 59 as `cargo tree` counts them:
+
+```sh
+cargo install nixbox --no-default-features
+```
+
+or, from a checkout:
+
+```sh
+cargo build --release -p nixbox --no-default-features
+```
+
+The Nix flake exposes both. `packages.nixbox` is the default build and `packages.nixbox-cli` is the CLI-only one; the overlay adds both under the same names.
+
+In a CLI-only build there is no `nixbox tui` subcommand, and `nixbox` with no subcommand prints help and exits `1` rather than exiting silently. Everything else, including `nixbox config set theme`, behaves the same, because the theme names live in `nixbox-config` rather than in the UI.
 
 ## Exit codes
 

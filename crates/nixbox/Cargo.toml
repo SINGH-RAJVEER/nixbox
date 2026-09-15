@@ -15,14 +15,21 @@ description.workspace = true
 name = "nixbox"
 path = "src/main.rs"
 
+[features]
+default = ["tui"]
+# Builds the terminal UI in. Without it `nixbox` is a plain CLI and none of
+# ratatui, crossterm, or tui-input is compiled or downloaded.
+tui = ["dep:nixbox-tui"]
+
 [dependencies]
-nixbox-tui = { path = "../nixbox-tui", version = "0.2.2" }
+nixbox-tui = { path = "../nixbox-tui", version = "0.2.2", optional = true }
 nixbox-nix = { path = "../nixbox-nix", version = "0.2.2" }
 nixbox-core = { path = "../nixbox-core", version = "0.2.2" }
 nixbox-config = { path = "../nixbox-config", version = "0.2.2" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+directories = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
