@@ -6,6 +6,7 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
 
 use super::{SPINNER, titled_panel};
 use crate::app::App;
+use nixbox_nix::flakes::FlakePackage;
 
 pub(super) fn draw_flakes_body(f: &mut Frame, area: Rect, app: &App) {
     let split = Layout::default()
@@ -25,7 +26,7 @@ fn draw_results(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {} ", spinner), t.version_style()),
-                Span::styled("Searching GitHub code…", dim),
+                Span::styled("Finding and checking flake outputs…", dim),
             ]))
             .block(block),
             area,
@@ -36,7 +37,7 @@ fn draw_results(f: &mut Frame, area: Rect, app: &App) {
         let message = if app.flake_query.is_empty() {
             "Type a project name, input, or output to search root flake.nix files."
         } else {
-            "No root flake.nix files matched this query."
+            "No installable flake outputs matched this query."
         };
         f.render_widget(
             Paragraph::new(message)
@@ -86,7 +87,7 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
                 Line::from(Span::styled("Results are not cloned or persisted.", dim)),
                 Line::raw(""),
                 Line::from(Span::styled(
-                    "i  search    j/k  select    Enter  install module",
+                    "i  search    j/k  select    Enter  install output",
                     dim,
                 )),
             ])
@@ -100,6 +101,7 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
     let description = details.description.as_deref().unwrap_or("(no description)");
     let inputs = list_or_none(&details.inputs);
     let outputs = list_or_none(&details.outputs);
+    let packages = package_list(&details.packages);
     let topics = list_or_none(&details.topics);
     let pushed = details.pushed_at.as_deref().unwrap_or("unknown");
     let homepage = details.homepage.as_deref().unwrap_or("none");
@@ -129,6 +131,10 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("outputs  ", dim),
             Span::styled(outputs, t.name_style()),
         ]),
+        Line::from(vec![
+            Span::styled("packages ", dim),
+            Span::styled(packages, t.version_style()),
+        ]),
         Line::from(vec![Span::styled("inputs   ", dim), Span::raw(inputs)]),
         Line::from(vec![Span::styled("topics   ", dim), Span::raw(topics)]),
         Line::raw(""),
@@ -147,6 +153,26 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn package_list(packages: &[FlakePackage]) -> String {
+    if packages.is_empty() {
+        return "(none for this system)".to_string();
+    }
+    packages
+        .iter()
+        .take(4)
+        .map(|package| {
+            if package.version.is_empty() && package.name == package.attr {
+                package.attr.clone()
+            } else if package.version.is_empty() {
+                format!("{} ({})", package.attr, package.name)
+            } else {
+                format!("{} ({} {})", package.attr, package.name, package.version)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("  ·  ")
 }
 
 fn list_or_none(values: &[String]) -> String {

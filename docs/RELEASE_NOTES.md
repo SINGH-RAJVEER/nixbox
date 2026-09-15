@@ -10,7 +10,7 @@ This is the release that will be cut when the current `dev` branch is merged. Th
 - Cached the catalog at `~/.cache/nixbox/package-catalog.json` and rebuild it when the locked `nixpkgs` revision changes. Search falls back to the configured live channel if the catalog cannot be prepared.
 - Reduced measured warm searches from 15.9 seconds or more to 53-75 ms in a debug build. Loading an existing 112,847-package catalog took 425 ms in the same test.
 - Added local relevance ranking across package attributes, names, and descriptions while retaining nested attributes such as `python312Packages.black`.
-- Changed GitHub flake discovery to evaluate the strongest candidates with `nix flake show`, reject repositories without derivation packages or default modules, and rank exact package outputs above weak repository matches.
+- Changed GitHub flake discovery to evaluate the strongest candidates at their locked GitHub revision, reject repositories without derivation packages or default modules, and rank exact package outputs above weak repository matches.
 - Added installation of the highest-ranked package output when a selected flake does not publish a default module for the active target, and preserved `homeModules.default` as a distinct Home Manager module path.
 - Added an installable Nix flake with packages, a runnable app, and an overlay for `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
 - Expanded Vim-style editing in search fields with distinct word and WORD motions, end-of-word motions, and `dd` line deletion.

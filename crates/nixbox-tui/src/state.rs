@@ -131,6 +131,11 @@ mod tests {
                     hit: hit("ripgrep"),
                     scope: Target::HomeManager,
                 },
+                QueuedOp::InstallFlakePackage {
+                    repo: "alleneubank/bun-overlay".into(),
+                    package: "default".into(),
+                    scope: Target::HomeManager,
+                },
                 QueuedOp::Uninstall {
                     name: "fd".into(),
                     scope: Target::NixosSystem,
@@ -150,17 +155,22 @@ mod tests {
         let json = serde_json::to_string(&state).expect("serialize");
         let restored: PersistedState = serde_json::from_str(&json).expect("deserialize");
 
-        assert_eq!(restored.pending_queue.len(), 3);
+        assert_eq!(restored.pending_queue.len(), 4);
         assert!(matches!(
             &restored.pending_queue[0],
             QueuedOp::Install { hit, scope: Target::HomeManager } if hit.attr == "ripgrep"
         ));
         assert!(matches!(
             &restored.pending_queue[1],
-            QueuedOp::Uninstall { name, scope: Target::NixosSystem } if name == "fd"
+            QueuedOp::InstallFlakePackage { repo, package, scope: Target::HomeManager }
+                if repo == "alleneubank/bun-overlay" && package == "default"
         ));
         assert!(matches!(
             &restored.pending_queue[2],
+            QueuedOp::Uninstall { name, scope: Target::NixosSystem } if name == "fd"
+        ));
+        assert!(matches!(
+            &restored.pending_queue[3],
             QueuedOp::Migrate { names, scope: Target::HomeManager } if names == &vec!["git".to_string(), "neovim".to_string()]
         ));
         let ip = restored.in_progress.expect("in_progress preserved");

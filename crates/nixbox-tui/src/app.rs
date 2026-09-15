@@ -65,6 +65,11 @@ pub(crate) enum QueuedOp {
         module: String,
         scope: Target,
     },
+    InstallFlakePackage {
+        repo: String,
+        package: String,
+        scope: Target,
+    },
     Uninstall {
         name: String,
         scope: Target,
@@ -80,6 +85,7 @@ impl QueuedOp {
         match self {
             QueuedOp::Install { scope, .. }
             | QueuedOp::InstallFlake { scope, .. }
+            | QueuedOp::InstallFlakePackage { scope, .. }
             | QueuedOp::Uninstall { scope, .. }
             | QueuedOp::Migrate { scope, .. } => *scope,
         }
@@ -90,6 +96,9 @@ impl QueuedOp {
         match self {
             QueuedOp::Install { hit, .. } => format!("install {} [{}]", hit.attr, tag),
             QueuedOp::InstallFlake { repo, .. } => format!("install flake {} [{}]", repo, tag),
+            QueuedOp::InstallFlakePackage { repo, package, .. } => {
+                format!("install {repo}#{package} [{tag}]")
+            }
             QueuedOp::Uninstall { name, .. } => format!("remove {} [{}]", name, tag),
             QueuedOp::Migrate { names, .. } => match names.len() {
                 1 => format!("migrate {} [{}]", names[0], tag),

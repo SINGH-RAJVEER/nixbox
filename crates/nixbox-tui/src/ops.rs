@@ -9,7 +9,7 @@ use nixbox_nix::{
         nixos_rebuild_switch_cmd, rebuild,
     },
     flakes::{ensure_flake_input, fetch_flake_details, search_flakes},
-    manifest::{ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported},
+    manifest::{FlakeManifest, ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported},
     scan::{ScanTarget, remove_from_source},
     search::PackageCatalog,
 };
@@ -254,34 +254,15 @@ fn apply_op_to_manifest(app: &mut App, op: &QueuedOp) -> Result<()> {
             app.manifest_for_mut(scope).add(&hit.attr);
         }
         QueuedOp::InstallFlake { repo, module, .. } => {
-            let (special_args, constructor) = match scope {
-                Target::HomeManager => ("extraSpecialArgs", "homeManagerConfiguration"),
-                Target::NixosSystem => ("specialArgs", "nixosSystem"),
-            };
-            let flake_file = app.config.flake_file();
-            ensure_flake_input(&flake_file, repo, special_args, constructor)?;
-            let managed = ManagedFlakeFile::new(app.config.flake_manifest_for(scope));
-            let mut manifest = managed.load()?;
-            manifest.add(repo.clone(), module.clone());
-            managed.write(&manifest)?;
-            app.log.push(format!(
-                "Added github:{} to {} and imported its {}.",
-                repo,
-                flake_file.display(),
-                scope.label(),
-            ));
-            let main_file = app.config.main_file_for(scope);
-            if let Some(note) = ensure_imported_note(&main_file, &ManagedFile::new(managed.path()))
-            {
-                app.log.push(note);
-            }
-            for path in [&flake_file, managed.path(), &main_file] {
-                if path.exists()
-                    && let Some(note) = git_track(path)
-                {
-                    app.log.push(note);
-                }
-            }
+            apply_flake_output(app, scope, repo, |manifest| {
+                manifest.add(repo.clone(), module.clone());
+            })?;
+            return Ok(());
+        }
+        QueuedOp::InstallFlakePackage { repo, package, .. } => {
+            apply_flake_output(app, scope, repo, |manifest| {
+                manifest.add_package(repo.clone(), package.clone());
+            })?;
             return Ok(());
         }
         QueuedOp::Uninstall { name, .. } => {
@@ -324,6 +305,44 @@ fn apply_op_to_manifest(app: &mut App, op: &QueuedOp) -> Result<()> {
         app.installed_selected = 0;
     } else if app.installed_selected >= total {
         app.installed_selected = total - 1;
+    }
+    Ok(())
+}
+
+fn apply_flake_output(
+    app: &mut App,
+    scope: Target,
+    repo: &str,
+    update: impl FnOnce(&mut FlakeManifest),
+) -> Result<()> {
+    let (special_args, constructor) = match scope {
+        Target::HomeManager => ("extraSpecialArgs", "homeManagerConfiguration"),
+        Target::NixosSystem => ("specialArgs", "nixosSystem"),
+    };
+    let flake_file = app.config.flake_file();
+    ensure_flake_input(&flake_file, repo, special_args, constructor)?;
+    let managed = ManagedFlakeFile::new(app.config.flake_manifest_for(scope));
+    let mut manifest = managed.load()?;
+    update(&mut manifest);
+    match scope {
+        Target::HomeManager => managed.write_home_manager(&manifest)?,
+        Target::NixosSystem => managed.write_nixos(&manifest)?,
+    }
+    app.log.push(format!(
+        "Added github:{repo} to {} and wired its selected output into {}.",
+        flake_file.display(),
+        scope.label(),
+    ));
+    let main_file = app.config.main_file_for(scope);
+    if let Some(note) = ensure_imported_note(&main_file, &ManagedFile::new(managed.path())) {
+        app.log.push(note);
+    }
+    for path in [&flake_file, managed.path(), &main_file] {
+        if path.exists()
+            && let Some(note) = git_track(path)
+        {
+            app.log.push(note);
+        }
     }
     Ok(())
 }
@@ -385,36 +404,14 @@ pub(crate) async fn install_selected_flake(
         return Ok(());
     };
     let scope = app.config.target;
-    let module = match scope {
-        Target::HomeManager
-            if details
-                .outputs
-                .iter()
-                .any(|output| output == "Home Manager modules") =>
-        {
-            "homeManagerModules.default"
-        }
-        Target::NixosSystem
-            if details
-                .outputs
-                .iter()
-                .any(|output| output == "NixOS modules") =>
-        {
-            "nixosModules.default"
-        }
-        _ => {
-            app.status = format!(
-                "{} does not publish a default {} module.",
-                details.repo,
-                scope.label()
-            );
-            return Ok(());
-        }
-    };
     if app.queue.iter().any(|op| {
         matches!(
             op,
             QueuedOp::InstallFlake { repo, scope: queued_scope, .. }
+                if repo == &details.repo && *queued_scope == scope
+        ) || matches!(
+            op,
+            QueuedOp::InstallFlakePackage { repo, scope: queued_scope, .. }
                 if repo == &details.repo && *queued_scope == scope
         )
     }) {
@@ -422,11 +419,30 @@ pub(crate) async fn install_selected_flake(
         return Ok(());
     }
 
-    app.queue.push_back(QueuedOp::InstallFlake {
-        repo: details.repo.clone(),
-        module: module.into(),
-        scope,
-    });
+    let module = match scope {
+        Target::HomeManager => details.home_manager_module.clone(),
+        Target::NixosSystem => details.nixos_module.clone(),
+    };
+    if let Some(module) = module {
+        app.queue.push_back(QueuedOp::InstallFlake {
+            repo: details.repo.clone(),
+            module,
+            scope,
+        });
+    } else if let Some(package) = details.packages.first() {
+        app.queue.push_back(QueuedOp::InstallFlakePackage {
+            repo: details.repo.clone(),
+            package: package.attr.clone(),
+            scope,
+        });
+    } else {
+        app.status = format!(
+            "{} has no installable package for this system or default {} module.",
+            details.repo,
+            scope.label()
+        );
+        return Ok(());
+    }
     app.persist();
     if app.build_in_progress {
         app.status = format!("Queued flake install: {}.", details.repo);
@@ -754,7 +770,11 @@ mod tests {
     use crate::app::App;
     use crate::vim::VimInput;
     use nixbox_config::Config;
-    use nixbox_nix::{manifest::Manifest, search::SearchHit};
+    use nixbox_nix::{
+        flakes::{FlakeDetails, FlakePackage},
+        manifest::Manifest,
+        search::SearchHit,
+    };
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::timeout;
 
@@ -844,6 +864,42 @@ mod tests {
         assert!(app.build_cancel.is_none());
         assert!(app.build_in_progress);
         assert_eq!(app.status, "Cancelling build...");
+    }
+
+    #[tokio::test]
+    async fn install_flake_queues_its_preferred_package_when_no_module_exists() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut app = test_app();
+        app.build_in_progress = true;
+        app.flake_details = Some(FlakeDetails {
+            repo: "alleneubank/bun-overlay".into(),
+            repo_url: "https://github.com/alleneubank/bun-overlay".into(),
+            path: "flake.nix".into(),
+            description: None,
+            stars: 0,
+            topics: Vec::new(),
+            homepage: None,
+            default_branch: "main".into(),
+            pushed_at: None,
+            archived: false,
+            inputs: Vec::new(),
+            outputs: vec!["packages".into()],
+            packages: vec![FlakePackage {
+                attr: "default".into(),
+                name: "bun".into(),
+                version: "1.4.2".into(),
+            }],
+            nixos_module: None,
+            home_manager_module: None,
+        });
+
+        install_selected_flake(&mut app, &tx).await.unwrap();
+
+        assert!(matches!(
+            app.queue.front(),
+            Some(QueuedOp::InstallFlakePackage { repo, package, scope: Target::NixosSystem })
+                if repo == "alleneubank/bun-overlay" && package == "default"
+        ));
     }
 
     #[test]

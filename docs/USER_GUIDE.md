@@ -40,9 +40,9 @@ Press `Enter` on a result to install it for the target selected in settings. If 
 
 ### Flakes
 
-The Flakes tab searches GitHub code and repository metadata after a 250 ms input delay, then runs `nix flake show --json` for the strongest candidates. It keeps repositories that expose derivation packages or a conventional default NixOS or Home Manager module. Selecting a result loads repository metadata, reads input names from the flake source, and shows output categories plus up to four evaluated packages.
+The Flakes tab searches GitHub code and repository metadata after a 250 ms input delay, resolves the strongest candidates to their current GitHub revisions, and evaluates those locked revisions with Nix. It keeps repositories that expose derivation packages for the current system or a conventional default NixOS or Home Manager module. Selecting a result loads repository metadata, reads input names from the flake source, and shows output categories plus up to four evaluated package attributes.
 
-Press `Enter` to install the selected repository's preferred output. NixBox chooses `homeManagerModules.default` or `homeModules.default` for the Home Manager target and `nixosModules.default` for the NixOS target. When the matching default module does not exist, it installs the first evaluated package instead. Package ranking favors the `default` attribute and then matches against the search query. `nix flake show` reports derivation metadata only for the current system unless asked for all systems, so packages offered here match the active system.
+Press `Enter` to install the selected repository's preferred output. NixBox chooses `homeManagerModules.default` or `homeModules.default` for the Home Manager target and `nixosModules.default` for the NixOS target. When the matching default module does not exist, it installs the first evaluated package instead. Package ranking favors the `default` attribute and then matches package attributes against the search query. NixBox evaluates only `packages.<current-system>`, so packages offered here match the active system.
 
 ### Installed
 

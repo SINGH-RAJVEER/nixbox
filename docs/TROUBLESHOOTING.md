@@ -79,19 +79,19 @@ The flake browser consumes GitHub code-search and repository-search quota. API e
 
 ## A known flake does not appear
 
-The repository must have a readable `flake.nix` at its root and expose at least one derivation package or a conventional default NixOS or Home Manager module. NixBox evaluates only the 12 strongest GitHub candidates with `nix flake show` and drops candidates that fail or exceed the 45-second evaluation timeout. Search ranking favors repository-name matches and upstream `github:` references found in other root flakes. Repositories with only a nested flake are excluded. GitHub indexing delay can also prevent a recent file from appearing in code search, although repository search can still find the repository.
+The repository must have a readable `flake.nix` at its root and expose at least one derivation package for the current system or a conventional default NixOS or Home Manager module. NixBox evaluates only the 12 strongest GitHub candidates at their resolved GitHub revision. Normal candidates have a 15-second evaluation timeout; upstream `github:` references found in other root flakes have 45 seconds. Candidates that fail evaluation or exceed the timeout are dropped. Search ranking favors repository-name matches and upstream references. Repositories with only a nested flake are excluded. GitHub indexing delay can also prevent a recent file from appearing in code search, although repository search can still find the repository.
 
 ## Flake details show the wrong capabilities
 
-NixBox evaluates top-level output names, derivation packages, and conventional default module attributes with `nix flake show --json`. Input names are still inferred from source text. Package inspection currently combines attributes from every returned system without retaining the system name, so a package shown in the panel may be unavailable under the active `${pkgs.system}`. An evaluation failure removes the repository from the results. Inspect the full output when the result differs from expectation:
+NixBox uses a pure, locked `nix eval` expression to inspect top-level output names, derivation package attributes for the current system, and conventional default module attributes. Input names are still inferred from source text. An evaluation failure removes the repository from the results. Inspect the current-system packages when the result differs from expectation:
 
 ```sh
-nix flake show github:<owner>/<repository>
+nix eval --json 'github:<owner>/<repository>#packages.<system>' --apply builtins.attrNames
 ```
 
 ## Flake installation says the root must bind `inputs`
 
-The installer requires a conventional outputs binding containing `outputs = inputs@`. Rewrite the root flake so the full inputs set has that name, or install the module manually. The expected pattern is:
+The installer requires a conventional outputs binding containing `outputs = inputs@`. Rewrite the root flake so the full inputs set has that name, or install the output manually. The expected pattern is:
 
 ```nix
 outputs = inputs@{ self, nixpkgs, ... }: {

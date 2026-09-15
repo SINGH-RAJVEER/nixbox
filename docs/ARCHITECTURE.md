@@ -96,7 +96,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `search.rs` owns live search, the locked-revision catalog, cache serialization, bounded subprocess output, package-attribute normalization, and relevance ranking.
 - `manifest.rs` owns generated package and flake-module files, package marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list.
 - `scan.rs` detects simple package tokens in selected Nix lists and removes dedicated lines during migration.
-- `flakes.rs` calls GitHub through `gh api`, ranks repository candidates, evaluates their outputs with Nix, caches inspections in memory, reads root `flake.nix` files for input names, and edits a conventional root flake for module installation.
+- `flakes.rs` calls GitHub through `gh api`, ranks repository candidates, evaluates locked revisions for package and module outputs, caches inspections in memory, reads root `flake.nix` files for input names, and edits a conventional root flake for output installation.
 - `build.rs` resolves executables in common Nix profiles, chooses Home Manager or NixOS commands, starts rebuild process groups, forwards output, and cancels a complete process group.
 - `lib.rs` exports these modules and their main types and functions.
 
@@ -113,7 +113,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 
 ## Design constraints
 
-- NixBox uses source-text heuristics instead of a full Nix parser for scanning user files, inserting imports, reading flake input names, and updating the root flake. Flake packages and module outputs are evaluated with Nix. The mutation code rejects expressions it cannot handle safely, but conventional file structure is still required.
+- NixBox uses source-text heuristics instead of a full Nix parser for scanning user files, inserting imports, reading flake input names, and updating the root flake. Package and module eligibility comes from pure Nix evaluation of a locked GitHub revision. The mutation code rejects expressions it cannot handle safely, but conventional file structure is still required.
 - Search consistency comes from the target's direct locked nixpkgs revision, not from a server-side index or notification system.
 - State persistence is best effort. Settings and manifest failures return errors; queue-state save failures do not stop the TUI.
 - Generated nixpkgs package sets use `BTreeSet`, and generated external-flake module and package mappings use `BTreeMap`, so output order is deterministic.

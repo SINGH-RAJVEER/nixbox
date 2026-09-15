@@ -21,17 +21,17 @@ Code search looks for the user's query in files named `flake.nix` at repository 
 
 Text fragments are also scanned for `github:<owner>/<repository>` references. This lets a consumer configuration point NixBox toward the upstream project flake. Branch or path suffixes after the first owner and repository segments are discarded for candidate identity.
 
-Candidates deduplicate by repository and receive an initial score. NixBox keeps the best 12 candidates, evaluates them concurrently with `nix flake show --json --no-write-lock-file github:<owner>/<repository>`, and gives each evaluation 15 seconds. It records top-level output names, package nodes whose reported type is `derivation`, and conventional default NixOS and Home Manager modules. A candidate is dropped when evaluation fails, times out, or finds none of those outputs. Successful inspections are cached in memory for the rest of the process.
+Candidates deduplicate by repository and receive an initial score. NixBox keeps the best 12 candidates, resolves each repository's `HEAD` commit through GitHub, and evaluates that locked revision with a pure `nix eval`. Normal candidates receive 15 seconds. Upstream references extracted from flake source receive 45 seconds because large canonical flakes can take longer on a cold Nix cache. Evaluation records top-level output names, derivation package attributes under `packages.<current-system>`, and conventional default NixOS and Home Manager modules. A candidate is dropped when evaluation fails, times out, or finds none of those outputs. Successful inspections are cached in memory for the rest of the process.
 
-Initial ranking favors an upstream reference extracted from code, then repository-search matches, then the repository that contained a code match. Within those groups, an exact normalized repository-name match ranks above a prefix or substring match. Repository search adds a small star-count contribution capped at 10,000 stars. After evaluation, a matching package attribute or package name adds another score contribution. Package ordering favors the `default` attribute, then exact, prefix, and substring matches, then version and attribute name. The final result list is capped at 20, although at most 12 inspected candidates can reach it in the current implementation.
+Initial ranking favors an upstream reference extracted from code, then repository-search matches, then the repository that contained a code match. Within those groups, an exact normalized repository-name match ranks above a prefix or substring match. Repository search adds a small star-count contribution capped at 10,000 stars. After evaluation, a matching package attribute adds another score contribution. Package ordering favors the `default` attribute, then exact, prefix, and substring matches, then the attribute name. The final result list is capped at 20, although at most 12 inspected candidates can reach it in the current implementation.
 
 Normalization removes non-alphanumeric characters and lowercases the remaining text. A query for `zen-browser` can therefore match a repository named `zen_browser`.
 
 ## Detail inspection
 
-Selecting a result fetches repository metadata and raw `flake.nix` concurrently. The detail panel shows description, stars, archived state, default branch, last push time, topics, homepage, repository URL, detected inputs, evaluated output categories, and up to four derivation packages with their attribute, name, and version.
+Selecting a result fetches repository metadata and raw `flake.nix` concurrently. The detail panel shows description, stars, archived state, default branch, last push time, topics, homepage, repository URL, detected inputs, evaluated output categories, and up to four derivation package attributes.
 
-Input detection is textual: it reads identifier-like names from the first balanced block after `inputs`, so unusual input construction can be missed. Package and module detection comes from the `nix flake show` JSON produced during search. Output labels combine those evaluated package and module results with the top-level attribute names returned for `overlays`, `devShells`, `apps`, and `formatter`.
+Input detection is textual: it reads identifier-like names from the first balanced block after `inputs`, so unusual input construction can be missed. Package and module detection comes from pure evaluation of the locked GitHub revision. Output labels combine those evaluated package and module results with top-level attribute names for `overlays`, `devShells`, `apps`, and `formatter`.
 
 Search results and details remain in memory only. NixBox does not clone repositories or persist flake-browser results.
 
@@ -108,6 +108,6 @@ The installer searches for literal strings such as `inputs = {`, `outputs = inpu
 - Only default NixOS and Home Manager module outputs can be installed; named non-default modules cannot be selected.
 - The UI automatically chooses the first ranked package when no target-compatible default module exists; it does not let the user select another package attribute.
 - Search and metadata use GitHub API quota from the authenticated `gh` account.
-- Package inspection uses the derivation metadata that `nix flake show` reports for the current system. Outputs for other systems appear as empty objects and do not qualify.
+- Package inspection evaluates only `packages.<current-system>` and rejects entries whose `type` is not `derivation`.
 - Search evaluates up to 12 remote flakes concurrently. Uncached searches can therefore take as long as the slowest successful evaluation, and failed candidates are omitted instead of reported individually.
 - Root-flake mutation is not transactional and has no automatic backup or rollback.
