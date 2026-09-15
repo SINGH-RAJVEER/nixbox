@@ -6,6 +6,15 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 This is the release that will be cut when the current `dev` branch is merged. The version and release date are not set yet.
 
+## 0.2.2 - 2026-09-15
+
+- Added a full command line interface. Every operation the TUI performs is now also a subcommand: `search`, `install`, `remove`, `migrate`, `apply`, `list`, `scan`, `status`, `doctor`, `flake`, `config`, and `completions`. Running `nixbox` with no subcommand still starts the TUI.
+- Added `--json` output to the read-only commands, `--target` and `--channel` overrides that apply to a single invocation, and `--dry-run`, `--no-rebuild`, and `--yes` to every command that changes configuration.
+- Refused an unconfirmed change when stdin is not a terminal, so a script that omits `--yes` stops instead of rebuilding a machine unattended.
+- Separated the exit code for a failed rebuild from the exit code for a failed command, so a caller can tell a written-but-unbuilt configuration from a refused one. The former is recoverable with `nixbox apply`.
+- Extracted the engine behind both front-ends into a new `nixbox-core` crate. A change made from the command line and the same change made in the TUI now take the identical code path and persist the identical `state.json` queue.
+- Extended flake installation to the command line, including removal of a flake's input and generated output, which the TUI does not offer.
+- Added a disposable NixOS virtual machine for testing NixBox against a real configuration and a real `nixos-rebuild switch` without touching the host, plus an automated headless check over the parts that work without a network.
 - Gated crate publishing on a CI `test` job that runs `cargo fmt --all --check`, Clippy with `-D warnings`, and the full test suite on the stable toolchain. The publish job now declares `needs: test` and no longer runs when that gate fails.
 - Extended the workflow to pull requests targeting `master` so the same gate reports before a release merge instead of after it.
 

@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-config"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "directories",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "nixbox-config",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-nix"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "libc",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-tui"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "crossterm",

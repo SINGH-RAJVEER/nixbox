@@ -16,10 +16,10 @@ name = "nixbox"
 path = "src/main.rs"
 
 [dependencies]
-nixbox-tui = { path = "../nixbox-tui", version = "0.2.1" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.1" }
-nixbox-core = { path = "../nixbox-core", version = "0.2.1" }
-nixbox-config = { path = "../nixbox-config", version = "0.2.1" }
+nixbox-tui = { path = "../nixbox-tui", version = "0.2.2" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.2" }
+nixbox-core = { path = "../nixbox-core", version = "0.2.2" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.2" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
