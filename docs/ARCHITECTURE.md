@@ -8,8 +8,12 @@ NixBox is a local terminal application. It does not run a daemon, expose an HTTP
 flowchart LR
 		User[Terminal user] --> Binary[nixbox binary]
 		Binary --> TUI[nixbox-tui]
-		TUI --> Config[nixbox-config]
-		TUI --> Nix[nixbox-nix]
+		Binary --> Core[nixbox-core]
+		TUI --> Core
+		Core --> Config[nixbox-config]
+		Core --> Nix[nixbox-nix]
+		TUI --> Config
+		TUI --> Nix
 		Config --> Settings[settings.json]
 		Nix --> Target[flake.nix and Nix modules]
 		Nix --> Commands[nix, home-manager, nixos-rebuild, git, gh]
@@ -19,20 +23,23 @@ flowchart LR
 
 ## Workspace crates
 
-The workspace uses Rust edition 2024 and contains four crates. The dependency direction is intentionally simple.
+The workspace uses Rust edition 2024 and contains five crates. The dependency direction is intentionally simple.
 
 | Crate | Responsibility | Local dependencies |
 | --- | --- | --- |
 | `nixbox-config` | Settings types, defaults, path resolution, JSON loading, and JSON saving. | None. |
 | `nixbox-nix` | Package search, package catalog, generated manifests, source scanning and migration, flake discovery and installation, rebuild command selection, output streaming, and cancellation. | None. |
-| `nixbox-tui` | Application state, terminal lifecycle, event handling, asynchronous task scheduling, operation queue, recovery state, Vim input behavior, navigation, themes, and rendering. | `nixbox-config`, `nixbox-nix`. |
-| `nixbox` | Clap metadata, tracing setup, Tokio runtime, and the call to `nixbox_tui::run`. | All three library crates are declared, although the entry point directly calls only `nixbox-tui`. |
+| `nixbox-core` | The headless engine: the `Op` type both front-ends queue, manifest mutation, import wiring, external-package scanning, flake input and output installation, and rebuild command selection. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
+| `nixbox-tui` | Application state, terminal lifecycle, event handling, asynchronous task scheduling, operation queue, recovery state, Vim input behavior, navigation, themes, and rendering. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
+| `nixbox` | Clap command tree, the non-interactive commands, output rendering, tracing setup, Tokio runtime, and the call to `nixbox_tui::run` when no subcommand is given. | All four library crates. |
 
-The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-tui`, then `nixbox`, because the TUI depends on the two leaf libraries and the binary depends on the TUI.
+The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, then `nixbox`. The engine sits on the two leaf libraries, and both front-ends sit on the engine.
+
+Both front-ends go through the same engine, so a change applied by `nixbox install` and the same change applied in the TUI take the identical code path. The engine is also what keeps `state.json` compatible between them: the queue holds `nixbox_core::Op` values verbatim, and the TUI's `QueuedOp` is a re-export of that type rather than a parallel definition.
 
 ## Startup and terminal lifecycle
 
-`crates/nixbox/src/main.rs` parses `--help` and `--version`, initializes tracing to stderr with a default `warn` filter, and calls `nixbox_tui::run()` on Tokio's multithreaded runtime.
+`crates/nixbox/src/main.rs` parses the command tree, initializes tracing to stderr with a default `warn` filter, and dispatches on Tokio's multithreaded runtime. With no subcommand it calls `nixbox_tui::run()`; with one it runs that command and returns its exit code. It also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
 
 `run()` loads settings and manifests before changing terminal state. It then enables raw mode, enters the alternate screen, selects a blinking bar cursor, and starts the event loop. On normal return it disables raw mode, restores the cursor shape, leaves the alternate screen, and shows the cursor. Errors returned after terminal initialization still pass through this cleanup path because `run()` stores the event-loop result before restoring the terminal.
 
@@ -100,11 +107,25 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `build.rs` resolves executables in common Nix profiles, chooses Home Manager or NixOS commands, starts rebuild process groups, forwards output, and cancels a complete process group.
 - `lib.rs` exports these modules and their main types and functions.
 
+### `nixbox-core`
+
+- `op.rs` defines `Op`, the unit of work both front-ends queue. Its variant and field names are an on-disk format, because the queue is persisted verbatim in `state.json`.
+- `engine.rs` owns `Engine`, which holds the settings and both manifests, applies an `Op`, writes the managed file, wires the import into the main config, stages files for Git-aware flake evaluation, and installs or removes flake inputs and outputs.
+- `rebuild.rs` selects the rebuild command for a target and reports when a Home Manager rebuild falls back to `nixos-rebuild`.
+- `report.rs` defines the `Reporter` trait plus a silent and a log-collecting implementation, which is how the same engine feeds the TUI's log pane and the CLI's stderr.
+
+### `nixbox`
+
+- `cli.rs` defines the Clap command tree, the global `--target`, `--channel`, and `--json` flags, and dispatch.
+- `apply.rs` is the shared path for every command that changes configuration: confirmation, the dry run, writing, the rebuild, and the exit code.
+- `commands/` holds one module per subcommand.
+- `render.rs` renders tables and field lists for the non-JSON output.
+
 ### `nixbox-tui`
 
 - `app.rs` owns `App`, startup scanning, terminal setup, the event loop, visible-tab rules, combined installed-package state, and task cleanup.
 - `handlers.rs` translates key presses and `AppEvent` values into state changes.
-- `ops.rs` schedules searches, validates operations, mutates manifests, stages changed files for Git-aware flake evaluation, batches the queue, and starts rebuilds.
+- `ops.rs` schedules searches, prepares the package catalog, validates operations, batches the queue, and starts rebuilds. The manifest mutation itself is delegated to `nixbox-core`.
 - `state.rs` serializes and restores pending operations, interrupted rebuilds, and the previous error.
 - `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command.
 - `nav.rs` handles wrapped row selection, tab movement, and settings entry.
