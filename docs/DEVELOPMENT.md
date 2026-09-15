@@ -149,7 +149,13 @@ Published crates must use one version across the workspace. Before merging a rel
 6. Inspect the Jujutsu diff and commit only the intended release files.
 7. Merge the verified `dev` commit into `master` through the project's normal review workflow.
 
-`.github/workflows/publish.yml` runs on pushes to `master`, checks the locked workspace, and publishes `nixbox-config`, `nixbox-nix`, `nixbox-tui`, and `nixbox` in dependency order. It treats an already-published version as a skip. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret.
+`.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains two jobs.
+
+The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --locked -- -D warnings`, and `cargo test --workspace --locked`. It runs on both triggers, so a pull request reports the same gate before the merge happens.
+
+The `publish` job declares `needs: test` and is restricted to `push` events, so it never runs from a pull request and never starts unless the `test` job succeeded. It checks the locked workspace, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-tui`, and `nixbox` in dependency order. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
+
+The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell runs nightly while this workflow runs stable, so a lint can fire in one and not the other. Run the gate on stable before a release if the local shell is on a different channel.
 
 The current `dev` manifest says `0.2.1`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
 

@@ -6,7 +6,8 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 This is the release that will be cut when the current `dev` branch is merged. The version and release date are not set yet.
 
-- No changes yet.
+- Gated crate publishing on a CI `test` job that runs `cargo fmt --all --check`, Clippy with `-D warnings`, and the full test suite on the stable toolchain. The publish job now declares `needs: test` and no longer runs when that gate fails.
+- Extended the workflow to pull requests targeting `master` so the same gate reports before a release merge instead of after it.
 
 ## 0.2.1 - 2026-09-15
 
