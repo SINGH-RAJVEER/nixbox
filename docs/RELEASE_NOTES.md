@@ -2,11 +2,9 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
-## Unreleased
+## 0.2.3 - 2026-09-16
 
-This is the release that will be cut when the current `dev` branch is merged. The version and release date are not set yet.
-
-## 0.2.2 - 2026-09-15
+The command line release. Neither 0.2.1 nor 0.2.2 reached crates.io, because the publish workflow could not authenticate; everything they described ships here.
 
 - Added a full command line interface. Every operation the TUI performs is now also a subcommand: `search`, `install`, `remove`, `migrate`, `apply`, `list`, `scan`, `status`, `doctor`, `flake`, `config`, and `completions`. Running `nixbox` with no subcommand still starts the TUI.
 - Added `--json` output to the read-only commands, `--target` and `--channel` overrides that apply to a single invocation, and `--dry-run`, `--no-rebuild`, and `--yes` to every command that changes configuration.

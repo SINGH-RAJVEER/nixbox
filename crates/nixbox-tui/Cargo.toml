@@ -12,9 +12,9 @@ categories.workspace = true
 description = "Ratatui front-end (search/build views, theming) for the nixbox TUI."
 
 [dependencies]
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.2" }
-nixbox-core = { path = "../nixbox-core", version = "0.2.2" }
-nixbox-config = { path = "../nixbox-config", version = "0.2.2" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.3" }
+nixbox-core = { path = "../nixbox-core", version = "0.2.3" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.3" }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

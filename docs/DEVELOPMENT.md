@@ -221,13 +221,15 @@ Published crates must use one version across the workspace. Before merging a rel
 
 `.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains two jobs.
 
-The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --locked -- -D warnings`, and `cargo test --workspace --locked`. It runs on both triggers, so a pull request reports the same gate before the merge happens.
+The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked`, followed by the same two checks `just cli` runs and a step that builds each binary package separately and confirms `nixbox-cli` rejects `tui` with `unrecognized subcommand`. It runs on both triggers, so a pull request reports the same gate before the merge happens.
 
-The `publish` job declares `needs: test` and is restricted to `push` events, so it never runs from a pull request and never starts unless the `test` job succeeded. It checks the locked workspace, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, and `nixbox` in dependency order. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
+The `publish` job declares `needs: test` and is restricted to `push` events, so it never runs from a pull request and never starts unless the `test` job succeeded. It checks the locked workspace, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, and `nixbox-cli` in dependency order. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
 
 The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell runs nightly while this workflow runs stable, so a lint can fire in one and not the other. Run the gate on stable before a release if the local shell is on a different channel.
 
-The current `dev` manifest says `0.2.2`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
+The current `dev` manifest says `0.2.3`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
+
+Nothing after `0.2.0` reached crates.io before `0.2.3`: the `0.2.1` and `0.2.2` publishes both failed on an expired token, which is why `nixbox-core` had no released version at all despite two attempts. A failed publish leaves no trace on crates.io, so a version that failed to upload can be reused; a version that uploaded cannot, even after a yank.
 
 ## Documentation style
 

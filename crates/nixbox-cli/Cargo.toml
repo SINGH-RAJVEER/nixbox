@@ -21,5 +21,5 @@ path = "src/main.rs"
 # `default-features = false` is what makes this build a CLI: it leaves the
 # `tui` feature off, so ratatui, crossterm, tui-input, and nixbox-tui are
 # never compiled.
-nixbox-cmd = { path = "../nixbox-cmd", version = "0.2.2", default-features = false }
+nixbox-cmd = { path = "../nixbox-cmd", version = "0.2.3", default-features = false }
 tokio = { workspace = true }
