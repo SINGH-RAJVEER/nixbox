@@ -11,6 +11,17 @@ on:
 permissions:
   contents: read
 
+# Publishing is not idempotent across concurrent runs: two pushes racing up
+# the seven-crate chain can each see a version as unpublished and both try to
+# upload it. Never cancel one in flight, though, or the chain is left half
+# published.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     name: Format, lint, and test
@@ -25,21 +36,75 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Check formatting
         run: cargo fmt --all --check
 
+      # --all-targets so tests and examples are linted too, not just the
+      # library and binary targets.
       - name: Lint
-        run: cargo clippy --workspace --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
         run: cargo test --workspace --locked
 
-      # A workspace build unifies features and always enables nixbox-cmd's
-      # `tui`, so the nixbox-cli configuration is only covered on its own.
+      # A workspace build unifies features, so the above always compiles
+      # nixbox-cmd with `tui` on and says nothing about the nixbox-cli
+      # configuration. Building those two packages alone is what covers it.
       - name: Lint and test without the terminal UI
         run: |
           cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets --locked -- -D warnings
           cargo test -p nixbox-cli -p nixbox-cmd --locked
+
+      # The two packages are meant to produce two differently named binaries
+      # that both work. A rename or a broken feature gate should fail here
+      # rather than after publishing.
+      - name: Check both binaries
+        run: |
+          set -euo pipefail
+
+          # One invocation per package, deliberately. Building them together
+          # unifies features, which turns the UI on for nixbox-cmd and leaves
+          # a target/debug/nixbox-cli that is not the artifact users get.
+          cargo build -p nixbox --locked
+          cargo build -p nixbox-cli --locked
+
+          test -x target/debug/nixbox
+          test -x target/debug/nixbox-cli
+
+          target/debug/nixbox --version
+          target/debug/nixbox-cli --version
+
+          # Captured rather than piped into `grep -q`: these binaries restore
+          # the default SIGPIPE disposition on purpose, so an early-closing
+          # reader kills them and `pipefail` reports the whole line as failed.
+          help="$(target/debug/nixbox --help)"
+          grep -q 'Usage: nixbox' <<<"$help"
+          help="$(target/debug/nixbox-cli --help)"
+          grep -q 'Usage: nixbox-cli' <<<"$help"
+
+          # The feature gate has to have actually removed the subcommand.
+          # Checking the message and not just a non-zero exit matters: a
+          # nixbox-cli that still carries the UI also fails here, by failing
+          # to open a terminal, and would otherwise look like a pass.
+          if target/debug/nixbox-cli tui 2>tui.log; then
+            echo "nixbox-cli accepted the tui subcommand" >&2
+            exit 1
+          fi
+          if ! grep -q "unrecognized subcommand 'tui'" tui.log; then
+            echo "nixbox-cli rejected 'tui' for the wrong reason:" >&2
+            cat tui.log >&2
+            exit 1
+          fi
+
+          # A bare run prints help and exits non-zero rather than silently.
+          if target/debug/nixbox-cli >/dev/null 2>bare.log; then
+            echo "bare nixbox-cli exited successfully" >&2
+            exit 1
+          fi
+          grep -q 'This is nixbox-cli' bare.log
 
   publish:
     name: Publish workspace crates
@@ -54,6 +119,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Verify workspace
         run: cargo check --workspace --locked
 
@@ -67,19 +135,29 @@ jobs:
           # Dependency order: nixbox-core sits on the two leaf libraries,
           # nixbox-cmd sits on nixbox-core and optionally nixbox-tui, and the
           # two published binaries are both thin wrappers over nixbox-cmd.
+          # Each crate depends on the published version of the one before it,
+          # so the order is load-bearing. cargo waits for the index after
+          # each upload, which is what makes the next one resolvable.
           crates=(nixbox-config nixbox-nix nixbox-core nixbox-tui nixbox-cmd nixbox nixbox-cli)
 
           for crate in "${crates[@]}"; do
-            echo "Publishing ${crate} ${version}"
+            echo "::group::Publishing ${crate} ${version}"
 
             if cargo publish -p "$crate" --locked 2>&1 | tee publish.log; then
+              echo "::endgroup::"
               continue
             fi
 
-            if grep -q "already exists on crates.io index" publish.log; then
-              echo "${crate} ${version} already exists on crates.io; skipping"
+            # A re-run after a partial failure, or a push that did not bump
+            # the version, finds crates already uploaded. That is success.
+            # cargo has worded this several ways, so match loosely.
+            if grep -qiE 'already (exists|uploaded)|crate version .* is already' publish.log; then
+              echo "${crate} ${version} is already on crates.io; skipping"
+              echo "::endgroup::"
               continue
             fi
 
+            echo "::endgroup::"
+            echo "Publishing ${crate} ${version} failed" >&2
             exit 1
           done

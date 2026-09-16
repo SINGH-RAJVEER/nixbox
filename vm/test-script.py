@@ -147,9 +147,11 @@ with subtest("nixbox-cli is the same program without the UI"):
 	cli = machine.succeed("su -l tester -c 'nixbox-cli --help'")
 	assert "Usage: nixbox-cli" in cli, cli
 	assert "no terminal UI" in cli, cli
-	# The `tui` subcommand is feature-gated away, and a bare run says so
-	# rather than exiting silently.
-	machine.fail("su -l tester -c 'nixbox-cli tui'")
+	# The `tui` subcommand is feature-gated away. The message matters as
+	# much as the failure: a nixbox-cli that still carried the UI would
+	# also fail here, by having no terminal to open.
+	rejected = machine.fail("su -l tester -c 'nixbox-cli tui' 2>&1")
+	assert "unrecognized subcommand 'tui'" in rejected, rejected
 	bare = machine.fail("su -l tester -c 'nixbox-cli 2>&1'")
 	assert "This is nixbox-cli" in bare, bare
 	# Hints name the binary that was actually run.

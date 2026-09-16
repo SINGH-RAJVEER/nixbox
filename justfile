@@ -40,9 +40,11 @@ release-cli:
 fmt:
     cargo fmt --all
 
+# --all-targets so test code is linted too, matching CI.
+
 # Lint with clippy
 lint:
-    cargo clippy --workspace -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
 
 # Format + lint
 fix: fmt lint
