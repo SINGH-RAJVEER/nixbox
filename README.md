@@ -35,14 +35,14 @@ cargo install nixbox-cli
 Run NixBox directly from its flake:
 
 ```sh
-nix run github:SINGH-RAJVEER/nix-box
+nix run github:SINGH-RAJVEER/nixbox
 ```
 
 Add NixBox to another flake:
 
 ```nix
 {
-	inputs.nixbox.url = "github:SINGH-RAJVEER/nix-box";
+	inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";
 
 	outputs = inputs@{ self, nixpkgs, nixbox, ... }: {
 		nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {

@@ -83,7 +83,7 @@
                 "TUI package manager for NixOS and Home Manager"
               else
                 "Command-line package manager for NixOS and Home Manager";
-            homepage = "https://github.com/SINGH-RAJVEER/nix-box";
+            homepage = "https://github.com/SINGH-RAJVEER/nixbox";
             license = pkgs.lib.licenses.asl20;
             mainProgram = binary;
             platforms = pkgs.lib.platforms.unix;
