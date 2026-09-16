@@ -3,14 +3,11 @@ use std::{collections::VecDeque, time::Duration};
 use anyhow::{Result, anyhow};
 use directories::BaseDirs;
 use nixbox_config::Target;
+use nixbox_core::{HOME_FALLBACK_NOTE, LogReporter, rebuild::resolve as resolve_rebuild};
 use nixbox_nix::{
-    build::{
-        BuildEvent, flake_has_home_configuration, home_manager_switch_cmd,
-        nixos_rebuild_switch_cmd, rebuild,
-    },
-    flakes::{ensure_flake_input, fetch_flake_details, search_flakes},
-    manifest::{FlakeManifest, ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported},
-    scan::{ScanTarget, remove_from_source},
+    build::{BuildEvent, rebuild},
+    flakes::{fetch_flake_details, search_flakes},
+    scan::ScanTarget,
     search::PackageCatalog,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -18,89 +15,6 @@ use tokio::time::sleep;
 
 use crate::app::{App, AppEvent, InstalledCursor, QueuedOp, Tab};
 use crate::state::InProgress;
-
-fn scope_to_scan_target(scope: Target) -> ScanTarget {
-    match scope {
-        Target::HomeManager => ScanTarget::HomeManager,
-        Target::NixosSystem => ScanTarget::Nixos,
-    }
-}
-
-pub(crate) fn write_manifest(app: &App, scope: Target) -> Result<ManagedFile> {
-    let managed = ManagedFile::new(app.config.managed_file_for(scope));
-    match scope {
-        Target::HomeManager => managed.write_home_manager(app.manifest_for(scope))?,
-        Target::NixosSystem => managed.write_nixos(app.manifest_for(scope))?,
-    }
-    Ok(managed)
-}
-
-/// Runs `git add -- <path>` if `path` lives inside a git work tree.
-/// Silent no-op when git isn't installed or the path isn't tracked-eligible.
-/// Nix flakes refuse to evaluate files that are present on disk but untracked,
-/// so this keeps newly-written managed files visible to the rebuild.
-fn git_track(path: &std::path::Path) -> Option<String> {
-    let parent = path.parent()?;
-    let inside = std::process::Command::new("git")
-        .arg("-C")
-        .arg(parent)
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !inside.status.success()
-        || std::str::from_utf8(&inside.stdout).map(|s| s.trim()) != Ok("true")
-    {
-        return None;
-    }
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(parent)
-        .args(["add", "--intent-to-add", "--"])
-        .arg(path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .ok()?;
-    if out.status.success() {
-        Some(format!("git add -N {}", path.display()))
-    } else {
-        Some(format!(
-            "Warning: `git add` failed for {}: {}",
-            path.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
-}
-
-/// Notes describing any change that should be surfaced to the user.
-fn ensure_imported_note(main_file: &std::path::Path, managed: &ManagedFile) -> Option<String> {
-    match ensure_imported(main_file, managed.path()) {
-        Ok(ImportStatus::AlreadyImported) => None,
-        Ok(ImportStatus::InsertedIntoList) => Some(format!(
-            "Added import of {} to {}.",
-            managed.path().display(),
-            main_file.display(),
-        )),
-        Ok(ImportStatus::CreatedList) => Some(format!(
-            "Created imports list in {} and added {}.",
-            main_file.display(),
-            managed.path().display(),
-        )),
-        Ok(ImportStatus::MainFileMissing) => Some(format!(
-            "Warning: {} not found; you must import {} manually.",
-            main_file.display(),
-            managed.path().display(),
-        )),
-        Err(e) => Some(format!(
-            "Warning: could not auto-import {} into {}: {}",
-            managed.path().display(),
-            main_file.display(),
-            e,
-        )),
-    }
-}
 
 pub(crate) fn spawn_rebuild(
     app: &mut App,
@@ -120,7 +34,7 @@ pub(crate) fn spawn_rebuild(
     app.status = format!("{}...", action_label);
     app.persist();
 
-    let config_dir = app.config.home_manager_dir();
+    let config_dir = app.engine.config.home_manager_dir();
     let app_tx = tx.clone();
     tokio::spawn(async move {
         let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
@@ -132,51 +46,30 @@ pub(crate) fn spawn_rebuild(
                 }
             }
         });
-        let cmd_owned;
-        let args_owned;
-        let (cmd, args): (&str, Vec<&str>) = match scope {
-            Target::HomeManager => {
-                // If the flake doesn't expose a standalone `homeConfigurations.<user>`
-                // output, the user wires home-manager in as a NixOS module — apply
-                // the change via `nixos-rebuild` instead.
-                let has_home_configuration = tokio::select! {
-                    has_home = flake_has_home_configuration(&config_dir) => has_home,
-                    _ = &mut cancel_rx => {
-                        let _ = build_tx.send(BuildEvent::Cancelled).await;
-                        drop(build_tx);
-                        let _ = forwarder.await;
-                        return;
-                    }
-                };
-                let (c, a) = if has_home_configuration {
-                    home_manager_switch_cmd(&config_dir)
-                } else {
-                    let _ = app_tx
-                        .send(AppEvent::Build(BuildEvent::Line(
-                            "No standalone homeConfigurations found; applying via nixos-rebuild."
-                                .into(),
-                        )))
-                        .await;
-                    nixos_rebuild_switch_cmd(&config_dir)
-                };
-                cmd_owned = c;
-                args_owned = a;
-                (
-                    cmd_owned.as_str(),
-                    args_owned.iter().map(|s| s.as_str()).collect(),
-                )
-            }
-            Target::NixosSystem => {
-                let (c, a) = nixos_rebuild_switch_cmd(&config_dir);
-                cmd_owned = c;
-                args_owned = a;
-                (
-                    cmd_owned.as_str(),
-                    args_owned.iter().map(|s| s.as_str()).collect(),
-                )
+        // Resolving a home-manager rebuild evaluates the flake, which is slow
+        // enough to be worth racing against the cancel signal.
+        let command = tokio::select! {
+            command = resolve_rebuild(&config_dir, scope) => command,
+            _ = &mut cancel_rx => {
+                let _ = build_tx.send(BuildEvent::Cancelled).await;
+                drop(build_tx);
+                let _ = forwarder.await;
+                return;
             }
         };
-        if let Err(e) = rebuild(cmd, &args, build_tx.clone(), cancel_rx).await {
+        if command.via_nixos_fallback {
+            let _ = app_tx
+                .send(AppEvent::Build(BuildEvent::Line(HOME_FALLBACK_NOTE.into())))
+                .await;
+        }
+        if let Err(e) = rebuild(
+            &command.program,
+            &command.arg_refs(),
+            build_tx.clone(),
+            cancel_rx,
+        )
+        .await
+        {
             let _ = build_tx
                 .send(BuildEvent::Finished(Err(e.to_string())))
                 .await;
@@ -247,59 +140,14 @@ fn take_queued_scope(app: &mut App, scope: Target) -> Vec<QueuedOp> {
     batch
 }
 
+/// Hands one queued op to the engine and folds whatever it reports into the
+/// build log, then keeps the Installed cursor inside the new bounds.
 fn apply_op_to_manifest(app: &mut App, op: &QueuedOp) -> Result<()> {
-    let scope = op.scope();
-    match op {
-        QueuedOp::Install { hit, .. } => {
-            app.manifest_for_mut(scope).add(&hit.attr);
-        }
-        QueuedOp::InstallFlake { repo, module, .. } => {
-            apply_flake_output(app, scope, repo, |manifest| {
-                manifest.add(repo.clone(), module.clone());
-            })?;
-            return Ok(());
-        }
-        QueuedOp::InstallFlakePackage { repo, package, .. } => {
-            apply_flake_output(app, scope, repo, |manifest| {
-                manifest.add_package(repo.clone(), package.clone());
-            })?;
-            return Ok(());
-        }
-        QueuedOp::Uninstall { name, .. } => {
-            app.manifest_for_mut(scope).remove(name);
-        }
-        QueuedOp::Migrate { names, .. } => {
-            let source = app.config.main_file_for(scope);
-            let removed = remove_from_source(&source, scope_to_scan_target(scope), names)?;
-            for name in &removed {
-                app.manifest_for_mut(scope).add(name);
-            }
-            // Drop any externals that just moved into the manifest.
-            app.external_packages
-                .retain(|ep| !(ep_target_eq(ep.scope, scope) && removed.contains(&ep.name)));
-        }
-    }
-    let managed = write_manifest(app, scope)?;
-    app.log.push(format!(
-        "Wrote {} ({}). {}...",
-        managed.path().display(),
-        scope.label(),
-        op.label(),
-    ));
-    let main_file = app.config.main_file_for(scope);
-    if let Some(note) = ensure_imported_note(&main_file, &managed) {
-        app.log.push(note);
-    }
-    // Flakes ignore untracked files — make sure git sees the managed file
-    // (and the main config if we just touched it).
-    if let Some(note) = git_track(managed.path()) {
-        app.log.push(note);
-    }
-    if main_file.exists()
-        && let Some(note) = git_track(&main_file)
-    {
-        app.log.push(note);
-    }
+    let mut reporter = LogReporter::new();
+    let result = app.engine.apply(op, &mut reporter);
+    app.log.extend(reporter.into_lines());
+    result?;
+
     let total = app.installed_total();
     if total == 0 {
         app.installed_selected = 0;
@@ -309,55 +157,10 @@ fn apply_op_to_manifest(app: &mut App, op: &QueuedOp) -> Result<()> {
     Ok(())
 }
 
-fn apply_flake_output(
-    app: &mut App,
-    scope: Target,
-    repo: &str,
-    update: impl FnOnce(&mut FlakeManifest),
-) -> Result<()> {
-    let (special_args, constructor) = match scope {
-        Target::HomeManager => ("extraSpecialArgs", "homeManagerConfiguration"),
-        Target::NixosSystem => ("specialArgs", "nixosSystem"),
-    };
-    let flake_file = app.config.flake_file();
-    ensure_flake_input(&flake_file, repo, special_args, constructor)?;
-    let managed = ManagedFlakeFile::new(app.config.flake_manifest_for(scope));
-    let mut manifest = managed.load()?;
-    update(&mut manifest);
-    match scope {
-        Target::HomeManager => managed.write_home_manager(&manifest)?,
-        Target::NixosSystem => managed.write_nixos(&manifest)?,
-    }
-    app.log.push(format!(
-        "Added github:{repo} to {} and wired its selected output into {}.",
-        flake_file.display(),
-        scope.label(),
-    ));
-    let main_file = app.config.main_file_for(scope);
-    if let Some(note) = ensure_imported_note(&main_file, &ManagedFile::new(managed.path())) {
-        app.log.push(note);
-    }
-    for path in [&flake_file, managed.path(), &main_file] {
-        if path.exists()
-            && let Some(note) = git_track(path)
-        {
-            app.log.push(note);
-        }
-    }
-    Ok(())
-}
-
-fn ep_target_eq(scan_scope: ScanTarget, target: Target) -> bool {
-    matches!(
-        (scan_scope, target),
-        (ScanTarget::HomeManager, Target::HomeManager) | (ScanTarget::Nixos, Target::NixosSystem)
-    )
-}
-
 pub(crate) async fn install_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
     if app.package_catalog.as_ref().is_some_and(|catalog| {
         !catalog
-            .is_current_for(&app.config.home_manager_dir())
+            .is_current_for(&app.engine.config.home_manager_dir())
             .unwrap_or(false)
     }) {
         app.package_catalog = None;
@@ -371,7 +174,7 @@ pub(crate) async fn install_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>)
         return Ok(());
     };
 
-    let scope = app.config.target;
+    let scope = app.engine.config.target;
     let already_tracked = app.manifest_for(scope).packages.contains(&hit.attr);
     let already_queued = app.queue.iter().any(|op| match op {
         QueuedOp::Install { hit: h, scope: s } => *s == scope && h.attr == hit.attr,
@@ -403,7 +206,7 @@ pub(crate) async fn install_selected_flake(
         app.status = "Wait for flake details before installing.".into();
         return Ok(());
     };
-    let scope = app.config.target;
+    let scope = app.engine.config.target;
     if app.queue.iter().any(|op| {
         matches!(
             op,
@@ -550,7 +353,7 @@ pub(crate) async fn migrate_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>)
 pub(crate) async fn migrate_all(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
     let mut hm: Vec<String> = Vec::new();
     let mut nx: Vec<String> = Vec::new();
-    for ep in &app.external_packages {
+    for ep in &app.engine.external_packages {
         if !ep.migratable {
             continue;
         }
@@ -599,7 +402,7 @@ pub(crate) fn prepare_package_catalog(app: &mut App, tx: mpsc::Sender<AppEvent>)
         app.catalog_loading = false;
         return;
     };
-    let config_dir = app.config.home_manager_dir();
+    let config_dir = app.engine.config.home_manager_dir();
     let cache_path = base_dirs
         .cache_dir()
         .join("nixbox")
@@ -637,7 +440,7 @@ pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
     app.searching = true;
     app.search_epoch += 1;
     let epoch = app.search_epoch;
-    let channel = app.config.channel.clone();
+    let channel = app.engine.config.channel.clone();
     app.latest_query = query.clone();
 
     if app.catalog_loading {
@@ -647,7 +450,7 @@ pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
 
     if app.package_catalog.as_ref().is_some_and(|catalog| {
         !catalog
-            .is_current_for(&app.config.home_manager_dir())
+            .is_current_for(&app.engine.config.home_manager_dir())
             .unwrap_or(false)
     }) {
         app.package_catalog = None;

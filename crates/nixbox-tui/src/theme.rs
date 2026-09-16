@@ -104,3 +104,15 @@ pub const MONOKAI: Theme = Theme {
     title_color: Color::Rgb(249, 38, 114),
     bg_color: Some(Color::Rgb(39, 40, 34)),
 };
+
+#[cfg(test)]
+mod tests {
+    use super::ALL;
+
+    #[test]
+    fn the_palettes_match_the_names_the_settings_file_accepts() {
+        let palettes: Vec<&str> = ALL.iter().map(|theme| theme.name).collect();
+
+        assert_eq!(palettes, nixbox_config::THEMES);
+    }
+}

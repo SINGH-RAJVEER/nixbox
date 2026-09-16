@@ -1,0 +1,21 @@
+[package]
+name = "nixbox-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Headless engine behind nixbox: manifest mutation, config wiring, and rebuild dispatch"
+
+[dependencies]
+nixbox-config = { path = "../nixbox-config", version = "0.2.3" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.3" }
+anyhow = { workspace = true }
+directories = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

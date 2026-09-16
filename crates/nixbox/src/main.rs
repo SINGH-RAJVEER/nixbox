@@ -1,19 +1,11 @@
-use anyhow::Result;
-use clap::Parser;
-use tracing_subscriber::EnvFilter;
+//! The `nixbox` binary: every subcommand plus the terminal UI.
+//!
+//! Running it with no subcommand opens the UI. The commands themselves live
+//! in `nixbox-cmd`, shared with the UI-less `nixbox-cli` binary.
 
-#[derive(Parser)]
-#[command(name = "nixbox", version, about)]
-struct Cli {}
+use std::process::ExitCode;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let _ = Cli::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-    nixbox_tui::run().await
+async fn main() -> ExitCode {
+    nixbox_cmd::run(env!("CARGO_BIN_NAME")).await
 }

@@ -2,11 +2,26 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
-## Unreleased
+## 0.2.3 - 2026-09-16
 
-This is the release that will be cut when the current `dev` branch is merged. The version and release date are not set yet.
+The command line release. Neither 0.2.1 nor 0.2.2 reached crates.io, because the publish workflow could not authenticate; everything they described ships here.
 
-- No changes yet.
+- Added a full command line interface. Every operation the TUI performs is now also a subcommand: `search`, `install`, `remove`, `migrate`, `apply`, `list`, `scan`, `status`, `doctor`, `flake`, `config`, and `completions`. Running `nixbox` with no subcommand still starts the TUI.
+- Added `--json` output to the read-only commands, `--target` and `--channel` overrides that apply to a single invocation, and `--dry-run`, `--no-rebuild`, and `--yes` to every command that changes configuration.
+- Refused an unconfirmed change when stdin is not a terminal, so a script that omits `--yes` stops instead of rebuilding a machine unattended.
+- Separated the exit code for a failed rebuild from the exit code for a failed command, so a caller can tell a written-but-unbuilt configuration from a refused one. The former is recoverable with `nixbox apply`.
+- Extracted the engine behind both front-ends into a new `nixbox-core` crate. A change made from the command line and the same change made in the TUI now take the identical code path and persist the identical `state.json` queue.
+- Extended flake installation to the command line, including removal of a flake's input and generated output, which the TUI does not offer.
+- Split the program into two published packages. `nixbox` is unchanged; the new `nixbox-cli` is the same subcommands with no terminal UI, installing as `nixbox-cli` so both can sit on one machine. It pulls 60 dependency packages against 108, leaving out `ratatui`, `crossterm`, and `tui-input`.
+- Moved the command tree into a new `nixbox-cmd` crate shared by both binaries, so the two can never drift apart. Each binary is a four-line `main`; the terminal UI is a Cargo feature that only `nixbox` turns on.
+- Made help text, generated completion scripts, and hints like "run `nixbox apply`" use the name the running binary was installed as.
+- Moved the theme names and the `state.json` format out of the UI crate into `nixbox-config` and `nixbox-core`, so `nixbox config set theme` and `nixbox resume` work in a build with no terminal UI.
+- Routed `nixbox search` and `nixbox install` through the local package catalog, matching the TUI. An explicit `--channel` still searches the channel live, and a missing catalog falls back to live search with a note.
+- Added `nixbox resume`, which finishes an interrupted rebuild or drains a queue left by the TUI, one target at a time. `--dry-run` prints the queue and `--discard` clears it.
+- Recorded a command-line rebuild in `state.json` before it starts, so a run killed mid-rebuild can be resumed from either front-end.
+- Added a disposable NixOS virtual machine for testing NixBox against a real configuration and a real `nixos-rebuild switch` without touching the host, plus an automated headless check over the parts that work without a network.
+- Gated crate publishing on a CI `test` job that runs `cargo fmt --all --check`, Clippy with `-D warnings`, and the full test suite on the stable toolchain. The publish job now declares `needs: test` and no longer runs when that gate fails.
+- Extended the workflow to pull requests targeting `master` so the same gate reports before a release merge instead of after it.
 
 ## 0.2.1 - 2026-09-15
 

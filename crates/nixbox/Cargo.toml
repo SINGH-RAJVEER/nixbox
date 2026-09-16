@@ -16,11 +16,7 @@ name = "nixbox"
 path = "src/main.rs"
 
 [dependencies]
-nixbox-tui = { path = "../nixbox-tui", version = "0.2.1" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.1" }
-nixbox-config = { path = "../nixbox-config", version = "0.2.1" }
-anyhow = { workspace = true }
-clap = { workspace = true }
+# The whole program, with the terminal UI. For the same commands without it,
+# install `nixbox-cli` instead.
+nixbox-cmd = { path = "../nixbox-cmd", version = "0.2.3", features = ["tui"] }
 tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }

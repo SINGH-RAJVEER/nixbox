@@ -17,7 +17,7 @@ pub(super) fn draw_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Tab::Installed => (&app.installed_input, "search installed applications"),
         _ => (&app.input, "search nixpkgs"),
     };
-    let (mode_label, mode_style) = match (app.config.input_mode, input.mode()) {
+    let (mode_label, mode_style) = match (app.engine.config.input_mode, input.mode()) {
         (InputMode::Normal, _) => (" NORMAL ", t.title_style()),
         (InputMode::Vim, VimMode::Insert) => (" INSERT ", t.title_style()),
         (InputMode::Vim, VimMode::Normal) => (" NORMAL ", dim),
@@ -172,18 +172,18 @@ fn context_keys(app: &App) -> &'static str {
     match app.mode {
         Mode::SettingsSelect
             if app.settings_page == SettingsPage::Main
-                && app.config.input_mode == InputMode::Normal =>
+                && app.engine.config.input_mode == InputMode::Normal =>
         {
             "↑↓ select  ↵ open  esc close"
         }
-        Mode::SettingsSelect if app.config.input_mode == InputMode::Normal => {
+        Mode::SettingsSelect if app.engine.config.input_mode == InputMode::Normal => {
             "↑↓ select  ↵ confirm  esc back"
         }
         Mode::SettingsSelect if app.settings_page == SettingsPage::Main => {
             "↑↓/j/k select  ↵ open  esc close"
         }
         Mode::SettingsSelect => "↑↓/j/k select  ↵ confirm  esc back",
-        Mode::Browsing if app.config.input_mode == InputMode::Normal => match app.tab {
+        Mode::Browsing if app.engine.config.input_mode == InputMode::Normal => match app.tab {
             Tab::Search => {
                 "type  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ↵ install  ctrl-s settings"
             }

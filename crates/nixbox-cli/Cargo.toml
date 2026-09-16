@@ -1,0 +1,25 @@
+[package]
+name = "nixbox-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Command-line package manager for NixOS and Home Manager, without the terminal UI"
+
+[[bin]]
+# Deliberately not `nixbox`: that name belongs to the `nixbox` crate, and two
+# packages installing the same executable would overwrite each other.
+name = "nixbox-cli"
+path = "src/main.rs"
+
+[dependencies]
+# `default-features = false` is what makes this build a CLI: it leaves the
+# `tui` feature off, so ratatui, crossterm, tui-input, and nixbox-tui are
+# never compiled.
+nixbox-cmd = { path = "../nixbox-cmd", version = "0.2.3", default-features = false }
+tokio = { workspace = true }

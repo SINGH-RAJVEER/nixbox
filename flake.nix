@@ -12,11 +12,27 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      linuxSystems = builtins.filter (nixpkgs.lib.hasSuffix "-linux") supportedSystems;
+      forAllLinuxSystems = nixpkgs.lib.genAttrs linuxSystems;
+      # nixosConfigurations is a flat attribute set, so the test VM is pinned
+      # to one system rather than generated per system.
+      vmSystem = "x86_64-linux";
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      # Two packages, because the workspace publishes two binaries from one
+      # shared command tree: `nixbox` with the terminal UI, `nixbox-cli`
+      # without it. Same subcommands either way.
       mkNixbox =
-        pkgs:
+        {
+          pkgs,
+          package ? "nixbox",
+        }:
+        let
+          # `nixbox-cli` deliberately installs under its own name so both can
+          # sit in one profile without overwriting each other.
+          binary = package;
+        in
         pkgs.rustPlatform.buildRustPackage {
-          pname = "nixbox";
+          pname = package;
           version = cargoToml.workspace.package.version;
 
           src = pkgs.lib.fileset.toSource {
@@ -33,14 +49,25 @@
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [
             "--package"
-            "nixbox"
+            package
           ];
-          cargoTestFlags = [ "--workspace" ];
+          # A workspace test run unifies features and always enables the UI,
+          # so the CLI package is tested on its own to cover the other half.
+          cargoTestFlags =
+            if package == "nixbox" then
+              [ "--workspace" ]
+            else
+              [
+                "--package"
+                "nixbox-cli"
+                "--package"
+                "nixbox-cmd"
+              ];
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 
           postInstall = ''
-            wrapProgram $out/bin/nixbox \
+            wrapProgram $out/bin/${binary} \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
                   pkgs.gh
@@ -51,10 +78,14 @@
           '';
 
           meta = {
-            description = "TUI package manager for NixOS and Home Manager";
-            homepage = "https://github.com/SINGH-RAJVEER/nix-box";
+            description =
+              if package == "nixbox" then
+                "TUI package manager for NixOS and Home Manager"
+              else
+                "Command-line package manager for NixOS and Home Manager";
+            homepage = "https://github.com/SINGH-RAJVEER/nixbox";
             license = pkgs.lib.licenses.asl20;
-            mainProgram = "nixbox";
+            mainProgram = binary;
             platforms = pkgs.lib.platforms.unix;
           };
         };
@@ -66,7 +97,11 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          nixbox = mkNixbox pkgs;
+          nixbox = mkNixbox { inherit pkgs; };
+          nixbox-cli = mkNixbox {
+            inherit pkgs;
+            package = "nixbox-cli";
+          };
           default = nixbox;
         }
       );
@@ -80,7 +115,39 @@
       });
 
       overlays.default = final: _prev: {
-        nixbox = mkNixbox final;
+        nixbox = mkNixbox { pkgs = final; };
+        nixbox-cli = mkNixbox {
+          pkgs = final;
+          package = "nixbox-cli";
+        };
       };
+
+      # A throwaway VM for exercising NixBox against a real rebuild. Build and
+      # boot it with `just vm`. Nothing here is ever applied to the host: the
+      # only safe subcommands are `build-vm` and `build-vm-with-bootloader`.
+      nixosConfigurations.nixbox-testvm = nixpkgs.lib.nixosSystem {
+        system = vmSystem;
+        specialArgs = {
+          nixbox = self.packages.${vmSystem}.default;
+          nixboxCli = self.packages.${vmSystem}.nixbox-cli;
+          nixpkgsFlake = nixpkgs;
+        };
+        modules = [ ./vm/host.nix ];
+      };
+
+      checks = forAllLinuxSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          cli = import ./vm/test.nix {
+            nixbox = self.packages.${system}.default;
+            nixboxCli = self.packages.${system}.nixbox-cli;
+            nixpkgsFlake = nixpkgs;
+            inherit (pkgs) testers;
+          };
+        }
+      );
     };
 }

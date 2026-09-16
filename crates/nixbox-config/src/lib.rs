@@ -69,6 +69,20 @@ pub struct Config {
     pub nixos_main_file: Option<PathBuf>,
 }
 
+/// Every theme name `theme` accepts.
+///
+/// The palettes themselves belong to the front-end that draws them, but the
+/// name is a stored setting, so validating one must not require the TUI to be
+/// compiled in. A test in `nixbox-tui` keeps the two lists in step.
+pub const THEMES: [&str; 6] = [
+    "default",
+    "dracula",
+    "gruvbox",
+    "nord",
+    "catppuccin",
+    "monokai",
+];
+
 fn default_theme() -> String {
     "default".to_string()
 }

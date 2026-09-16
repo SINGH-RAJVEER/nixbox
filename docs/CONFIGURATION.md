@@ -61,7 +61,11 @@ NixBox writes a new catalog to `package-catalog.json.tmp` and renames it over th
 
 NixBox stores unfinished work at `$XDG_CONFIG_HOME/nixbox/state.json`, normally `~/.config/nixbox/state.json`. The file may contain queued operations, one in-progress rebuild descriptor, and the last rebuild error.
 
-When state becomes empty, NixBox removes the file. Load and save failures are intentionally non-fatal in the TUI. A malformed state file is ignored, so it may need manual inspection if expected recovery does not happen.
+When state becomes empty, NixBox removes the file. Load and save failures are intentionally non-fatal. A malformed state file is ignored, so it may need manual inspection if expected recovery does not happen.
+
+Both front-ends read and write this one file. Starting the TUI restores whatever it holds, and `nixbox resume` does the same from the command line: it re-runs an interrupted rebuild and applies a queued batch one target at a time. `nixbox resume --dry-run` prints the contents without acting on them, and `nixbox resume --discard` clears the file.
+
+The format is defined by `nixbox-core`, not by the UI crate, so `nixbox-cli` reads the same file.
 
 ## Generated Nix files
 

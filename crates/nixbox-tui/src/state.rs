@@ -1,76 +1,14 @@
-//! Persistence for the bits of TUI state that must survive a crash or kill:
-//! the pending queue, the operation that was mid-flight (so we can re-run the
-//! interrupted rebuild), and the last error message.
+//! Restoring the work that a previous run left behind.
 //!
-//! The manifest file on disk is written *before* `spawn_rebuild` runs, so if
-//! the rebuild gets killed mid-flight the manifest already reflects the
-//! intended change — recovery just means re-invoking the rebuild for that
-//! scope. Queued operations that hadn't reached the manifest yet are stored
-//! verbatim and re-processed normally on the next launch.
+//! The file format lives in `nixbox-core`, because the CLI resumes the same
+//! state; this module is only the part that puts it back into a running TUI.
 
-use std::fs;
-use std::path::PathBuf;
+pub(crate) use nixbox_core::{InProgress, PersistedState};
 
-use anyhow::{Context, Result};
-use directories::BaseDirs;
-use nixbox_config::Target;
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::app::{App, AppEvent, QueuedOp, Tab};
+use crate::app::{App, AppEvent, Tab};
 use crate::ops::{drain_queue, spawn_rebuild};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct InProgress {
-    pub scope: Target,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct PersistedState {
-    #[serde(default)]
-    pub pending_queue: Vec<QueuedOp>,
-    #[serde(default)]
-    pub in_progress: Option<InProgress>,
-    #[serde(default)]
-    pub last_error: Option<String>,
-}
-
-impl PersistedState {
-    fn is_empty(&self) -> bool {
-        self.pending_queue.is_empty() && self.in_progress.is_none() && self.last_error.is_none()
-    }
-
-    pub(crate) fn load() -> Option<Self> {
-        let path = state_path().ok()?;
-        if !path.exists() {
-            return None;
-        }
-        let raw = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&raw).ok()
-    }
-
-    pub(crate) fn save(&self) -> Result<()> {
-        let path = state_path()?;
-        if self.is_empty() {
-            if path.exists() {
-                let _ = fs::remove_file(&path);
-            }
-            return Ok(());
-        }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-        }
-        let raw = serde_json::to_string_pretty(self)?;
-        fs::write(&path, raw).with_context(|| format!("writing {}", path.display()))?;
-        Ok(())
-    }
-}
-
-pub(crate) fn state_path() -> Result<PathBuf> {
-    let base = BaseDirs::new().context("locating user directories")?;
-    Ok(base.config_dir().join("nixbox").join("state.json"))
-}
 
 /// Pulls any saved state from disk into `app` and kicks off whatever work
 /// remains: an interrupted rebuild is re-launched first, otherwise pending

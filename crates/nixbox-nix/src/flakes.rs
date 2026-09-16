@@ -35,6 +35,61 @@ pub struct FlakePackage {
     pub version: String,
 }
 
+impl FlakeHit {
+    /// A hit for `flake.nix` in the root of `owner/repo`, for when the user
+    /// names a repository outright instead of searching for one.
+    ///
+    /// This evaluates the flake. `fetch_flake_details` reads the module and
+    /// package fields straight off the hit rather than evaluating anything
+    /// itself, so a hit that skipped inspection would report a flake with no
+    /// installable outputs at all.
+    pub async fn for_repo(repo: &str) -> Result<Self> {
+        let mut inspection = inspect_flake(repo, UPSTREAM_FLAKE_EVALUATION_TIMEOUT).await?;
+        // `sort_packages` puts `default` first whatever the query is; the
+        // repository name only breaks ties below it.
+        let name = repo.rsplit('/').next().unwrap_or(repo).to_string();
+        sort_packages(&name, &mut inspection.packages);
+        Ok(Self::from_inspection(
+            repo.to_string(),
+            format!("https://github.com/{repo}"),
+            None,
+            inspection,
+        ))
+    }
+
+    /// Builds a hit from an evaluated flake, so search results and named
+    /// repositories describe their outputs the same way.
+    fn from_inspection(
+        repo: String,
+        repo_url: String,
+        match_fragment: Option<String>,
+        inspection: FlakeInspection,
+    ) -> Self {
+        let outputs = classify_output_names(&inspection);
+        let home_manager_module = if inspection.home_manager_module {
+            Some("homeManagerModules.default".into())
+        } else if inspection.home_module {
+            Some("homeModules.default".into())
+        } else {
+            None
+        };
+        let nixos_module = inspection
+            .nixos_module
+            .then(|| "nixosModules.default".into());
+        Self {
+            content_url: format!("repos/{repo}/contents/flake.nix"),
+            repo,
+            repo_url,
+            path: "flake.nix".into(),
+            match_fragment,
+            packages: inspection.packages,
+            nixos_module,
+            home_manager_module,
+            outputs,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FlakeDetails {
     pub repo: String,
@@ -299,32 +354,15 @@ async fn inspect_candidate(query: &str, candidate: Candidate) -> Result<Option<R
         .packages
         .first()
         .map_or(0, |package| flake_package_score(query, package));
-    let outputs = classify_output_names(&inspection);
-    let home_manager_module = if inspection.home_manager_module {
-        Some("homeManagerModules.default".into())
-    } else if inspection.home_module {
-        Some("homeModules.default".into())
-    } else {
-        None
-    };
-    let nixos_module = inspection
-        .nixos_module
-        .then(|| "nixosModules.default".into());
-    let repo = candidate.repo;
 
     Ok(Some(RankedHit {
         score: candidate.score + package_score,
-        hit: FlakeHit {
-            repo_url: candidate.repo_url,
-            path: "flake.nix".into(),
-            match_fragment: candidate.match_fragment,
-            packages: inspection.packages,
-            nixos_module,
-            home_manager_module,
-            outputs,
-            content_url: format!("repos/{repo}/contents/flake.nix"),
-            repo,
-        },
+        hit: FlakeHit::from_inspection(
+            candidate.repo,
+            candidate.repo_url,
+            candidate.match_fragment,
+            inspection,
+        ),
     }))
 }
 
@@ -625,6 +663,41 @@ pub fn ensure_flake_input(
     fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))
 }
 
+/// Drops the `"owner/repo".url = ...;` line that [`ensure_flake_input`]
+/// added, and reports whether there was one.
+///
+/// The `inherit inputs` wiring stays: other flake modules nixbox manages may
+/// still depend on it, and it is harmless when nothing does.
+pub fn remove_flake_input(flake_file: &Path, repo: &str) -> Result<bool> {
+    if !flake_file.exists() {
+        return Ok(false);
+    }
+    let source = fs::read_to_string(flake_file)
+        .with_context(|| format!("reading {}", flake_file.display()))?;
+    let needle = format!("\"{repo}\".url");
+
+    let trailing_newline = source.ends_with('\n');
+    let mut kept: Vec<&str> = Vec::new();
+    let mut removed = false;
+    for line in source.lines() {
+        if line.trim_start().starts_with(&needle) {
+            removed = true;
+        } else {
+            kept.push(line);
+        }
+    }
+    if !removed {
+        return Ok(false);
+    }
+
+    let mut updated = kept.join("\n");
+    if trailing_newline {
+        updated.push('\n');
+    }
+    fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))?;
+    Ok(true)
+}
+
 fn matching_brace(source: &str, open: usize) -> Option<usize> {
     let mut depth = 0;
     for (offset, ch) in source[open..].char_indices() {
@@ -866,6 +939,25 @@ mod tests {
         assert!(updated.contains("\"owner/module\".url = \"github:owner/module\";"));
         assert!(updated.contains("extraSpecialArgs = { inherit inputs; };"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires authenticated gh access and Nix evaluation"]
+    async fn for_repo_evaluates_the_flake_it_names() {
+        // `fetch_flake_details` reads these fields straight off the hit, so a
+        // `for_repo` that skipped evaluation would describe every named
+        // repository as having nothing installable.
+        let hit = super::FlakeHit::for_repo("nix-community/nix-index-database")
+            .await
+            .unwrap();
+
+        assert_eq!(hit.nixos_module.as_deref(), Some("nixosModules.default"));
+        assert_eq!(
+            hit.home_manager_module.as_deref(),
+            Some("homeModules.default")
+        );
+        assert!(hit.packages.iter().any(|package| package.attr == "default"));
+        assert!(hit.outputs.iter().any(|output| output == "NixOS modules"));
     }
 
     #[tokio::test]

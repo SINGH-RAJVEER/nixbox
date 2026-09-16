@@ -26,17 +26,23 @@ Install the published crate:
 cargo install nixbox
 ```
 
+For the command line without the terminal UI, install the sibling package instead. It has the same subcommands, installs as `nixbox-cli`, and pulls 60 dependency packages instead of 108:
+
+```sh
+cargo install nixbox-cli
+```
+
 Run NixBox directly from its flake:
 
 ```sh
-nix run github:SINGH-RAJVEER/nix-box
+nix run github:SINGH-RAJVEER/nixbox
 ```
 
 Add NixBox to another flake:
 
 ```nix
 {
-	inputs.nixbox.url = "github:SINGH-RAJVEER/nix-box";
+	inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";
 
 	outputs = inputs@{ self, nixpkgs, nixbox, ... }: {
 		nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
@@ -52,7 +58,9 @@ Add NixBox to another flake:
 }
 ```
 
-The flake also exports `overlays.default`, which adds `pkgs.nixbox`:
+The flake exposes both: `packages.nixbox` and `packages.nixbox-cli`.
+
+The flake also exports `overlays.default`, which adds `pkgs.nixbox` and `pkgs.nixbox-cli`:
 
 ```nix
 nixpkgs.overlays = [ inputs.nixbox.overlays.default ];
@@ -67,7 +75,7 @@ Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch6
 nixbox
 ```
 
-The binary accepts Clap's generated `--help` and `--version` flags. It has no headless subcommands; a normal invocation starts the TUI.
+With no subcommand this starts the TUI. Every operation it performs is also a subcommand, so the same work can be scripted or run over SSH. The `nixbox-cli` package has those subcommands and no TUI; there the command is `nixbox-cli`, and running it bare prints help.
 
 ## First run
 
@@ -79,6 +87,7 @@ Installing a package writes a generated module before the rebuild starts. NixBox
 
 - [Documentation index](docs/README.md)
 - [User guide](docs/USER_GUIDE.md)
+- [Command line interface](docs/CLI.md)
 - [Configuration and stored state](docs/CONFIGURATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Package search](docs/SEARCH.md)
@@ -87,6 +96,72 @@ Installing a package writes a generated module before the rebuild starts. NixBox
 - [Development and testing](docs/DEVELOPMENT.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Release notes](docs/RELEASE_NOTES.md)
+
+## CLI
+
+Running `nixbox` with no arguments opens the TUI. Every subcommand does the same work headlessly, against the same managed files.
+
+```sh
+nixbox search ripgrep            # search the configured channel
+nixbox install ripgrep           # add it, wire the import, rebuild
+nixbox remove ripgrep            # drop it and rebuild
+nixbox list                      # what NixBox manages
+nixbox scan                      # packages you declared by hand
+nixbox migrate htop              # move one of them into the managed file
+nixbox apply                     # rewrite the managed file and rebuild
+nixbox resume                    # finish an interrupted rebuild or a queued batch
+nixbox status                    # target, paths, and how they are wired
+nixbox doctor                    # check what NixBox depends on
+```
+
+Flake modules work the same way:
+
+```sh
+nixbox flake search nix-index    # needs `gh auth login`
+nixbox flake info Mic92/nix-index-database
+nixbox flake add Mic92/nix-index-database
+nixbox flake list
+nixbox flake remove Mic92/nix-index-database
+```
+
+Settings can be read and changed without opening the TUI:
+
+```sh
+nixbox config show
+nixbox config set channel nixpkgs-unstable
+nixbox config path
+nixbox completions fish > ~/.config/fish/completions/nixbox.fish
+```
+
+### Flags
+
+| flag                 | effect                                                          |
+| -------------------- | --------------------------------------------------------------- |
+| `-t`, `--target`     | act on `home-manager` or `nixos` for this invocation only        |
+| `-c`, `--channel`    | use another channel for this invocation only                     |
+| `--json`             | machine-readable output instead of a table                       |
+| `--dry-run`          | print the plan and stop, writing nothing                         |
+| `--no-rebuild`       | write the configuration but skip the rebuild                     |
+| `-y`, `--yes`        | do not ask before changing the configuration                     |
+
+Anything that changes your configuration asks first. Without a terminal to ask at, it refuses unless you pass `--yes`, so a script can never trigger a rebuild by accident. `--target` and `--channel` never touch `settings.json` — only `nixbox config set` does.
+
+The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run `nixbox apply` to finish.
+
+Both front-ends share `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in the TUI and never ran; `--dry-run` shows it first and `--discard` throws it away.
+
+Every command above works the same under `nixbox-cli`.
+
+### Exit codes
+
+| code | meaning                                                      |
+| ---- | ------------------------------------------------------------ |
+| 0    | success                                                       |
+| 1    | NixBox could not do what you asked, or the run was cancelled  |
+| 2    | the command line could not be parsed                          |
+| 3    | the configuration was written but the rebuild failed          |
+
+Structured output goes to stdout and progress to stderr, so `nixbox list --json | jq` works while a rebuild is streaming.
 
 ## Development
 
