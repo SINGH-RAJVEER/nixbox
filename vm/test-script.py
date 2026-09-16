@@ -141,6 +141,27 @@ with subtest("resume applies a queue the TUI could have left behind"):
 	machine.fail("test -f /home/tester/.config/nixbox/state.json")
 	nixbox("remove hello --no-rebuild --yes")
 
+with subtest("nixbox-cli is the same program without the UI"):
+	# Both binaries are on PATH, so this compares them on one machine rather
+	# than trusting that the shared command tree behaves the same.
+	cli = machine.succeed("su -l tester -c 'nixbox-cli --help'")
+	assert "Usage: nixbox-cli" in cli, cli
+	assert "no terminal UI" in cli, cli
+	# The `tui` subcommand is feature-gated away, and a bare run says so
+	# rather than exiting silently.
+	machine.fail("su -l tester -c 'nixbox-cli tui'")
+	bare = machine.fail("su -l tester -c 'nixbox-cli 2>&1'")
+	assert "This is nixbox-cli" in bare, bare
+	# Hints name the binary that was actually run.
+	assert "nixbox-cli" in machine.succeed(
+		"su -l tester -c 'nixbox-cli completions bash' | tail -5"
+	)
+	# And it does real work against the same managed file.
+	machine.succeed("su -l tester -c 'nixbox-cli install hello --no-rebuild --yes'")
+	assert "pkgs.hello" in managed(), managed()
+	assert "hello" in nixbox("list")
+	machine.succeed("su -l tester -c 'nixbox-cli remove hello --no-rebuild --yes'")
+
 with subtest("resume --discard throws the queue away instead"):
 	machine.succeed(
 		"su -l tester -c 'cat > ~/.config/nixbox/state.json' <<'JSON'\n"

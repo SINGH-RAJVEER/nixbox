@@ -8,6 +8,8 @@
 ├── Cargo.lock
 ├── crates
 │	├── nixbox
+│	├── nixbox-cli
+│	├── nixbox-cmd
 │	├── nixbox-config
 │	├── nixbox-core
 │	├── nixbox-nix
@@ -23,26 +25,36 @@
 └── .github/workflows/publish.yml
 ```
 
-The root `Cargo.toml` owns the workspace version, Rust edition, shared metadata, dependencies, and Clippy policy. Each crate inherits that metadata. Internal dependencies in `nixbox-tui` and `nixbox` include both a local path and the current published version, so a release bump must update the workspace version and every internal dependency version.
+The root `Cargo.toml` owns the workspace version, Rust edition, shared metadata, dependencies, and Clippy policy. Each crate inherits that metadata. Internal dependencies in `nixbox-tui`, `nixbox-cmd`, `nixbox`, and `nixbox-cli` include both a local path and the current published version, so a release bump must update the workspace version and every internal dependency version.
 
-## Cargo features
+## Two binaries, one command tree
 
-`nixbox` has one feature, `tui`, on by default:
+The workspace publishes two binaries. They are the same program:
+
+| Package | Binary | Terminal UI |
+| --- | --- | --- |
+| `nixbox` | `nixbox` | yes |
+| `nixbox-cli` | `nixbox-cli` | no |
+
+Both are a four-line `main` over `nixbox-cmd`, which holds the whole command tree. The difference is one line of `Cargo.toml`: `nixbox` enables `nixbox-cmd`'s `tui` feature and `nixbox-cli` does not.
 
 ```toml
+# crates/nixbox-cmd/Cargo.toml
 [features]
-default = ["tui"]
+default = []
 tui = ["dep:nixbox-tui"]
 ```
 
-With it off, `nixbox-tui` and its terminal dependencies are not built at all and the binary is the command line alone; `cargo tree -p nixbox --no-default-features` reports 59 packages against 107 for the default build. Keeping that configuration working is a constraint on where code goes: anything the CLI needs belongs below the UI crate, not in it. Two things moved down for this reason, each with a test in `nixbox-tui` pinning it to its former home:
+They install under different names on purpose. Two packages producing the same executable collide in one `target/` directory, which cargo warns about and may one day reject, and the second `cargo install` would silently replace the first. `nixbox-cmd` learns which name is running from `env!("CARGO_BIN_NAME")`, so the usage line, the completion script, and hints like "run `nixbox-cli apply`" all name the command the user actually has.
+
+With the UI off, `nixbox-tui` and its terminal dependencies are not built at all: `cargo tree -p nixbox-cli` reports 60 packages against 108 for `nixbox`. Keeping that working is a constraint on where code goes — anything the command line needs belongs below the UI crate, not in it. Two things moved down for this reason, each with a test in `nixbox-tui` pinning it to its former home:
 
 - `nixbox_config::THEMES` holds the theme names `nixbox config set theme` validates against. `theme::tests::the_palettes_match_the_names_the_settings_file_accepts` asserts the palettes and the names agree.
 - `nixbox_core::state` holds `PersistedState` and `InProgress`, the `state.json` format that `nixbox resume` reads. The UI crate re-exports them.
 
-Cargo unifies features across a workspace build, so `cargo test --workspace` always compiles with `tui` on and proves nothing about the other configuration. `just cli` covers it separately, and `just ci` runs it.
+Cargo unifies features across a workspace build, so `cargo test --workspace` always compiles `nixbox-cmd` with `tui` on and proves nothing about the other configuration. `just cli` builds the two CLI packages on their own to cover it, and `just ci` runs that. For the same reason, `cargo build --workspace` produces a `target/debug/nixbox-cli` that does contain the UI code; build it with `cargo build -p nixbox-cli` (or `just release-cli`) when the distinction matters.
 
-The Nix flake exposes both builds as `packages.nixbox` and `packages.nixbox-cli`.
+The Nix flake exposes both as `packages.nixbox` and `packages.nixbox-cli`.
 
 ## Development environment
 
@@ -64,8 +76,8 @@ Using the shell matters on NixOS because a Rustup toolchain can retain linker wr
 | `just release` | Build the complete workspace with release optimizations. |
 | `just check` | Type-check the workspace without code generation. |
 | `just test` | Run the workspace test suite. |
-| `just cli` | Lint and test the CLI-only build, which a workspace build does not cover. |
-| `just release-cli` | Build the CLI-only release binary. |
+| `just cli` | Lint and test `nixbox-cli` and `nixbox-cmd` on their own, which a workspace build does not cover. |
+| `just release-cli` | Build the `nixbox-cli` release binary. |
 | `just run` | Start the debug TUI. |
 | `just fmt` | Format every crate with rustfmt. |
 | `just lint` | Run Clippy for the workspace and deny warnings. |
@@ -74,7 +86,7 @@ Using the shell matters on NixOS because a Rustup toolchain can retain linker wr
 | `just dev` | Enter `devenv shell`. |
 | `just dev-update` | Update pinned devenv inputs. |
 | `just dev-test` | Evaluate devenv and run its configured test command. |
-| `just ci` | Run format, lint, test, and the CLI-only build in that order. |
+| `just ci` | Run format, lint, test, and the CLI-only packages in that order. |
 | `just ci-vm` | Run `just ci` and then the automated VM check. |
 | `just vm-build` | Build the throwaway NixOS test VM. |
 | `just vm` | Build and boot the test VM. |

@@ -4,7 +4,7 @@ Running `nixbox` with no subcommand starts the terminal UI. Every operation the 
 
 Both front-ends go through `nixbox-core`. A package installed from the command line and the same package installed in the TUI take the identical code path, read the same catalog, and produce the identical files. They also share `state.json`, so a queue built in the TUI can be finished with `nixbox resume`, and a rebuild the CLI started and lost can be picked up by either.
 
-The terminal UI is an optional Cargo feature. See [Building without the TUI](#building-without-the-tui) for a build that is only the command line.
+The terminal UI is optional. See [Two packages](#two-packages) for the build that is only the command line.
 
 ## Global flags
 
@@ -76,23 +76,29 @@ The TUI queues operations and applies them in a batch, and saves that queue to t
 | `nixbox config path` | Print the path of the settings file. |
 | `nixbox completions <shell>` | Print a completion script. |
 
-## Building without the TUI
+## Two packages
 
-The `tui` feature is on by default and pulls in the terminal UI. Turning it off produces a binary with every subcommand and no terminal UI, and cuts the dependency tree from 107 packages to 59 as `cargo tree` counts them:
+NixBox publishes two binaries. They are the same program with the same subcommands:
+
+| Install | Command | Terminal UI |
+| --- | --- | --- |
+| `cargo install nixbox` | `nixbox` | yes |
+| `cargo install nixbox-cli` | `nixbox-cli` | no |
+
+`nixbox-cli` exists for machines that will never run a UI: servers, CI, containers, and anything reached over SSH. It pulls 60 dependency packages against `nixbox`'s 108, leaving out `ratatui`, `crossterm`, and `tui-input` entirely.
+
+The two install under different names, so one machine can have both. Everything else is identical, including `nixbox config set theme`, because the theme names live in `nixbox-config` rather than in the UI. The only visible differences are that `nixbox-cli` has no `tui` subcommand, and that running it with no subcommand prints help and exits `1` instead of opening a UI.
+
+Help text, generated completions, and hints like "run `nixbox-cli apply`" all use whichever name you installed.
+
+The Nix flake exposes both:
 
 ```sh
-cargo install nixbox --no-default-features
+nix profile install github:SINGH-RAJVEER/nixbox#nixbox
+nix profile install github:SINGH-RAJVEER/nixbox#nixbox-cli
 ```
 
-or, from a checkout:
-
-```sh
-cargo build --release -p nixbox --no-default-features
-```
-
-The Nix flake exposes both. `packages.nixbox` is the default build and `packages.nixbox-cli` is the CLI-only one; the overlay adds both under the same names.
-
-In a CLI-only build there is no `nixbox tui` subcommand, and `nixbox` with no subcommand prints help and exits `1` rather than exiting silently. Everything else, including `nixbox config set theme`, behaves the same, because the theme names live in `nixbox-config` rather than in the UI.
+Examples in this document say `nixbox`; substitute `nixbox-cli` if that is what you installed.
 
 ## Exit codes
 

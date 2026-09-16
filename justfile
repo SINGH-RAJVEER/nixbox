@@ -23,18 +23,18 @@ test:
 run:
     cargo run
 
-# The TUI is a default-on feature, and cargo unifies features across a
-# workspace build, so `cargo test --workspace` always turns it on. The
-# CLI-only configuration only gets covered if it is built on its own.
+# `nixbox` turns on nixbox-cmd's `tui` feature and cargo unifies features
+# across a workspace build, so `cargo test --workspace` always compiles the
+# UI in. The CLI configuration only gets covered if it is built on its own.
 
-# Lint and test the CLI-only build
+# Lint and test the CLI packages on their own
 cli:
-    cargo clippy -p nixbox --no-default-features --all-targets -- -D warnings
-    cargo test -p nixbox --no-default-features
+    cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets -- -D warnings
+    cargo test -p nixbox-cli -p nixbox-cmd
 
-# Build the CLI-only release binary
+# Build the nixbox-cli release binary
 release-cli:
-    cargo build --release -p nixbox --no-default-features
+    cargo build --release -p nixbox-cli
 
 # Format all crates
 fmt:

@@ -34,6 +34,13 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      # A workspace build unifies features and always enables nixbox-cmd's
+      # `tui`, so the nixbox-cli configuration is only covered on its own.
+      - name: Lint and test without the terminal UI
+        run: |
+          cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets --locked -- -D warnings
+          cargo test -p nixbox-cli -p nixbox-cmd --locked
+
   publish:
     name: Publish workspace crates
     needs: test
@@ -58,8 +65,9 @@ jobs:
 
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           # Dependency order: nixbox-core sits on the two leaf libraries,
-          # and both nixbox-tui and nixbox depend on it.
-          crates=(nixbox-config nixbox-nix nixbox-core nixbox-tui nixbox)
+          # nixbox-cmd sits on nixbox-core and optionally nixbox-tui, and the
+          # two published binaries are both thin wrappers over nixbox-cmd.
+          crates=(nixbox-config nixbox-nix nixbox-core nixbox-tui nixbox-cmd nixbox nixbox-cli)
 
           for crate in "${crates[@]}"; do
             echo "Publishing ${crate} ${version}"

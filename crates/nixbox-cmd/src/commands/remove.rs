@@ -44,10 +44,11 @@ pub async fn run(args: &RemoveArgs, global: &GlobalArgs) -> Result<ExitCode> {
         {
             problems.push(format!(
                 "{name} is declared in {} at {}:{}, not by nixbox — remove it there, or run \
-                 `nixbox migrate {name}` first",
+                 `{} migrate {name}` first",
                 external.source_attr,
                 engine.config.main_file_for(scope).display(),
                 external.line.saturating_add(1),
+                crate::program(),
             ));
         } else {
             problems.push(format!("{name} is not managed for {}", target_name(scope)));

@@ -18,16 +18,21 @@
       # to one system rather than generated per system.
       vmSystem = "x86_64-linux";
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-      # `tui = false` builds the same binary without the terminal UI: every
-      # subcommand still works, the dependency tree drops by roughly half, and
-      # `nixbox` with no subcommand prints help instead of opening a UI.
+      # Two packages, because the workspace publishes two binaries from one
+      # shared command tree: `nixbox` with the terminal UI, `nixbox-cli`
+      # without it. Same subcommands either way.
       mkNixbox =
         {
           pkgs,
-          tui ? true,
+          package ? "nixbox",
         }:
+        let
+          # `nixbox-cli` deliberately installs under its own name so both can
+          # sit in one profile without overwriting each other.
+          binary = package;
+        in
         pkgs.rustPlatform.buildRustPackage {
-          pname = if tui then "nixbox" else "nixbox-cli";
+          pname = package;
           version = cargoToml.workspace.package.version;
 
           src = pkgs.lib.fileset.toSource {
@@ -44,23 +49,25 @@
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [
             "--package"
-            "nixbox"
-          ]
-          ++ pkgs.lib.optionals (!tui) [ "--no-default-features" ];
+            package
+          ];
+          # A workspace test run unifies features and always enables the UI,
+          # so the CLI package is tested on its own to cover the other half.
           cargoTestFlags =
-            if tui then
+            if package == "nixbox" then
               [ "--workspace" ]
             else
               [
                 "--package"
-                "nixbox"
-                "--no-default-features"
+                "nixbox-cli"
+                "--package"
+                "nixbox-cmd"
               ];
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 
           postInstall = ''
-            wrapProgram $out/bin/nixbox \
+            wrapProgram $out/bin/${binary} \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
                   pkgs.gh
@@ -72,13 +79,13 @@
 
           meta = {
             description =
-              if tui then
+              if package == "nixbox" then
                 "TUI package manager for NixOS and Home Manager"
               else
                 "Command-line package manager for NixOS and Home Manager";
             homepage = "https://github.com/SINGH-RAJVEER/nix-box";
             license = pkgs.lib.licenses.asl20;
-            mainProgram = "nixbox";
+            mainProgram = binary;
             platforms = pkgs.lib.platforms.unix;
           };
         };
@@ -93,7 +100,7 @@
           nixbox = mkNixbox { inherit pkgs; };
           nixbox-cli = mkNixbox {
             inherit pkgs;
-            tui = false;
+            package = "nixbox-cli";
           };
           default = nixbox;
         }
@@ -111,7 +118,7 @@
         nixbox = mkNixbox { pkgs = final; };
         nixbox-cli = mkNixbox {
           pkgs = final;
-          tui = false;
+          package = "nixbox-cli";
         };
       };
 
@@ -122,6 +129,7 @@
         system = vmSystem;
         specialArgs = {
           nixbox = self.packages.${vmSystem}.default;
+          nixboxCli = self.packages.${vmSystem}.nixbox-cli;
           nixpkgsFlake = nixpkgs;
         };
         modules = [ ./vm/host.nix ];
@@ -135,6 +143,7 @@
         {
           cli = import ./vm/test.nix {
             nixbox = self.packages.${system}.default;
+            nixboxCli = self.packages.${system}.nixbox-cli;
             nixpkgsFlake = nixpkgs;
             inherit (pkgs) testers;
           };

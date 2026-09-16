@@ -23,7 +23,7 @@ flowchart LR
 
 ## Workspace crates
 
-The workspace uses Rust edition 2024 and contains five crates. The dependency direction is intentionally simple.
+The workspace uses Rust edition 2024 and contains seven crates. The dependency direction is intentionally simple.
 
 | Crate | Responsibility | Local dependencies |
 | --- | --- | --- |
@@ -31,17 +31,23 @@ The workspace uses Rust edition 2024 and contains five crates. The dependency di
 | `nixbox-nix` | Package search, package catalog, generated manifests, source scanning and migration, flake discovery and installation, rebuild command selection, output streaming, and cancellation. | None. |
 | `nixbox-core` | The headless engine: the `Op` type both front-ends queue, the persisted `state.json` format, manifest mutation, import wiring, external-package scanning, flake input and output installation, and rebuild command selection. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
 | `nixbox-tui` | Application state, terminal lifecycle, event handling, asynchronous task scheduling, operation queue, recovery state, Vim input behavior, navigation, themes, and rendering. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
-| `nixbox` | Clap command tree, the non-interactive commands, output rendering, tracing setup, Tokio runtime, and the call to `nixbox_tui::run` when no subcommand is given. | `nixbox-config`, `nixbox-core`, `nixbox-nix`, and `nixbox-tui` behind the `tui` feature. |
+| `nixbox-cmd` | Clap command tree, the non-interactive commands, output rendering, tracing setup, and the call to `nixbox_tui::run` when no subcommand is given. Shared by both binaries. | `nixbox-config`, `nixbox-core`, `nixbox-nix`, and `nixbox-tui` behind the `tui` feature. |
+| `nixbox` | The `nixbox` binary: a `main` that calls `nixbox_cmd::run`, with the `tui` feature on. | `nixbox-cmd`. |
+| `nixbox-cli` | The `nixbox-cli` binary: the same `main`, with the `tui` feature off. | `nixbox-cmd`. |
 
-The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, then `nixbox`. The engine sits on the two leaf libraries, and both front-ends sit on the engine.
+The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, then `nixbox-cli`. The engine sits on the two leaf libraries, both front-ends sit on the engine, and the two binaries sit on the command tree.
 
-`nixbox-tui` is an optional dependency behind the default-on `tui` feature. `cargo install nixbox --no-default-features` builds the command line alone, which drops the dependency tree from 107 packages to 59 by excluding `ratatui`, `crossterm`, `tui-input`, and `nixbox-tui` itself. Nothing the CLI needs lives in the UI crate: the theme names the settings file accepts are declared in `nixbox-config` and the persisted-state format in `nixbox-core`, each with a test in the UI crate asserting the two stay in step.
+There are two published binaries rather than one binary with a switch, because crates.io lists packages and not feature combinations. `nixbox` and `nixbox-cli` are both a four-line `main` over `nixbox-cmd`; the only difference is whether they enable that crate's `tui` feature. `nixbox-cli` pulls 60 packages against `nixbox`'s 108, excluding `ratatui`, `crossterm`, `tui-input`, and `nixbox-tui` itself.
+
+Nothing the command line needs lives in the UI crate: the theme names the settings file accepts are declared in `nixbox-config` and the persisted-state format in `nixbox-core`, each with a test in the UI crate asserting the two stay in step.
+
+The two binaries install under different names, so one profile can hold both. `nixbox-cmd` learns which one is running from `env!("CARGO_BIN_NAME")`, passed into `run`, and uses it for the usage line, the generated completion script, and every message that tells the user what to run next.
 
 Both front-ends go through the same engine, so a change applied by `nixbox install` and the same change applied in the TUI take the identical code path. The engine is also what keeps `state.json` compatible between them: the queue holds `nixbox_core::Op` values verbatim, and the TUI's `QueuedOp` is a re-export of that type rather than a parallel definition.
 
 ## Startup and terminal lifecycle
 
-`crates/nixbox/src/main.rs` parses the command tree, initializes tracing to stderr with a default `warn` filter, and dispatches on Tokio's multithreaded runtime. With no subcommand it calls `nixbox_tui::run()`; with one it runs that command and returns its exit code. It also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
+`crates/nixbox-cmd/src/lib.rs` parses the command tree, initializes tracing to stderr with a default `warn` filter, and dispatches on Tokio's multithreaded runtime, driven by a `main` in whichever binary crate was built. With no subcommand it calls `nixbox_tui::run()`; with one it runs that command and returns its exit code. It also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
 
 `run()` loads settings and manifests before changing terminal state. It then enables raw mode, enters the alternate screen, selects a blinking bar cursor, and starts the event loop. On normal return it disables raw mode, restores the cursor shape, leaves the alternate screen, and shows the cursor. Errors returned after terminal initialization still pass through this cleanup path because `run()` stores the event-loop result before restoring the terminal.
 
@@ -117,14 +123,19 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `rebuild.rs` selects the rebuild command for a target and reports when a Home Manager rebuild falls back to `nixos-rebuild`.
 - `report.rs` defines the `Reporter` trait plus a silent and a log-collecting implementation, which is how the same engine feeds the TUI's log pane and the CLI's stderr.
 
-### `nixbox`
+### `nixbox-cmd`
 
+- `lib.rs` restores the default `SIGPIPE` disposition, records the running binary's name, parses arguments, starts tracing, and dispatches.
 - `cli.rs` defines the Clap command tree, the global `--target`, `--channel`, and `--json` flags, and dispatch. The `tui` subcommand and the no-subcommand default are behind the `tui` feature; without it, a bare `nixbox` prints help and exits `1`.
 - `apply.rs` is the shared path for every command that changes configuration: confirmation, the dry run, writing, the rebuild, and the exit code.
 - `commands/` holds one module per subcommand.
 - `commands/mod.rs` also holds `search_packages`, the shared lookup behind `search` and `install`: it prefers the cached package catalog and falls back to live search, and an explicit `--channel` always searches live.
 - `commands/resume.rs` finishes an interrupted rebuild and drains a queue the TUI left, one target at a time.
 - `render.rs` renders tables and field lists for the non-JSON output.
+
+### `nixbox` and `nixbox-cli`
+
+- `main.rs` in each is the same four lines: a Tokio entry point handing `env!("CARGO_BIN_NAME")` to `nixbox_cmd::run`. All behavioural difference comes from the `tui` feature their `Cargo.toml` selects.
 
 ### `nixbox-tui`
 

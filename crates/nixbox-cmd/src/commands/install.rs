@@ -44,9 +44,12 @@ pub async fn run(args: &InstallArgs, global: &GlobalArgs) -> Result<ExitCode> {
             .find(|ep| ep.name == hit.attr && scope_matches(ep.scope, scope))
         {
             eprintln!(
-                "Note: {} is already declared in {}; `nixbox migrate {}` moves it instead of \
+                "Note: {} is already declared in {}; `{} migrate {}` moves it instead of \
                  declaring it twice.",
-                hit.attr, external.source_attr, hit.attr
+                hit.attr,
+                external.source_attr,
+                crate::program(),
+                hit.attr
             );
         }
         summary.push(format!(
@@ -89,7 +92,10 @@ async fn resolve(engine: &Engine, global: &GlobalArgs, name: &str) -> Result<Sea
     let by_name: Vec<&SearchHit> = hits.iter().filter(|hit| hit.pname == name).collect();
     match by_name.as_slice() {
         [only] => Ok((*only).clone()),
-        [] => bail!("no package in {channel} matches `{name}`. Try `nixbox search {name}`."),
+        [] => bail!(
+            "no package in {channel} matches `{name}`. Try `{} search {name}`.",
+            crate::program()
+        ),
         many => {
             let attrs: Vec<&str> = many.iter().take(5).map(|hit| hit.attr.as_str()).collect();
             bail!(

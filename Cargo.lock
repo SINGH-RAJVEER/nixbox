@@ -531,6 +531,22 @@ dependencies = [
 name = "nixbox"
 version = "0.2.2"
 dependencies = [
+ "nixbox-cmd",
+ "tokio",
+]
+
+[[package]]
+name = "nixbox-cli"
+version = "0.2.2"
+dependencies = [
+ "nixbox-cmd",
+ "tokio",
+]
+
+[[package]]
+name = "nixbox-cmd"
+version = "0.2.2"
+dependencies = [
  "anyhow",
  "clap",
  "clap_complete",

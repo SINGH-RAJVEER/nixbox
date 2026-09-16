@@ -5,7 +5,7 @@ The README is the short entry point. These documents describe the behavior that 
 ## User documentation
 
 - [User guide](USER_GUIDE.md) covers installation, startup, tabs, controls, settings, package operations, rebuild behavior, and shutdown.
-- [Command line interface](CLI.md) covers the non-interactive subcommands, their flags, the confirmation rules, resuming interrupted work, the CLI-only build, and the exit codes.
+- [Command line interface](CLI.md) covers the non-interactive subcommands, their flags, the confirmation rules, resuming interrupted work, the nixbox-cli package, and the exit codes.
 - [Configuration and stored state](CONFIGURATION.md) lists every setting, default path, environment override, generated file, cache file, and recovery file.
 - [Package search](SEARCH.md) explains catalog creation, revision pinning, invalidation, ranking, live fallback, resource limits, and measured performance.
 - [Managed files and package operations](MANAGED_FILES.md) explains package manifests, automatic imports, external-package scanning, migration, queuing, rebuild selection, cancellation, recovery, and the mutations NixBox performs.

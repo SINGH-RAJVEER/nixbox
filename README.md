@@ -26,10 +26,10 @@ Install the published crate:
 cargo install nixbox
 ```
 
-The terminal UI is an optional feature. For the command line alone, which pulls in 59 dependency packages instead of 107:
+For the command line without the terminal UI, install the sibling package instead. It has the same subcommands, installs as `nixbox-cli`, and pulls 60 dependency packages instead of 108:
 
 ```sh
-cargo install nixbox --no-default-features
+cargo install nixbox-cli
 ```
 
 Run NixBox directly from its flake:
@@ -58,7 +58,7 @@ Add NixBox to another flake:
 }
 ```
 
-The flake exposes the CLI-only build as `packages.nixbox-cli`, alongside the default `packages.nixbox`.
+The flake exposes both: `packages.nixbox` and `packages.nixbox-cli`.
 
 The flake also exports `overlays.default`, which adds `pkgs.nixbox` and `pkgs.nixbox-cli`:
 
@@ -75,7 +75,7 @@ Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch6
 nixbox
 ```
 
-With no subcommand this starts the TUI. Every operation it performs is also a subcommand, so the same work can be scripted or run over SSH. A build without the `tui` feature has the subcommands and no TUI; there, a bare `nixbox` prints help.
+With no subcommand this starts the TUI. Every operation it performs is also a subcommand, so the same work can be scripted or run over SSH. The `nixbox-cli` package has those subcommands and no TUI; there the command is `nixbox-cli`, and running it bare prints help.
 
 ## First run
 
@@ -149,6 +149,8 @@ Anything that changes your configuration asks first. Without a terminal to ask a
 The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run `nixbox apply` to finish.
 
 Both front-ends share `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in the TUI and never ran; `--dry-run` shows it first and `--discard` throws it away.
+
+Every command above works the same under `nixbox-cli`.
 
 ### Exit codes
 

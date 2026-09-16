@@ -5,13 +5,14 @@
 # same thing.
 {
 	nixbox,
+	nixboxCli,
 	nixpkgsFlake,
 	testers,
 }:
 testers.runNixOSTest {
 	name = "nixbox-cli";
 
-	node.specialArgs = { inherit nixbox nixpkgsFlake; };
+	node.specialArgs = { inherit nixbox nixboxCli nixpkgsFlake; };
 
 	nodes.machine = {
 		imports = [ ./host.nix ];

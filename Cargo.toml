@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/nixbox",
+    "crates/nixbox-cli",
+    "crates/nixbox-cmd",
     "crates/nixbox-tui",
     "crates/nixbox-core",
     "crates/nixbox-nix",

@@ -1,0 +1,36 @@
+[package]
+name = "nixbox-cmd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Shared command tree behind the nixbox and nixbox-cli binaries"
+
+[features]
+default = []
+# Adds the terminal UI: the `tui` subcommand, and launching it when no
+# subcommand is given. Without it none of ratatui, crossterm, or tui-input is
+# compiled or downloaded. The `nixbox` binary turns this on; `nixbox-cli` does
+# not.
+tui = ["dep:nixbox-tui"]
+
+[dependencies]
+nixbox-tui = { path = "../nixbox-tui", version = "0.2.2", optional = true }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.2" }
+nixbox-core = { path = "../nixbox-core", version = "0.2.2" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.2" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+directories = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -6,6 +6,7 @@
 	pkgs,
 	modulesPath,
 	nixbox,
+	nixboxCli,
 	...
 }:
 let
@@ -41,6 +42,10 @@ in
 		install -d -o tester -g users -m 0755 /home/tester/.local/bin
 		ln -sfn ${lib.getExe nixbox} /home/tester/.local/bin/nixbox
 		chown -h tester:users /home/tester/.local/bin/nixbox
+		# The other published binary, so the test can prove it behaves the
+		# same on a real machine.
+		ln -sfn ${lib.getExe nixboxCli} /home/tester/.local/bin/nixbox-cli
+		chown -h tester:users /home/tester/.local/bin/nixbox-cli
 
 		if [ ! -e ${configDir}/.git ]; then
 			# Stays root-owned until the commit lands. Activation runs from

@@ -91,7 +91,10 @@ pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Resul
     }
 
     if opts.no_rebuild {
-        eprintln!("Wrote the configuration. Run `nixbox apply` to rebuild.");
+        eprintln!(
+            "Wrote the configuration. Run `{} apply` to rebuild.",
+            crate::program()
+        );
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -195,13 +198,17 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
         Outcome::Cancelled => {
             finish_in_progress(None);
             eprintln!(
-                "Cancelled. Your configuration is already written — run `nixbox apply` to finish."
+                "Cancelled. Your configuration is already written — run `{} apply` to finish.",
+                crate::program()
             );
         }
         Outcome::Failed(error) => {
             finish_in_progress(Some(error.clone()));
             eprintln!("Rebuild failed: {error}");
-            eprintln!("Your configuration is written; fix the error and run `nixbox apply`.");
+            eprintln!(
+                "Your configuration is written; fix the error and run `{} apply`.",
+                crate::program()
+            );
         }
     }
     Ok(ExitCode::from(exit_code_for(&outcome)))

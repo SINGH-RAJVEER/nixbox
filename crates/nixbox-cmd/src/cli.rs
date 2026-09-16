@@ -13,9 +13,9 @@ use crate::commands;
 /// one that failed outright.
 pub const EXIT_FAILURE: u8 = 1;
 
-/// `--help` has to describe the binary that was actually built, and a CLI-only
-/// build has no terminal UI to point at. The crate description cannot do this
-/// job, because it is one string for both builds.
+/// `--help` has to describe the binary that was actually built. The crate
+/// description cannot do this job, because `nixbox` and `nixbox-cli` are one
+/// crate compiled twice.
 #[cfg(feature = "tui")]
 const ABOUT: &str = "TUI package manager for NixOS and Home Manager";
 #[cfg(not(feature = "tui"))]
@@ -27,8 +27,12 @@ const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into y
                           terminal UI.";
 #[cfg(not(feature = "tui"))]
 const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into your home-manager \
-                          or NixOS configuration and rebuild. This build has no terminal UI.";
+                          or NixOS configuration and rebuild. This build has no terminal UI; the \
+                          `nixbox` crate is the same commands plus one.";
 
+// `name` is overridden at runtime with the installed binary name, because one
+// crate backs both `nixbox` and `nixbox-cli`. The literal here is only the
+// default for tests and for `Cli::command()` called outside `run`.
 #[derive(Parser, Debug)]
 #[command(
     name = "nixbox",
@@ -168,10 +172,7 @@ impl Cli {
             None => {
                 use clap::CommandFactory;
                 Cli::command().print_help()?;
-                eprintln!(
-                    "\nThis build has no terminal UI. Install nixbox with the `tui` feature for \
-                     one."
-                );
+                eprintln!("\nThis is nixbox-cli. Install the `nixbox` crate for the terminal UI.");
                 Ok(ExitCode::from(EXIT_FAILURE))
             }
             Some(Command::Search(args)) => commands::search::run(&args, &self.global).await,
