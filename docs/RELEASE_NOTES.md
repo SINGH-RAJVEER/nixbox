@@ -2,7 +2,9 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
-## Unreleased
+## 0.2.4 - 2026-09-24
+
+Flake packages, wherever they are declared, now show up in the Installed tab and can be removed there, and flake installation follows hand-written configurations.
 
 - Made flake installation reuse a root input that already points at the selected repository, and name new inputs the way they are usually written by hand (`zen-browser` rather than `"0xc000022070/zen-browser-flake"`), following the root `nixpkgs` when there is one.
 - Accepted `outputs = { ... }@inputs:` and `outputs = inputs:` in the root flake, not only `outputs = inputs@{ ... }:`.

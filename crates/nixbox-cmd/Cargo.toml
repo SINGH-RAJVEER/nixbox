@@ -20,10 +20,10 @@ default = []
 tui = ["dep:nixbox-tui"]
 
 [dependencies]
-nixbox-tui = { path = "../nixbox-tui", version = "0.2.3", optional = true }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.3" }
-nixbox-core = { path = "../nixbox-core", version = "0.2.3" }
-nixbox-config = { path = "../nixbox-config", version = "0.2.3" }
+nixbox-tui = { path = "../nixbox-tui", version = "0.2.4", optional = true }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.4" }
+nixbox-core = { path = "../nixbox-core", version = "0.2.4" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.4" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }

@@ -18,5 +18,5 @@ path = "src/main.rs"
 [dependencies]
 # The whole program, with the terminal UI. For the same commands without it,
 # install `nixbox-cli` instead.
-nixbox-cmd = { path = "../nixbox-cmd", version = "0.2.3", features = ["tui"] }
+nixbox-cmd = { path = "../nixbox-cmd", version = "0.2.4", features = ["tui"] }
 tokio = { workspace = true }
