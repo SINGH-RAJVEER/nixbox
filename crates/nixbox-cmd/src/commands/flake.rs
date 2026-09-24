@@ -11,6 +11,7 @@ use clap::Subcommand;
 use nixbox_config::Target;
 use nixbox_core::Op;
 use nixbox_nix::flakes::{FlakeDetails, FlakeHit, fetch_flake_details, search_flakes};
+use nixbox_nix::manifest::FlakeOutput;
 use serde::Serialize;
 use serde_json::json;
 
@@ -177,29 +178,36 @@ async fn info(repo: &str, global: &GlobalArgs) -> Result<ExitCode> {
 fn list(global: &GlobalArgs) -> Result<ExitCode> {
     let engine = global.engine()?;
     let scope = engine.config.target;
-    let modules = engine.managed_flakes(scope)?;
+    let outputs = engine.managed_flakes(scope)?;
+    let rows: Vec<(String, &str, String)> = outputs
+        .into_iter()
+        .map(|(repo, output)| match output {
+            FlakeOutput::Module(module) => (repo, "module", module),
+            FlakeOutput::Package(package) => (repo, "package", package),
+        })
+        .collect();
 
     if global.json {
-        let rows: Vec<_> = modules
+        let rows: Vec<_> = rows
             .iter()
-            .map(|(repo, module)| json!({ "repo": repo, "module": module }))
+            .map(|(repo, kind, output)| json!({ "repo": repo, "kind": kind, "output": output }))
             .collect();
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(ExitCode::SUCCESS);
     }
-    if modules.is_empty() {
+    if rows.is_empty() {
         eprintln!(
-            "nixbox is not managing any {} flake modules yet.",
+            "nixbox is not managing any {} flake outputs yet.",
             target_name(scope)
         );
         return Ok(ExitCode::SUCCESS);
     }
 
-    let table: Vec<Vec<String>> = modules
-        .iter()
-        .map(|(repo, module)| vec![repo.clone(), module.clone()])
+    let table: Vec<Vec<String>> = rows
+        .into_iter()
+        .map(|(repo, kind, output)| vec![repo, kind.to_string(), output])
         .collect();
-    print!("{}", render::table(&["REPO", "MODULE"], &table));
+    print!("{}", render::table(&["REPO", "KIND", "OUTPUT"], &table));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -257,8 +265,7 @@ async fn remove(repo: &str, opts: &ApplyOpts, global: &GlobalArgs) -> Result<Exi
         .any(|(managed, _)| managed == repo)
     {
         bail!(
-            "{repo} is not one of the {} flake modules nixbox manages. `nixbox flake list` shows \
-             them.",
+            "{repo} is not one of the {} flakes nixbox manages. `nixbox flake list` shows them.",
             target_name(scope)
         );
     }
@@ -287,21 +294,28 @@ enum Installable {
     Package(String),
 }
 
-/// Picks what to install: the default module for `scope` if the flake
-/// publishes one, otherwise its first package.
+/// Picks what to install. Home Manager gets the first package, since a module
+/// does nothing until its options are set; NixOS gets the default module.
+/// Either falls back to the other kind when the flake lacks the preferred one.
 ///
 /// Both come from evaluating the flake rather than from the names of its
 /// outputs, so nothing is offered that the target could not actually import.
 fn installable_for(details: &FlakeDetails, scope: Target) -> Result<Installable> {
+    let package = details
+        .packages
+        .first()
+        .map(|package| Installable::Package(package.attr.clone()));
     let module = match scope {
         Target::HomeManager => details.home_manager_module.clone(),
         Target::NixosSystem => details.nixos_module.clone(),
-    };
-    if let Some(module) = module {
-        return Ok(Installable::Module(module));
     }
-    if let Some(package) = details.packages.first() {
-        return Ok(Installable::Package(package.attr.clone()));
+    .map(Installable::Module);
+    let preferred = match scope {
+        Target::HomeManager => package.or(module),
+        Target::NixosSystem => module.or(package),
+    };
+    if let Some(installable) = preferred {
+        return Ok(installable);
     }
     bail!(
         "{} has no installable package for this system and no default {} module (it publishes: \
@@ -380,6 +394,15 @@ mod tests {
         assert!(matches!(
             installable_for(&both, Target::HomeManager).expect("hm module"),
             Installable::Module(module) if module == "homeManagerModules.default"
+        ));
+    }
+
+    #[test]
+    fn home_manager_prefers_a_package_over_a_module() {
+        let both = details(None, Some("homeModules.default"), &["default"]);
+        assert!(matches!(
+            installable_for(&both, Target::HomeManager).expect("package"),
+            Installable::Package(package) if package == "default"
         ));
     }
 

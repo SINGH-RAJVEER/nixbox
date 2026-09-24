@@ -12,7 +12,7 @@ use crossterm::terminal::{
 };
 use futures::StreamExt;
 use nixbox_config::{DEFAULT_CHANNEL, InputMode, Target};
-use nixbox_core::{Engine, ManagedPackage};
+use nixbox_core::{Engine, InstalledFlake, ManagedPackage};
 use nixbox_nix::{
     Manifest,
     build::BuildEvent,
@@ -113,6 +113,7 @@ pub(crate) enum AppEvent {
 #[derive(Debug, Clone)]
 pub(crate) enum InstalledCursor {
     Managed(ManagedPackage),
+    Flake(InstalledFlake),
     External(ExternalPackage),
 }
 
@@ -330,24 +331,49 @@ impl App {
             .collect()
     }
 
+    /// Flake outputs matching the filter by input, output, or repository.
+    pub(crate) fn filtered_flakes(&self) -> Vec<InstalledFlake> {
+        let filter = self.installed_filter();
+        self.engine
+            .flakes
+            .iter()
+            .filter(|flake| match &filter {
+                None => true,
+                Some(q) => {
+                    flake.name().to_lowercase().contains(q)
+                        || flake
+                            .repo
+                            .as_ref()
+                            .is_some_and(|repo| repo.to_lowercase().contains(q))
+                }
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn installed_total(&self) -> usize {
-        self.filtered_managed_packages().len() + self.filtered_external_packages().len()
+        self.filtered_managed_packages().len()
+            + self.filtered_flakes().len()
+            + self.filtered_external_packages().len()
     }
 
     /// Returns the row currently under the cursor in the Installed tab.
     pub(crate) fn installed_cursor(&self) -> Option<InstalledCursor> {
         let managed = self.filtered_managed_packages();
+        let flakes = self.filtered_flakes();
         let external = self.filtered_external_packages();
-        let total = managed.len() + external.len();
+        let total = managed.len() + flakes.len() + external.len();
         if total == 0 {
             return None;
         }
         let idx = self.installed_selected.min(total - 1);
         if idx < managed.len() {
             Some(InstalledCursor::Managed(managed[idx].clone()))
+        } else if idx < managed.len() + flakes.len() {
+            Some(InstalledCursor::Flake(flakes[idx - managed.len()].clone()))
         } else {
             Some(InstalledCursor::External(
-                external[idx - managed.len()].clone(),
+                external[idx - managed.len() - flakes.len()].clone(),
             ))
         }
     }

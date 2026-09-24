@@ -91,17 +91,17 @@ nix eval --json 'github:<owner>/<repository>#packages.<system>' --apply builtins
 
 ## Flake installation says the root must bind `inputs`
 
-The installer requires a conventional outputs binding containing `outputs = inputs@`. Rewrite the root flake so the full inputs set has that name, or install the output manually. The expected pattern is:
+The installer requires the outputs function to bind the full input set as `inputs`. Any of these forms work:
 
 ```nix
-outputs = inputs@{ self, nixpkgs, ... }: {
-	# outputs
-};
+outputs = inputs@{ self, nixpkgs, ... }: { };
+outputs = { self, nixpkgs, ... }@inputs: { };
+outputs = inputs: { };
 ```
 
 ## Flake installation cannot find inputs or a constructor
 
-The text editor looks for literal `inputs = {`, then `homeManagerConfiguration` or `nixosSystem`. Helper functions, inherited input sets, different constructor spellings, or arguments built in another file are outside the current installer. Do not reshape a working flake merely to satisfy automation unless the new structure is acceptable on its own. Add the input, special arguments, generated-module import, and module path manually instead.
+The text editor looks for the root `inputs` set (either `inputs = { ... };` or root-level `inputs.<name>` bindings), then `homeManagerConfiguration` or `nixosSystem`. When Home Manager runs as a NixOS module, it also needs a `home-manager = { ... };` block or a `home-manager.users` line in the NixOS entry file to attach `extraSpecialArgs` to. Helper functions, inherited input sets, different constructor spellings, or arguments built in another file are outside the current installer. Do not reshape a working flake merely to satisfy automation unless the new structure is acceptable on its own. Add the input, special arguments, generated-module import, and module path manually instead.
 
 ## A Home Manager flake falls back to nixos-rebuild
 

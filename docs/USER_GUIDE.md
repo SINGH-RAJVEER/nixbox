@@ -42,7 +42,7 @@ Press `Enter` on a result to install it for the target selected in settings. If 
 
 The Flakes tab searches GitHub code and repository metadata after a 250 ms input delay, resolves the strongest candidates to their current GitHub revisions, and evaluates those locked revisions with Nix. It keeps repositories that expose derivation packages for the current system or a conventional default NixOS or Home Manager module. Selecting a result loads repository metadata, reads input names from the flake source, and shows output categories plus up to four evaluated package attributes.
 
-Press `Enter` to install the selected repository's preferred output. NixBox chooses `homeManagerModules.default` or `homeModules.default` for the Home Manager target and `nixosModules.default` for the NixOS target. When the matching default module does not exist, it installs the first evaluated package instead. Package ranking favors the `default` attribute and then matches package attributes against the search query. NixBox evaluates only `packages.<current-system>`, so packages offered here match the active system.
+Press `Enter` to install the selected repository's preferred output. On the Home Manager target NixBox adds the first evaluated package to `home.packages`, and falls back to `homeManagerModules.default` or `homeModules.default` only when the flake has no packages. On the NixOS target it chooses `nixosModules.default`, and installs the first evaluated package when that module does not exist. An input that already points at the repository is reused; otherwise a new one is added under a short name such as `zen-browser`, following your root `nixpkgs`. Package ranking favors the `default` attribute and then matches package attributes against the search query. NixBox evaluates only `packages.<current-system>`, so packages offered here match the active system.
 
 ### Installed
 
@@ -50,7 +50,11 @@ The Installed tab combines packages from four sources: NixBox's Home Manager man
 
 Press `d` or `Delete` on a NixBox-managed package to queue removal. NixBox will not remove an external package directly. Press `m` to migrate one external package or `M` to queue every migratable external package. Declarations in same-line lists and complex expressions remain visible but cannot be migrated automatically.
 
-The Installed tab's text field filters the combined list without changing configuration.
+Between the managed and external packages, a Flakes section lists every flake package and module in the configuration. That covers outputs NixBox wired into `nixbox-home-flakes.nix` or `nixbox-system-flakes.nix`, and flake packages you declared yourself, such as `inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default` in `home.packages`. Each row shows `input#package` (or `input.<module path>` for a module), the scope, and the `github:` repository the input points at. Rows you declared yourself also name the list they sit in. A package that NixBox manages and you also declare yourself appears once.
+
+Press `d` on a flake row to remove it. NixBox deletes the line from whichever file declares it, NixBox's flake module or your own entry file, and then removes the flake's input from `flake.nix` only if nothing references it any more. Removing `llm-agents#chatgpt` while `llm-agents#claude-code` is still listed keeps the `llm-agents` input, and removing the last one drops it. Rows marked `inline` share a line with other entries and have to be removed by hand. Flake rows cannot be migrated.
+
+The Installed tab's text field filters the combined list without changing configuration. It matches flake rows by name or repository.
 
 ### Building
 

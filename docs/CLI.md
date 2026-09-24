@@ -60,11 +60,11 @@ The TUI queues operations and applies them in a batch, and saves that queue to t
 | --- | --- |
 | `nixbox flake search <query>` | Search GitHub for flakes. Requires `gh auth login`. |
 | `nixbox flake info <owner/repo>` | Show what a flake publishes, including the modules and packages it actually evaluates to. |
-| `nixbox flake list` | List the flake outputs NixBox manages for the active target. |
+| `nixbox flake list` | List the flake modules and packages NixBox manages for the active target. `--json` prints `repo`, `kind` (`module` or `package`), and `output` for each. |
 | `nixbox flake add <owner/repo>` | Add the flake as an input and wire an output into your configuration. |
-| `nixbox flake remove <owner/repo>` | Drop the flake's output and its input. Alias: `rm`. |
+| `nixbox flake remove <owner/repo>` | Drop every output NixBox manages for the flake, and its input once nothing else uses it. Alias: `rm`. |
 
-`flake add` installs the default module for the active target when the flake publishes one, and otherwise falls back to the flake's first package. Both come from evaluating the flake rather than from the names of its outputs, so a flake whose outputs cannot be imported is refused instead of producing a configuration that will not build.
+`flake add` installs the flake's first package on the Home Manager target, falling back to its default Home Manager module when it has no packages. On the NixOS target it installs the default NixOS module when the flake publishes one, and otherwise falls back to the first package. `flake remove` keeps the root input when other files in the configuration still reference it. Both come from evaluating the flake rather than from the names of its outputs, so a flake whose outputs cannot be imported is refused instead of producing a configuration that will not build.
 
 ## Settings and completions
 

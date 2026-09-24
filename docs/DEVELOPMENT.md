@@ -227,7 +227,7 @@ The `publish` job declares `needs: test` and is restricted to `push` events, so 
 
 The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell runs nightly while this workflow runs stable, so a lint can fire in one and not the other. Run the gate on stable before a release if the local shell is on a different channel.
 
-The current `dev` manifest says `0.2.3`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
+The current `dev` manifest says `0.2.4`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
 
 Nothing after `0.2.0` reached crates.io before `0.2.3`: the `0.2.1` and `0.2.2` publishes both failed on an expired token, which is why `nixbox-core` had no released version at all despite two attempts. A failed publish leaves no trace on crates.io, so a version that failed to upload can be reused; a version that uploaded cannot, even after a yank.
 

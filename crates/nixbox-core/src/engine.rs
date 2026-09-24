@@ -7,11 +7,11 @@ use anyhow::Result;
 use nixbox_config::{Config, Target};
 use nixbox_nix::{
     Manifest,
-    flakes::{ensure_flake_input, remove_flake_input},
-    manifest::{FlakeManifest, ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported},
+    manifest::{FlakeOutput, ImportStatus, ManagedFile, ensure_imported},
     scan::{ExternalPackage, ScanTarget, remove_from_source, scan},
 };
 
+use crate::flakes::{InstalledFlake, scan_flakes};
 use crate::op::Op;
 use crate::report::Reporter;
 
@@ -54,6 +54,9 @@ pub struct Engine {
     pub nixos_manifest: Manifest,
     /// Packages declared directly in the user's own config files.
     pub external_packages: Vec<ExternalPackage>,
+    /// Flake outputs in the configuration, whether nixbox wired them in or
+    /// the user did.
+    pub flakes: Vec<InstalledFlake>,
 }
 
 impl Engine {
@@ -71,11 +74,13 @@ impl Engine {
         let nixos_manifest =
             ManagedFile::new(config.managed_file_for(Target::NixosSystem)).load()?;
         let external_packages = scan_externals(&config, &home_manifest, &nixos_manifest);
+        let flakes = scan_flakes(&config);
         Ok(Self {
             config,
             home_manifest,
             nixos_manifest,
             external_packages,
+            flakes,
         })
     }
 
@@ -92,6 +97,7 @@ impl Engine {
             home_manifest,
             nixos_manifest,
             external_packages,
+            flakes: Vec::new(),
         }
     }
 
@@ -154,10 +160,12 @@ impl Engine {
         }
     }
 
-    /// Re-reads both main config files and refreshes `external_packages`.
+    /// Re-reads both main config files and refreshes `external_packages`
+    /// and `flakes`.
     pub fn refresh_externals(&mut self) {
         self.external_packages =
             scan_externals(&self.config, &self.home_manifest, &self.nixos_manifest);
+        self.flakes = scan_flakes(&self.config);
     }
 
     /// Writes `scope`'s manifest to its managed file in the right format.
@@ -184,17 +192,18 @@ impl Engine {
                 self.manifest_for_mut(scope).add(&hit.attr);
             }
             Op::InstallFlake { repo, module, .. } => {
-                return self.apply_flake_output(repo, scope, reporter, |manifest| {
-                    manifest.add(repo.clone(), module.clone());
-                });
+                let output = FlakeOutput::Module(module.clone());
+                return self.apply_flake_output(repo, &output, scope, reporter);
             }
             Op::InstallFlakePackage { repo, package, .. } => {
-                return self.apply_flake_output(repo, scope, reporter, |manifest| {
-                    manifest.add_package(repo.clone(), package.clone());
-                });
+                let output = FlakeOutput::Package(package.clone());
+                return self.apply_flake_output(repo, &output, scope, reporter);
             }
             Op::UninstallFlake { repo, .. } => {
                 return self.remove_flake(repo, scope, reporter);
+            }
+            Op::UninstallFlakeOutput { input, output, .. } => {
+                return self.remove_flake_output(input, output, scope, reporter);
             }
             Op::Uninstall { name, .. } => {
                 self.manifest_for_mut(scope).remove(name);
@@ -228,46 +237,6 @@ impl Engine {
         }
         Ok(())
     }
-
-    /// Adds `repo` as a flake input and wires one of its outputs into the
-    /// managed flake file. The caller decides whether that output is a module
-    /// or a package, since the file holds both.
-    fn apply_flake_output(
-        &mut self,
-        repo: &str,
-        scope: Target,
-        reporter: &mut dyn Reporter,
-        update: impl FnOnce(&mut FlakeManifest),
-    ) -> Result<()> {
-        let (special_args, constructor) = match scope {
-            Target::HomeManager => ("extraSpecialArgs", "homeManagerConfiguration"),
-            Target::NixosSystem => ("specialArgs", "nixosSystem"),
-        };
-        let flake_file = self.config.flake_file();
-        ensure_flake_input(&flake_file, repo, special_args, constructor)?;
-
-        let managed = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
-        let mut manifest = managed.load()?;
-        update(&mut manifest);
-        match scope {
-            Target::HomeManager => managed.write_home_manager(&manifest)?,
-            Target::NixosSystem => managed.write_nixos(&manifest)?,
-        }
-        reporter.info(format!(
-            "Added github:{repo} to {} and wired its selected output into {}.",
-            flake_file.display(),
-            scope.label(),
-        ));
-
-        let main_file = self.config.main_file_for(scope);
-        note_import(&main_file, managed.path(), reporter);
-        for path in [flake_file.as_path(), managed.path(), main_file.as_path()] {
-            if path.exists() {
-                git_track(path, reporter);
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Whether a target's managed file is wired into the user's own config.
@@ -279,56 +248,6 @@ pub enum ImportState {
     NotImported,
     /// There is no main config file to import from.
     MainFileMissing,
-}
-
-impl Engine {
-    /// Drops a flake module from the generated manifest and removes its input
-    /// from the root flake.
-    fn remove_flake(
-        &mut self,
-        repo: &str,
-        scope: Target,
-        reporter: &mut dyn Reporter,
-    ) -> Result<()> {
-        let managed = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
-        let mut manifest = managed.load()?;
-        if !manifest.remove(repo) {
-            reporter.warn(format!(
-                "{repo} is not one of the flakes nixbox manages for {}.",
-                scope.label()
-            ));
-            return Ok(());
-        }
-        match scope {
-            Target::HomeManager => managed.write_home_manager(&manifest)?,
-            Target::NixosSystem => managed.write_nixos(&manifest)?,
-        }
-
-        let flake_file = self.config.flake_file();
-        if remove_flake_input(&flake_file, repo)? {
-            reporter.info(format!(
-                "Removed github:{} from {}.",
-                repo,
-                flake_file.display()
-            ));
-        } else {
-            reporter.warn(format!(
-                "no input for {repo} found in {}; remove it by hand if it is still there",
-                flake_file.display()
-            ));
-        }
-        git_track(managed.path(), reporter);
-        if flake_file.exists() {
-            git_track(&flake_file, reporter);
-        }
-        Ok(())
-    }
-
-    /// The flake modules nixbox manages for `scope`, as (input, module) pairs.
-    pub fn managed_flakes(&self, scope: Target) -> Result<Vec<(String, String)>> {
-        let managed = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
-        Ok(managed.load()?.modules.into_iter().collect())
-    }
 }
 
 /// Scans both main config files and returns the packages declared in them,
@@ -370,7 +289,7 @@ pub fn scan_externals(
 
 /// Reports whatever `ensure_imported` had to change, and stays quiet when the
 /// managed file was already imported.
-fn note_import(main_file: &Path, managed_file: &Path, reporter: &mut dyn Reporter) {
+pub(crate) fn note_import(main_file: &Path, managed_file: &Path, reporter: &mut dyn Reporter) {
     match ensure_imported(main_file, managed_file) {
         Ok(ImportStatus::AlreadyImported) => {}
         Ok(ImportStatus::InsertedIntoList) => reporter.info(format!(
@@ -401,7 +320,7 @@ fn note_import(main_file: &Path, managed_file: &Path, reporter: &mut dyn Reporte
 /// Silent no-op when git isn't installed or the path isn't inside one. Nix
 /// flakes refuse to see files that are present on disk but untracked, so this
 /// keeps a freshly written managed file visible to the rebuild.
-fn git_track(path: &Path, reporter: &mut dyn Reporter) {
+pub(crate) fn git_track(path: &Path, reporter: &mut dyn Reporter) {
     let Some(parent) = path.parent() else {
         return;
     };

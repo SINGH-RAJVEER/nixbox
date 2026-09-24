@@ -14,10 +14,11 @@ const TAG_WIDTH: usize = 7; // "[nixos]"
 pub(super) fn draw_installed_body(f: &mut Frame, area: Rect, app: &App) {
     let t = app.theme();
     let managed = app.filtered_managed_packages();
+    let flakes = app.filtered_flakes();
     let external = app.filtered_external_packages();
     let filter = app.installed_filter();
 
-    if managed.is_empty() && external.is_empty() {
+    if managed.is_empty() && flakes.is_empty() && external.is_empty() {
         let block = titled_panel(t, Span::styled("Installed packages", t.title_style()));
         let body = if filter.is_some() {
             format!(
@@ -67,9 +68,46 @@ pub(super) fn draw_installed_body(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Flake section ------------------------------------------------------
+    if !flakes.is_empty() {
+        if !items.is_empty() {
+            items.push(ListItem::new(Line::raw("")));
+        }
+        let managed_count = flakes.iter().filter(|flake| flake.is_managed()).count();
+        let header = format!(
+            " Flakes  ({} · {} managed, {} in your config) ",
+            flakes.len(),
+            managed_count,
+            flakes.len() - managed_count,
+        );
+        items.push(ListItem::new(Line::from(Span::styled(header, dim))));
+        for flake in &flakes {
+            pkg_to_row.push(items.len());
+            let (tag, tag_style) = scope_tag(flake.scope);
+            let origin = match (&flake.repo, &flake.declared_in) {
+                (Some(repo), None) => format!("(github:{repo})"),
+                (Some(repo), Some(list)) => format!("({list} · github:{repo})"),
+                (None, Some(list)) => format!("({list})"),
+                (None, None) => String::new(),
+            };
+            let mut spans = vec![
+                Span::raw("  "),
+                Span::styled(pad_tag(&tag), tag_style),
+                Span::raw("  "),
+                Span::styled(flake.name(), t.name_style()),
+                Span::raw("  "),
+                Span::styled(origin, dim),
+            ];
+            if !flake.removable {
+                spans.push(Span::styled("  · inline", dim));
+            }
+            items.push(ListItem::new(Line::from(spans)));
+        }
+    }
+
     // External section ---------------------------------------------------
     if !external.is_empty() {
-        if !managed.is_empty() {
+        if !items.is_empty() {
             items.push(ListItem::new(Line::raw("")));
         }
         let hm_count = external

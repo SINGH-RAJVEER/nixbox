@@ -41,24 +41,38 @@ Pressing `Enter` chooses one output for the active target:
 
 | Priority | Active target | Condition | Generated expression |
 | --- | --- | --- | --- |
-| 1 | Home Manager | Evaluation finds `homeManagerModules.default` or `homeModules.default`. | The exact detected path under `inputs."<owner>/<repository>"`. |
-| 1 | NixOS | Evaluation finds `nixosModules.default`. | `inputs."<owner>/<repository>".nixosModules.default`. |
-| 2 | Either | No matching default module exists, but the flake has packages for the current system. | The first ranked `inputs."<owner>/<repository>".packages.${pkgs.system}."<attribute>"`. |
+| 1 | Home Manager | The flake has packages for the current system. | The first ranked `inputs.<input>.packages.${pkgs.stdenv.hostPlatform.system}.<attribute>`, added to `home.packages`. |
+| 2 | Home Manager | No packages, but evaluation finds `homeManagerModules.default` or `homeModules.default`. | The exact detected module path under `inputs.<input>`. |
+| 1 | NixOS | Evaluation finds `nixosModules.default`. | `inputs.<input>.nixosModules.default`. |
+| 2 | NixOS | No default module, but the flake has packages for the current system. | The first ranked package, added to `environment.systemPackages`. |
 
-For Home Manager, the evaluator preserves whether the repository exports `homeManagerModules.default` or `homeModules.default`, and installation writes that exact path. When installing a package, the first evaluated package is already sorted to favor the `default` attribute, then exact, prefix, and substring query matches.
+Home Manager prefers packages because a Home Manager module installs nothing until its options are set, while a package in `home.packages` is usable after one rebuild. The first evaluated package is already sorted to favor the `default` attribute, then exact, prefix, and substring query matches.
 
 The queued installer performs these mutations:
 
-1. Read `<configuration-root>/flake.nix`.
-2. Require the outputs function to contain `outputs = inputs@` so the complete input set has a stable binding.
-3. Add `"<owner>/<repository>".url = "github:<owner>/<repository>";` to the root `inputs = { ... };` block unless an input with that exact quoted key already has a URL.
-4. Find `homeManagerConfiguration` or `nixosSystem` and add `extraSpecialArgs = { inherit inputs; };` or `specialArgs = { inherit inputs; };` unless the source already contains that setting name.
+1. Read `<configuration-root>/flake.nix` and require the outputs function to bind the whole input set as `inputs`, written as `outputs = inputs@{ ... }:`, `outputs = { ... }@inputs:`, or `outputs = inputs:`.
+2. Look for an existing root input whose URL is `github:<owner>/<repository>`, compared case-insensitively and ignoring any branch or query suffix. If one exists, its name is reused and `flake.nix` is left alone for this step.
+3. Otherwise add a new input under a short name derived from the repository: a `.nix` suffix, a `-flake` suffix, and a `nix-flake-` or `flake-` prefix are dropped, so `0xc000022070/zen-browser-flake` becomes `zen-browser` and `numtide/llm-agents.nix` becomes `llm-agents`. When that name is taken by another repository, `<owner>-<name>` is used. When the root flake has a `nixpkgs` input, the new input follows it. The entry copies the indentation and blank-line spacing of the existing inputs, and both the `inputs = { ... };` block and root-level `inputs.<name>.url = ...;` layouts are supported.
+4. Make `inputs` reachable from the target's modules:
+	- NixOS: ensure `nixosSystem` has `specialArgs` that inherits `inputs`.
+	- Home Manager with a standalone `homeManagerConfiguration`: ensure its `extraSpecialArgs` inherits `inputs`.
+	- Home Manager as a NixOS module (`home-manager.nixosModules.home-manager`): ensure `nixosSystem` has `specialArgs` with `inputs`, then ensure `home-manager.extraSpecialArgs` inherits `inputs`, either in `flake.nix` or in the NixOS entry file (usually `configuration.nix`). When it is missing, it is added to the `home-manager = { ... };` block or next to `home-manager.users`, and `inputs` is added to that file's module arguments.
+	An existing setting that lacks `inputs` gets `inherit inputs;` added to it. Settings bound to something other than a literal set are left alone.
 5. Add the selected module path or package attribute to `nixbox-home-flakes.nix` or `nixbox-system-flakes.nix`.
 6. Ensure the target entry module imports the generated flake module.
-7. Mark `flake.nix`, the generated module, and the target entry file with `git add --intent-to-add` when they are inside a Git work tree.
+7. Mark every touched file with `git add --intent-to-add` when it is inside a Git work tree.
 8. Run the target rebuild through the normal queue.
 
-The generated Home Manager flake module has this shape when one module and one package have been selected in separate operations:
+For a configuration that wires `inputs` into Home Manager through the NixOS module and lists flake packages in `home.nix`, the result matches what a hand edit would produce. Installing `oxcl/nix-flake-helium-browser` adds this to `flake.nix`:
+
+```nix
+helium-browser = {
+	url = "github:oxcl/nix-flake-helium-browser";
+	inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+The generated Home Manager flake module then has this shape when one module and one package have been selected in separate operations:
 
 ```nix
 # Managed by nixbox. Do not edit by hand.
@@ -66,18 +80,30 @@ The generated Home Manager flake module has this shape when one module and one p
 {
 	imports = [
 		# nixbox:flakes:start
-		inputs."owner/repository".homeManagerModules.default
+		inputs.some-module.homeManagerModules.default # github:owner/some-module
 		# nixbox:flakes:end
 	];
 	home.packages = [
 		# nixbox:flake-packages:start
-		inputs."owner/package".packages.${pkgs.system}."default"
+		inputs.helium-browser.packages.${pkgs.stdenv.hostPlatform.system}.default # github:oxcl/nix-flake-helium-browser
 		# nixbox:flake-packages:end
 	];
 }
 ```
 
-The quoted owner and repository string is also the key in the root flake inputs set. Quoted attribute names containing `/` are valid Nix.
+The trailing comment records which repository each line belongs to, so the input can be found again when the flake is removed.
+
+## Duplicate outputs
+
+Installing a package that your target entry file already declares, through the same input, changes nothing: NixBox reports that the package is already declared and does not add a second copy to the generated module. Because an existing input for the repository is always reused, the two declarations would name the same package anyway.
+
+## Output removal
+
+The Installed tab lists every flake output in the configuration and removes one at a time: see the Installed section of the user guide. The package line is deleted from NixBox's generated module, from your entry file, or from both when both declare it.
+
+`nixbox flake remove <owner>/<repository>` drops all of the repository's lines from the generated module at once.
+
+Either way, NixBox then removes the root input only when nothing else uses it: the input stays when the flake's outputs mention it, another input `follows` it, or any `.nix` file under the configuration root other than `flake.nix` still references `inputs.<input>`. An input you declared yourself and also use in `home.nix` therefore survives removal of the nixbox-managed copy.
 
 ## Required root-flake shape
 
@@ -89,7 +115,7 @@ The text editor expects conventional literal text similar to:
 		nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 	};
 
-	outputs = inputs@{ self, nixpkgs, ... }: {
+	outputs = { self, nixpkgs, ... }@inputs: {
 		nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
 			specialArgs = { inherit inputs; };
 			modules = [ ./configuration.nix ];
@@ -98,14 +124,15 @@ The text editor expects conventional literal text similar to:
 }
 ```
 
-The installer searches for literal strings such as `inputs = {`, `outputs = inputs@`, `nixosSystem`, and `homeManagerConfiguration`. It does not parse Nix strings or comments while finding braces, and it does not understand helper functions that move constructor arguments elsewhere. Commit the configuration before installation and inspect the diff afterward.
+The installer reads the root attribute set of `flake.nix` with a small scanner that skips strings and comments, and searches for the literal constructor names `nixosSystem` and `homeManagerConfiguration`. It does not understand helper functions that move constructor arguments elsewhere. Commit the configuration before installation and inspect the diff afterward.
 
 ## Current limitations
 
-- There is no flake-output uninstall command. Remove the generated mapping and root input through a controlled code change or manual configuration edit.
+- The Flakes tab has no uninstall key. Remove flake outputs from the Installed tab or with `nixbox flake remove`.
+- Only flake packages are picked up from your own entry files. Module imports you wrote yourself, such as `inputs.zen-browser.homeModules.twilight`, are not listed, because removing one usually leaves options behind that no longer exist.
 - Only GitHub repositories are discoverable and installable in this tab.
 - Only root `flake.nix` files qualify.
-- Only default NixOS and Home Manager module outputs can be installed; named non-default modules cannot be selected.
+- Only default NixOS and Home Manager module outputs can be installed; named non-default modules cannot be selected. On Home Manager, a module is only chosen when the flake has no packages.
 - The UI automatically chooses the first ranked package when no target-compatible default module exists; it does not let the user select another package attribute.
 - Search and metadata use GitHub API quota from the authenticated `gh` account.
 - Package inspection evaluates only `packages.<current-system>` and rejects entries whose `type` is not `derivation`.

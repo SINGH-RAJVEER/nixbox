@@ -41,7 +41,7 @@ Package names use a `BTreeSet`, so duplicates are removed and generated lines so
 
 ## Generated flake-output modules
 
-`nixbox-home-flakes.nix` and `nixbox-system-flakes.nix` store outputs selected from external flake inputs. Each file has an import marker block backed by a `BTreeMap` from the quoted GitHub repository key to a module output path. The manifest format also has a package marker block backed by a second `BTreeMap`; Home Manager renders that block as `home.packages`, while NixOS renders it as `environment.systemPackages`.
+`nixbox-home-flakes.nix` and `nixbox-system-flakes.nix` store outputs selected from external flake inputs. Each file has an import marker block backed by a `BTreeMap` from the `owner/repository` key to a module output path. The manifest format also has a package marker block backed by a second `BTreeMap` from the repository to its set of package attributes, so one flake can contribute several packages; Home Manager renders that block as `home.packages`, while NixOS renders it as `environment.systemPackages`. A third map records the root flake input each repository is referenced through, such as `zen-browser`.
 
 ```nix
 # Managed by nixbox. Do not edit by hand.
@@ -49,18 +49,18 @@ Package names use a `BTreeSet`, so duplicates are removed and generated lines so
 {
 	imports = [
 		# nixbox:flakes:start
-		inputs."owner/module".homeManagerModules.default
+		inputs.module.homeManagerModules.default # github:owner/module
 		# nixbox:flakes:end
 	];
 	home.packages = [
 		# nixbox:flake-packages:start
-		inputs."owner/package".packages.${pkgs.system}."default"
+		inputs.package.packages.${pkgs.stdenv.hostPlatform.system}.default # github:owner/package
 		# nixbox:flake-packages:end
 	];
 }
 ```
 
-Package attribute names are quoted and escaped when rendered. The manifest loader recognizes only the exact generated `inputs."repository".packages.${pkgs.system}."attribute"` form inside the package markers. The Flakes tab enqueues a flake-package operation when the selected repository has no default module for the active target, using the first package from the evaluated and ranked package list.
+Input and package attribute names are quoted and escaped only when they are not plain Nix identifiers. Each line ends with a `# github:<owner>/<repository>` comment that ties it back to its repository. The loader also reads lines written by earlier releases, which used the quoted repository as the input name, had no trailing comment, and used `${pkgs.system}`; those keep working until the flake is reinstalled. On the Home Manager target the Flakes tab enqueues a flake-package operation whenever the selected repository has packages, and on the NixOS target when it has no default module, using the first package from the evaluated and ranked package list.
 
 ## Automatic imports
 

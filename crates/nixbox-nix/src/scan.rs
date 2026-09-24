@@ -43,7 +43,76 @@ pub fn scan(path: &Path, target: ScanTarget) -> Result<Vec<ExternalPackage>> {
     Ok(parse(&raw, target))
 }
 
+/// A flake package declared by hand in the user's main nix config, such as
+/// `inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalFlakePackage {
+    /// The root flake input, as written (quoted when it is not an identifier).
+    pub input: String,
+    /// The package attribute under `packages.<system>`.
+    pub package: String,
+    /// Source attribute path of the list it sits in (e.g. `home.packages`).
+    pub source_attr: String,
+    /// 0-indexed line in the source file.
+    pub line: usize,
+    /// True when the entry has a line of its own and can be removed cleanly.
+    pub removable: bool,
+    pub scope: ScanTarget,
+}
+
+/// Reads `path` and returns the flake packages declared in its package lists.
+pub fn scan_flake_packages(path: &Path, target: ScanTarget) -> Result<Vec<ExternalFlakePackage>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(parse_flake_packages(&raw, target))
+}
+
 fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
+    list_entries(raw, target)
+        .into_iter()
+        .filter_map(|entry| {
+            Some(ExternalPackage {
+                name: clean_token(&entry.token, entry.with_pkgs)?,
+                source_attr: entry.source_attr,
+                line: entry.line,
+                migratable: entry.own_line,
+                scope: target,
+            })
+        })
+        .collect()
+}
+
+fn parse_flake_packages(raw: &str, target: ScanTarget) -> Vec<ExternalFlakePackage> {
+    list_entries(raw, target)
+        .into_iter()
+        .filter_map(|entry| {
+            let (input, package) = flake_package_token(&entry.token)?;
+            Some(ExternalFlakePackage {
+                input,
+                package,
+                source_attr: entry.source_attr,
+                line: entry.line,
+                removable: entry.own_line,
+                scope: target,
+            })
+        })
+        .collect()
+}
+
+/// One whitespace-free token inside a package list, before deciding what
+/// kind of package it names.
+struct ListEntry {
+    token: String,
+    source_attr: String,
+    line: usize,
+    /// Whether the token has a line to itself.
+    own_line: bool,
+    with_pkgs: bool,
+}
+
+fn list_entries(raw: &str, target: ScanTarget) -> Vec<ListEntry> {
     let lines: Vec<&str> = raw.lines().collect();
     let mut out = Vec::new();
 
@@ -57,13 +126,13 @@ fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
 
         // Capture entries that appear on the same line as the opener,
         // between `[` and the (optional) matching `]`.
-        for name in same_line_entries(stripped, open.with_pkgs) {
-            out.push(ExternalPackage {
-                name,
+        for token in same_line_entries(stripped) {
+            out.push(ListEntry {
+                token,
                 source_attr: open.source_attr.clone(),
                 line: i,
-                migratable: false,
-                scope: target,
+                own_line: false,
+                with_pkgs: open.with_pkgs,
             });
         }
 
@@ -87,14 +156,14 @@ fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
             // structures are skipped.
             if depth == outer_depth
                 && delta == 0
-                && let Some(name) = extract_entry(content, open.with_pkgs)
+                && let Some(token) = extract_entry(content)
             {
-                out.push(ExternalPackage {
-                    name,
+                out.push(ListEntry {
+                    token,
                     source_attr: open.source_attr.clone(),
                     line: j,
-                    migratable: true,
-                    scope: target,
+                    own_line: true,
+                    with_pkgs: open.with_pkgs,
                 });
             }
             depth += delta;
@@ -104,6 +173,38 @@ fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
     }
 
     out
+}
+
+/// Splits `inputs.<input>.packages.<system>.<attr>` into the input as written
+/// and the unquoted package attribute. The system segment may be an
+/// interpolation, quoted or not, or a literal system name.
+fn flake_package_token(token: &str) -> Option<(String, String)> {
+    let rest = token.strip_prefix("inputs.")?;
+    let (input, rest) = take_attr(rest)?;
+    let rest = rest.strip_prefix(".packages.")?;
+    let rest = if let Some(inner) = rest.strip_prefix("\"${") {
+        &inner[inner.find("}\"")? + 2..]
+    } else if let Some(inner) = rest.strip_prefix("${") {
+        &inner[inner.find('}')? + 1..]
+    } else {
+        take_attr(rest)?.1
+    };
+    let (package, rest) = take_attr(rest.strip_prefix('.')?)?;
+    if !rest.is_empty() {
+        return None;
+    }
+    Some((input.to_string(), crate::manifest::unquote(package)))
+}
+
+/// Takes one attribute name, quoted or not, off the front of `s`.
+fn take_attr(s: &str) -> Option<(&str, &str)> {
+    let end = if let Some(quoted) = s.strip_prefix('"') {
+        quoted.find('"')? + 2
+    } else {
+        s.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '\'')))
+            .unwrap_or(s.len())
+    };
+    (end > 0).then(|| s.split_at(end))
 }
 
 #[derive(Debug, Clone)]
@@ -209,7 +310,7 @@ fn matches_target(lhs: &str, target: ScanTarget) -> bool {
 
 /// Pulls entries from text between `[` (on this line) and the next `]` or end
 /// of line. Used for inline one-liner lists.
-fn same_line_entries(line: &str, with_pkgs: bool) -> Vec<String> {
+fn same_line_entries(line: &str) -> Vec<String> {
     let Some(open_pos) = line.find('[') else {
         return Vec::new();
     };
@@ -221,13 +322,14 @@ fn same_line_entries(line: &str, with_pkgs: bool) -> Vec<String> {
     inside
         .split_whitespace()
         .map(|t| t.trim_matches(|c: char| matches!(c, ';' | ',')))
-        .filter_map(|t| clean_token(t, with_pkgs))
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
         .collect()
 }
 
 /// Extracts a single package entry from `line` — must be one token with no
 /// surrounding whitespace-separated junk.
-fn extract_entry(line: &str, with_pkgs: bool) -> Option<String> {
+fn extract_entry(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -236,7 +338,7 @@ fn extract_entry(line: &str, with_pkgs: bool) -> Option<String> {
         return None;
     }
     let trimmed = trimmed.trim_matches(|c: char| matches!(c, ';' | ','));
-    clean_token(trimmed, with_pkgs)
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 /// Validates and normalises one package token. Returns the manifest-style
@@ -369,6 +471,43 @@ pub fn remove_from_source(
     }
     fs::write(path, out).with_context(|| format!("writing {}", path.display()))?;
     Ok(removed)
+}
+
+/// Removes the dedicated lines that declare `input`'s `package` in `path`'s
+/// package lists, and reports whether any were removed. Entries that share a
+/// line with others are left alone.
+pub fn remove_flake_package_from_source(
+    path: &Path,
+    target: ScanTarget,
+    input: &str,
+    package: &str,
+) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let remove_lines: HashSet<usize> = parse_flake_packages(&raw, target)
+        .into_iter()
+        .filter(|entry| entry.removable && entry.input == input && entry.package == package)
+        .map(|entry| entry.line)
+        .collect();
+    if remove_lines.is_empty() {
+        return Ok(false);
+    }
+
+    let trailing_newline = raw.ends_with('\n');
+    let mut out = String::with_capacity(raw.len());
+    for (idx, line) in raw.lines().enumerate() {
+        if !remove_lines.contains(&idx) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !trailing_newline && out.ends_with('\n') {
+        out.pop();
+    }
+    fs::write(path, out).with_context(|| format!("writing {}", path.display()))?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -518,6 +657,61 @@ mod tests {
 "#;
         let pkgs = parse(src, ScanTarget::Nixos);
         assert_eq!(names(&pkgs), vec!["asusctl"]);
+    }
+
+    #[test]
+    fn finds_flake_packages_in_every_system_spelling() {
+        let src = r#"
+{
+  home.packages = with pkgs; [
+    ripgrep
+    inputs.noctalia.packages.${pkgs.stdenv.hostPlatform.system}.default
+    inputs.zen-browser.packages."${pkgs.stdenv.hostPlatform.system}".default
+    inputs.llm-agents.packages.x86_64-linux.claude-code
+    inputs."owner/repo".packages.${pkgs.system}."bun-latest"
+  ];
+}
+"#;
+        let found: Vec<(String, String)> = parse_flake_packages(src, ScanTarget::HomeManager)
+            .into_iter()
+            .map(|entry| (entry.input, entry.package))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("noctalia".into(), "default".into()),
+                ("zen-browser".into(), "default".into()),
+                ("llm-agents".into(), "claude-code".into()),
+                ("\"owner/repo\"".into(), "bun-latest".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn removes_one_flake_package_line() {
+        let path =
+            std::env::temp_dir().join(format!("nixbox-scan-flake-{}.nix", std::process::id()));
+        fs::write(
+            &path,
+            "{\n  home.packages = [\n    inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.chatgpt\n    inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.claude-code\n  ];\n}\n",
+        )
+        .unwrap();
+
+        assert!(
+            remove_flake_package_from_source(
+                &path,
+                ScanTarget::HomeManager,
+                "llm-agents",
+                "chatgpt"
+            )
+            .unwrap()
+        );
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "{\n  home.packages = [\n    inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.claude-code\n  ];\n}\n"
+        );
+        let _ = fs::remove_file(path);
     }
 
     #[test]
