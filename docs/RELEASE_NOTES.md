@@ -2,6 +2,19 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Made flake installation reuse a root input that already points at the selected repository, and name new inputs the way they are usually written by hand (`zen-browser` rather than `"0xc000022070/zen-browser-flake"`), following the root `nixpkgs` when there is one.
+- Accepted `outputs = { ... }@inputs:` and `outputs = inputs:` in the root flake, not only `outputs = inputs@{ ... }:`.
+- Supported Home Manager installed as a NixOS module: `inputs` is passed through `specialArgs` and `home-manager.extraSpecialArgs` instead of failing on a missing `homeManagerConfiguration`.
+- Changed the Home Manager target to install a flake's package into `home.packages` before considering its Home Manager module, which does nothing until its options are set.
+- Switched generated package references from the deprecated `pkgs.system` to `pkgs.stdenv.hostPlatform.system`. Files written by earlier releases are still read.
+- Kept a flake's root input on removal when other files in the configuration still reference it.
+- Added a Flakes section to the Installed tab listing every flake package and module, both those NixBox manages and flake packages declared by hand in `home.nix` or `configuration.nix`, with the repository each comes from. `d` removes one from whichever file declares it, and the flake's input goes once its last package is removed.
+- Stopped installing a flake package that the entry file already declares, instead of listing it twice.
+- Fixed the generated flake module keeping only one package per flake: installing a second package from the same flake replaced the first.
+- Changed `nixbox flake list` to show packages as well as modules. Its `--json` rows now carry `repo`, `kind`, and `output` instead of `repo` and `module`.
+
 ## 0.2.3 - 2026-09-16
 
 The command line release. Neither 0.2.1 nor 0.2.2 reached crates.io, because the publish workflow could not authenticate; everything they described ships here.
