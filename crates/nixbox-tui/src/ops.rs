@@ -3,7 +3,9 @@ use std::{collections::VecDeque, time::Duration};
 use anyhow::{Result, anyhow};
 use directories::BaseDirs;
 use nixbox_config::Target;
-use nixbox_core::{HOME_FALLBACK_NOTE, LogReporter, rebuild::resolve as resolve_rebuild};
+use nixbox_core::{
+    HOME_FALLBACK_NOTE, InstalledFlake, LogReporter, rebuild::resolve as resolve_rebuild,
+};
 use nixbox_nix::{
     build::{BuildEvent, rebuild},
     flakes::{fetch_flake_details, search_flakes},
@@ -222,30 +224,51 @@ pub(crate) async fn install_selected_flake(
         return Ok(());
     }
 
-    let module = match scope {
-        Target::HomeManager => details.home_manager_module.clone(),
-        Target::NixosSystem => details.nixos_module.clone(),
+    let package = details.packages.first().map(|package| package.attr.clone());
+    let op = match scope {
+        // A Home Manager module does nothing until its options are set, so
+        // the package goes straight into `home.packages` whenever there is one.
+        Target::HomeManager => package
+            .map(|package| QueuedOp::InstallFlakePackage {
+                repo: details.repo.clone(),
+                package,
+                scope,
+            })
+            .or_else(|| {
+                details
+                    .home_manager_module
+                    .clone()
+                    .map(|module| QueuedOp::InstallFlake {
+                        repo: details.repo.clone(),
+                        module,
+                        scope,
+                    })
+            }),
+        Target::NixosSystem => details
+            .nixos_module
+            .clone()
+            .map(|module| QueuedOp::InstallFlake {
+                repo: details.repo.clone(),
+                module,
+                scope,
+            })
+            .or_else(|| {
+                package.map(|package| QueuedOp::InstallFlakePackage {
+                    repo: details.repo.clone(),
+                    package,
+                    scope,
+                })
+            }),
     };
-    if let Some(module) = module {
-        app.queue.push_back(QueuedOp::InstallFlake {
-            repo: details.repo.clone(),
-            module,
-            scope,
-        });
-    } else if let Some(package) = details.packages.first() {
-        app.queue.push_back(QueuedOp::InstallFlakePackage {
-            repo: details.repo.clone(),
-            package: package.attr.clone(),
-            scope,
-        });
-    } else {
+    let Some(op) = op else {
         app.status = format!(
             "{} has no installable package for this system or default {} module.",
             details.repo,
             scope.label()
         );
         return Ok(());
-    }
+    };
+    app.queue.push_back(op);
     app.persist();
     if app.build_in_progress {
         app.status = format!("Queued flake install: {}.", details.repo);
@@ -267,6 +290,7 @@ pub(crate) async fn uninstall_selected(app: &mut App, tx: &mpsc::Sender<AppEvent
     };
     let pkg = match cursor {
         InstalledCursor::Managed(p) => p,
+        InstalledCursor::Flake(flake) => return uninstall_flake(app, tx, flake),
         InstalledCursor::External(ep) => {
             app.status = format!(
                 "{} is external (in {}) — press m to migrate first.",
@@ -301,6 +325,50 @@ pub(crate) async fn uninstall_selected(app: &mut App, tx: &mpsc::Sender<AppEvent
     Ok(())
 }
 
+/// Queues removal of one flake output. The engine takes it out of whichever
+/// file declares it and drops the flake's input once nothing uses it.
+fn uninstall_flake(
+    app: &mut App,
+    tx: &mpsc::Sender<AppEvent>,
+    flake: InstalledFlake,
+) -> Result<()> {
+    let name = flake.name();
+    if !flake.removable {
+        app.status = format!(
+            "{} shares a line in {} with other entries; remove it manually.",
+            name,
+            flake.declared_in.as_deref().unwrap_or("your config"),
+        );
+        return Ok(());
+    }
+    let scope = flake.scope;
+    if app.queue.iter().any(|op| {
+        matches!(
+            op,
+            QueuedOp::UninstallFlakeOutput { input, output, scope: s }
+                if *s == scope && *input == flake.input && *output == flake.output
+        )
+    }) {
+        app.status = format!("{} already queued for removal.", name);
+        return Ok(());
+    }
+
+    app.queue.push_back(QueuedOp::UninstallFlakeOutput {
+        input: flake.input,
+        output: flake.output,
+        scope,
+    });
+    app.persist();
+    if app.build_in_progress {
+        app.status = format!("Queued remove: {} [{}].", name, scope.tag());
+        app.tab = Tab::Queue;
+    } else {
+        app.tab = Tab::Building;
+        drain_queue(app, tx);
+    }
+    Ok(())
+}
+
 pub(crate) async fn migrate_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
     let cursor = match app.installed_cursor() {
         Some(c) => c,
@@ -313,6 +381,13 @@ pub(crate) async fn migrate_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>)
         InstalledCursor::External(ep) => ep,
         InstalledCursor::Managed(p) => {
             app.status = format!("{} is already managed — press d to uninstall.", p.name);
+            return Ok(());
+        }
+        InstalledCursor::Flake(flake) => {
+            app.status = format!(
+                "{} comes from a flake and is not migrated — press d to uninstall.",
+                flake.name()
+            );
             return Ok(());
         }
     };
