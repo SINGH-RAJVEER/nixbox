@@ -6,6 +6,8 @@
 # for anything outside the system closure — so it belongs in the interactive
 # VM (`just vm`) rather than here.
 
+import json
+
 start_all()
 machine.wait_for_unit("multi-user.target")
 
@@ -173,3 +175,166 @@ with subtest("resume --discard throws the queue away instead"):
 	nixbox("resume --discard")
 	machine.fail("test -f /home/tester/.config/nixbox/state.json")
 	assert "hello" not in nixbox("list")
+
+
+# ── Flakes ─────────────────────────────────────────────────────────────────
+#
+# `nixbox flake add` first asks GitHub which outputs a flake has, and the VM
+# has no network. Everything after that question is local text editing, so
+# the flake ops are queued exactly as the TUI queues them and applied with
+# `resume`, which runs the same engine code. Nothing here rebuilds: the new
+# input points at GitHub and could not be fetched.
+
+CONFIG = "/home/tester/.config/nixos"
+REPO = "oxcl/nix-flake-helium-browser"
+HAND_WRITTEN = "inputs.helium-browser.packages.${pkgs.stdenv.hostPlatform.system}.cli"
+
+
+def read(name: str) -> str:
+	return machine.succeed(f"cat {CONFIG}/{name}")
+
+
+def write(name: str, content: str) -> None:
+	machine.succeed(
+		f"su -l tester -c 'cat > {CONFIG}/{name}' <<'NIX'\n" + content + "\nNIX\n"
+	)
+
+
+def apply_queued(*ops: dict) -> None:
+	state = {"pending_queue": list(ops), "in_progress": None, "last_error": None}
+	machine.succeed(
+		"su -l tester -c 'cat > ~/.config/nixbox/state.json' <<'JSON'\n"
+		+ json.dumps(state)
+		+ "\nJSON\n"
+	)
+	nixbox("resume --no-rebuild --yes")
+
+
+def install(package: str) -> dict:
+	return {
+		"InstallFlakePackage": {"repo": REPO, "package": package, "scope": "nixos-system"}
+	}
+
+
+def uninstall(package: str) -> dict:
+	return {
+		"UninstallFlakeOutput": {
+			"input": "helium-browser",
+			"output": {"Package": package},
+			"scope": "nixos-system",
+		}
+	}
+
+
+def managed_flakes() -> str:
+	return read("nixbox-system-flakes.nix")
+
+
+def tui(keys: str) -> None:
+	machine.succeed(f"su -l tester -c 'tmux send-keys -t nb {keys}'")
+
+
+def screen() -> str:
+	return machine.succeed("su -l tester -c 'tmux capture-pane -p -t nb'")
+
+
+with subtest("the root flake binds inputs the way hand-written configs do"):
+	# The seed uses `inputs@{ ... }`; most configurations in the wild, and
+	# the one this feature was written against, use `{ ... }@inputs`.
+	machine.succeed(
+		f"sed -i 's/inputs@{{ self, nixpkgs }}:/{{ self, nixpkgs }}@inputs:/' {CONFIG}/flake.nix"
+	)
+	assert "{ self, nixpkgs }@inputs:" in read("flake.nix"), read("flake.nix")
+	machine.succeed(f"cp {CONFIG}/flake.nix /tmp/flake.before")
+
+with subtest("a queued flake package is wired in as a person would write it"):
+	apply_queued(install("default"))
+	flake = read("flake.nix")
+	assert "helium-browser = {" in flake, flake
+	assert f'url = "github:{REPO}";' in flake, flake
+	assert 'inputs.nixpkgs.follows = "nixpkgs";' in flake, flake
+	# `specialArgs` already inherited `inputs`; it must not be added twice.
+	assert flake.count("specialArgs") == 1, flake
+	line = f"inputs.helium-browser.packages.${{pkgs.stdenv.hostPlatform.system}}.default # github:{REPO}"
+	assert line in managed_flakes(), managed_flakes()
+	assert "./nixbox-system-flakes.nix" in main_config(), main_config()
+	tracked = machine.succeed("su -l tester -c 'git -C ~/.config/nixos ls-files'")
+	assert "nixbox-system-flakes.nix" in tracked, tracked
+
+with subtest("flake list reports the managed package, as text and as json"):
+	listed = nixbox("flake list")
+	assert REPO in listed and "package" in listed and "default" in listed, listed
+	kind = machine.succeed("su -l tester -c 'nixbox flake list --json' | jq -r '.[0].kind'")
+	assert kind.strip() == "package", kind
+
+with subtest("a second package from the same flake sits next to the first"):
+	apply_queued(install("extra"))
+	assert ".default # github:" in managed_flakes(), managed_flakes()
+	assert ".extra # github:" in managed_flakes(), managed_flakes()
+	assert read("flake.nix").count(f"github:{REPO}") == 1, read("flake.nix")
+
+with subtest("a package configuration.nix already declares is not added twice"):
+	opener = "environment.systemPackages = with pkgs; ["
+	config = main_config()
+	assert opener in config, config
+	write(
+		"configuration.nix",
+		config.replace(opener, opener + "\n\t\t" + HAND_WRITTEN, 1).rstrip("\n"),
+	)
+	apply_queued(install("cli"))
+	assert ".cli" not in managed_flakes(), managed_flakes()
+	assert HAND_WRITTEN in main_config(), main_config()
+
+with subtest("the Installed tab lists flake packages from both places"):
+	nixbox("config set input-mode vim")
+	machine.succeed("su -l tester -c 'tmux new-session -d -s nb -x 200 -y 50 nixbox'")
+	machine.wait_until_succeeds(
+		"su -l tester -c 'tmux capture-pane -p -t nb' | grep -q Installed", timeout=60
+	)
+	tui("Tab")
+	tui("Tab")
+	machine.wait_until_succeeds(
+		"su -l tester -c 'tmux capture-pane -p -t nb' | grep -q 'Flakes  ('", timeout=30
+	)
+	shown = screen()
+	assert "helium-browser#default" in shown, shown
+	assert "helium-browser#extra" in shown, shown
+	assert "helium-browser#cli" in shown, shown
+	assert f"github:{REPO}" in shown, shown
+	assert "environment.systemPackages" in shown, shown
+
+with subtest("d in the Installed tab removes a hand-written flake package"):
+	if "d uninstall" not in screen():
+		tui("Escape")
+	tui("i")
+	machine.succeed("su -l tester -c \"tmux send-keys -t nb -l '#cli'\"")
+	tui("Escape")
+	machine.wait_until_succeeds(
+		"su -l tester -c 'tmux capture-pane -p -t nb' | grep -q 'd uninstall'", timeout=30
+	)
+	tui("d")
+	machine.wait_until_succeeds(f"! grep -qF '.cli' {CONFIG}/configuration.nix", timeout=60)
+	# The flake still provides two managed packages, so its input stays.
+	assert f"github:{REPO}" in read("flake.nix"), read("flake.nix")
+	# The TUI goes on to rebuild, which cannot fetch the input offline.
+	machine.succeed("su -l tester -c 'tmux kill-session -t nb'")
+	nixbox("config set input-mode normal")
+
+with subtest("removing one package keeps the input while another uses it"):
+	apply_queued(uninstall("default"))
+	assert ".default # github:" not in managed_flakes(), managed_flakes()
+	assert ".extra # github:" in managed_flakes(), managed_flakes()
+	assert f"github:{REPO}" in read("flake.nix"), read("flake.nix")
+
+with subtest("removing the last package drops the input again"):
+	apply_queued(uninstall("extra"))
+	machine.succeed(f"diff -u /tmp/flake.before {CONFIG}/flake.nix")
+	assert "helium-browser" not in managed_flakes(), managed_flakes()
+	assert "not managing any" in nixbox("flake list 2>&1")
+
+with subtest("flake remove drops every managed output of a flake at once"):
+	apply_queued(install("default"), install("extra"))
+	assert read("flake.nix").count(f"github:{REPO}") == 1, read("flake.nix")
+	nixbox(f"flake remove {REPO} --no-rebuild --yes")
+	machine.succeed(f"diff -u /tmp/flake.before {CONFIG}/flake.nix")
+	assert "helium-browser" not in managed_flakes(), managed_flakes()

@@ -1,9 +1,10 @@
 # Seeded into the VM at ~/.config/nixos. This is the flake nixbox rebuilds,
 # so it has to expose `nixosConfigurations.nixos`.
 #
-# The `inputs = { ... }` block and the `outputs = inputs@{ ... }` binding are
-# both load-bearing: `nixbox flake add` looks for exactly those two shapes
-# before it will wire a flake module in.
+# The `inputs = { ... }` block and an outputs function that binds `inputs`
+# are both load-bearing: `nixbox flake add` needs them to wire a flake in.
+# The VM check rewrites the binding to `{ ... }@inputs` to cover that form
+# as well.
 {
 	description = "Throwaway NixOS configuration for the nixbox test VM";
 
