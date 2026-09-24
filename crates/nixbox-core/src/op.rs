@@ -1,6 +1,7 @@
 //! The unit of work both front-ends schedule and the engine applies.
 
 use nixbox_config::Target;
+use nixbox_nix::manifest::FlakeOutput;
 use nixbox_nix::search::SearchHit;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,13 @@ pub enum Op {
         repo: String,
         scope: Target,
     },
+    /// Removes one flake output wherever it is declared, nixbox's flake
+    /// module or the user's own main file.
+    UninstallFlakeOutput {
+        input: String,
+        output: FlakeOutput,
+        scope: Target,
+    },
     Uninstall {
         name: String,
         scope: Target,
@@ -49,6 +57,7 @@ impl Op {
             | Op::InstallFlake { scope, .. }
             | Op::InstallFlakePackage { scope, .. }
             | Op::UninstallFlake { scope, .. }
+            | Op::UninstallFlakeOutput { scope, .. }
             | Op::Uninstall { scope, .. }
             | Op::Migrate { scope, .. } => *scope,
         }
@@ -65,6 +74,9 @@ impl Op {
                 format!("install {repo}#{package} [{tag}]")
             }
             Op::UninstallFlake { repo, .. } => format!("remove flake {} [{}]", repo, tag),
+            Op::UninstallFlakeOutput { input, output, .. } => {
+                format!("remove {} [{tag}]", output.display(input))
+            }
             Op::Uninstall { name, .. } => format!("remove {} [{}]", name, tag),
             Op::Migrate { names, .. } => match names.as_slice() {
                 [only] => format!("migrate {} [{}]", only, tag),
@@ -136,6 +148,15 @@ mod tests {
             }
             .label(),
             "remove flake owner/repo [hm]"
+        );
+        assert_eq!(
+            Op::UninstallFlakeOutput {
+                input: "llm-agents".into(),
+                output: nixbox_nix::manifest::FlakeOutput::Package("claude-code".into()),
+                scope: Target::HomeManager,
+            }
+            .label(),
+            "remove llm-agents#claude-code [hm]"
         );
     }
 
