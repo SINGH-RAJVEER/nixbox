@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::wiring::attr_name;
+
 /// Creates a minimal `home.nix` in `dir` if one doesn't already exist,
 /// importing `nixbox-packages.nix` alongside it.
 pub fn ensure_home_nix(dir: &Path) -> Result<()> {
@@ -40,25 +42,114 @@ pub struct Manifest {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlakeManifest {
+    /// Module path under the input, keyed by `owner/repo`.
     pub modules: BTreeMap<String, String>,
-    pub packages: BTreeMap<String, String>,
+    /// Package attributes under the input, keyed by `owner/repo`. One flake
+    /// can contribute several packages.
+    pub packages: BTreeMap<String, BTreeSet<String>>,
+    /// The root flake input each repository is wired through, keyed by
+    /// `owner/repo`. Repositories missing here use their quoted `owner/repo`
+    /// as the input name, which is how older releases named them.
+    #[serde(default)]
+    pub inputs: BTreeMap<String, String>,
 }
 
 impl FlakeManifest {
-    pub fn add(&mut self, input: String, module: String) -> bool {
-        self.modules.insert(input, module).is_none()
+    pub fn add(&mut self, repo: String, module: String) -> bool {
+        self.modules.insert(repo, module).is_none()
     }
 
-    pub fn add_package(&mut self, input: String, package: String) -> bool {
-        self.packages.insert(input, package).is_none()
+    pub fn add_package(&mut self, repo: String, package: String) -> bool {
+        self.packages.entry(repo).or_default().insert(package)
     }
 
-    /// Drops every output wired in for `input`, module or package, so
+    /// Whether `repo` still contributes any output.
+    #[must_use]
+    pub fn contains(&self, repo: &str) -> bool {
+        self.modules.contains_key(repo) || self.packages.contains_key(repo)
+    }
+
+    /// Drops one output of `repo`, forgetting the repository entirely once
+    /// it has none left.
+    pub fn remove_output(&mut self, repo: &str, output: &FlakeOutput) -> bool {
+        let removed = match output {
+            FlakeOutput::Module(module) => {
+                if self.modules.get(repo) == Some(module) {
+                    self.modules.remove(repo);
+                    true
+                } else {
+                    false
+                }
+            }
+            FlakeOutput::Package(package) => {
+                let removed = self
+                    .packages
+                    .get_mut(repo)
+                    .is_some_and(|packages| packages.remove(package));
+                if self.packages.get(repo).is_some_and(BTreeSet::is_empty) {
+                    self.packages.remove(repo);
+                }
+                removed
+            }
+        };
+        if !self.contains(repo) {
+            self.inputs.remove(repo);
+        }
+        removed
+    }
+
+    /// Every output as `(repo, output)`, modules first.
+    #[must_use]
+    pub fn outputs(&self) -> Vec<(String, FlakeOutput)> {
+        let modules = self
+            .modules
+            .iter()
+            .map(|(repo, module)| (repo.clone(), FlakeOutput::Module(module.clone())));
+        let packages = self.packages.iter().flat_map(|(repo, packages)| {
+            packages
+                .iter()
+                .map(|package| (repo.clone(), FlakeOutput::Package(package.clone())))
+        });
+        modules.chain(packages).collect()
+    }
+
+    /// Drops every output wired in for `repo`, module or package, so
     /// removing a flake leaves nothing of it behind.
-    pub fn remove(&mut self, input: &str) -> bool {
-        let had_module = self.modules.remove(input).is_some();
-        let had_package = self.packages.remove(input).is_some();
+    pub fn remove(&mut self, repo: &str) -> bool {
+        let had_module = self.modules.remove(repo).is_some();
+        let had_package = self.packages.remove(repo).is_some();
+        self.inputs.remove(repo);
         had_module || had_package
+    }
+
+    /// The root input `repo` is referenced through.
+    #[must_use]
+    pub fn input_for(&self, repo: &str) -> String {
+        self.inputs
+            .get(repo)
+            .cloned()
+            .unwrap_or_else(|| format!("\"{repo}\""))
+    }
+}
+
+/// One thing a flake contributes to a configuration.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FlakeOutput {
+    /// A module path under the input, such as `homeModules.default`.
+    Module(String),
+    /// A package attribute under `packages.<system>`.
+    Package(String),
+}
+
+impl FlakeOutput {
+    /// `input#package` for packages, `input.<module path>` for modules.
+    #[must_use]
+    pub fn display(&self, input: &str) -> String {
+        let input = input.trim_matches('"');
+        match self {
+            FlakeOutput::Module(module) => format!("{input}.{module}"),
+            FlakeOutput::Package(package) => format!("{input}#{package}"),
+        }
     }
 }
 
@@ -134,41 +225,32 @@ impl ManagedFlakeFile {
         let mut in_package_block = false;
         for line in raw.lines() {
             let line = line.trim();
-            if line == "# nixbox:flakes:start" {
-                in_module_block = true;
-                continue;
+            match line {
+                "# nixbox:flakes:start" => in_module_block = true,
+                "# nixbox:flakes:end" => in_module_block = false,
+                "# nixbox:flake-packages:start" => in_package_block = true,
+                "# nixbox:flake-packages:end" => in_package_block = false,
+                _ => {}
             }
-            if line == "# nixbox:flakes:end" {
-                in_module_block = false;
-                continue;
-            }
-            if line == "# nixbox:flake-packages:start" {
-                in_package_block = true;
-                continue;
-            }
-            if line == "# nixbox:flake-packages:end" {
-                in_package_block = false;
-                continue;
-            }
-            let Some(path) = line.strip_prefix("inputs.\"") else {
-                continue;
-            };
-            let Some((input, output)) = path.split_once("\".") else {
+            let Some((input, output, repo)) = parse_flake_line(line) else {
                 continue;
             };
             if in_module_block {
-                manifest
-                    .modules
-                    .insert(input.to_string(), output.to_string());
+                manifest.modules.insert(repo.clone(), output.to_string());
             } else if in_package_block
-                && let Some(package) = output
-                    .strip_prefix("packages.${pkgs.system}.\"")
-                    .and_then(|value| value.strip_suffix('"'))
+                && let Some(package) = PACKAGE_PREFIXES
+                    .iter()
+                    .find_map(|prefix| output.strip_prefix(prefix))
             {
                 manifest
                     .packages
-                    .insert(input.to_string(), package.to_string());
+                    .entry(repo.clone())
+                    .or_default()
+                    .insert(unquote(package));
+            } else {
+                continue;
             }
+            manifest.inputs.insert(repo, input.to_string());
         }
         Ok(manifest)
     }
@@ -187,17 +269,22 @@ impl ManagedFlakeFile {
         }
         let mut imports = String::new();
         imports.push_str("\t\t# nixbox:flakes:start\n");
-        for (input, module) in &manifest.modules {
-            imports.push_str(&format!("\t\tinputs.\"{input}\".{module}\n"));
+        for (repo, module) in &manifest.modules {
+            let input = manifest.input_for(repo);
+            imports.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
         }
         imports.push_str("\t\t# nixbox:flakes:end\n");
         let mut packages = String::new();
         packages.push_str("\t\t# nixbox:flake-packages:start\n");
-        for (input, package) in &manifest.packages {
-            packages.push_str(&format!(
-                "\t\tinputs.\"{input}\".packages.${{pkgs.system}}.\"{}\"\n",
-                escape_nix_string(package)
-            ));
+        for (repo, attrs) in &manifest.packages {
+            let input = manifest.input_for(repo);
+            for package in attrs {
+                packages.push_str(&format!(
+                    "\t\tinputs.{input}.{}{} # github:{repo}\n",
+                    PACKAGE_PREFIXES[0],
+                    attr_name(package)
+                ));
+            }
         }
         packages.push_str("\t\t# nixbox:flake-packages:end\n");
         let content = format!(
@@ -207,8 +294,42 @@ impl ManagedFlakeFile {
     }
 }
 
-fn escape_nix_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+/// How a package output is reached from its input. The first form is the
+/// one nixbox writes; `pkgs.system` is what older releases wrote and is
+/// deprecated in nixpkgs.
+const PACKAGE_PREFIXES: [&str; 2] = [
+    "packages.${pkgs.stdenv.hostPlatform.system}.",
+    "packages.${pkgs.system}.",
+];
+
+/// Splits `inputs.<input>.<output> # github:<repo>` into its parts. Lines
+/// without the trailing repository comment were written by older releases,
+/// whose input name was always the quoted repository.
+fn parse_flake_line(line: &str) -> Option<(&str, &str, String)> {
+    let rest = line.strip_prefix("inputs.")?;
+    let (expr, repo) = match rest.rsplit_once(" # github:") {
+        Some((expr, repo)) => (expr.trim(), Some(repo.trim())),
+        None => (rest, None),
+    };
+    let split = if let Some(quoted) = expr.strip_prefix('"') {
+        quoted.find('"').map(|close| close + 2)?
+    } else {
+        expr.find('.')?
+    };
+    let input = &expr[..split];
+    let output = expr[split..].strip_prefix('.')?;
+    let repo = repo.map_or_else(|| input.trim_matches('"').to_string(), str::to_string);
+    Some((input, output, repo))
+}
+
+pub(crate) fn unquote(value: &str) -> String {
+    match value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
+        Some(inner) => inner.replace("\\\"", "\"").replace("\\\\", "\\"),
+        None => value.to_string(),
+    }
 }
 
 fn parse(raw: &str) -> Manifest {
@@ -602,15 +723,47 @@ mod tests {
         let mut manifest = FlakeManifest::default();
         manifest.add("owner/module".into(), "homeManagerModules.default".into());
         manifest.add_package("owner/package".into(), "default".into());
+        manifest.add_package("owner/package".into(), "extra".into());
+        manifest
+            .inputs
+            .insert("owner/package".into(), "package".into());
 
         managed.write_home_manager(&manifest).unwrap();
 
         let loaded = managed.load().unwrap();
         assert_eq!(loaded.modules, manifest.modules);
         assert_eq!(loaded.packages, manifest.packages);
+        assert_eq!(loaded.input_for("owner/package"), "package");
+        assert_eq!(loaded.input_for("owner/module"), "\"owner/module\"");
+
+        let mut trimmed = loaded;
+        assert!(trimmed.remove_output("owner/package", &FlakeOutput::Package("default".into())));
+        assert!(trimmed.contains("owner/package"));
+        assert!(trimmed.remove_output("owner/package", &FlakeOutput::Package("extra".into())));
+        assert!(!trimmed.contains("owner/package"));
+        assert!(!trimmed.inputs.contains_key("owner/package"));
         let rendered = fs::read_to_string(&path).unwrap();
-        assert!(rendered.contains("inputs.\"owner/package\".packages.${pkgs.system}.\"default\""));
+        assert!(rendered.contains(
+            "inputs.package.packages.${pkgs.stdenv.hostPlatform.system}.default # github:owner/package"
+        ));
         assert!(rendered.contains("home.packages = ["));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn flake_manifest_reads_what_older_releases_wrote() {
+        let path =
+            std::env::temp_dir().join(format!("nixbox-legacy-flakes-{}.nix", std::process::id()));
+        fs::write(
+            &path,
+            "{ inputs, pkgs, ... }:\n{\n\timports = [\n\t\t# nixbox:flakes:start\n\t\t# nixbox:flakes:end\n\t];\n\thome.packages = [\n\t\t# nixbox:flake-packages:start\n\t\tinputs.\"owner/package\".packages.${pkgs.system}.\"bun-latest\"\n\t\t# nixbox:flake-packages:end\n\t];\n}\n",
+        )
+        .unwrap();
+
+        let loaded = ManagedFlakeFile::new(&path).load().unwrap();
+
+        assert!(loaded.packages["owner/package"].contains("bun-latest"));
+        assert_eq!(loaded.input_for("owner/package"), "\"owner/package\"");
         let _ = fs::remove_file(path);
     }
 
@@ -627,9 +780,9 @@ mod tests {
 
         let rendered = fs::read_to_string(&path).unwrap();
         assert!(rendered.contains("environment.systemPackages = ["));
-        assert!(
-            rendered.contains("inputs.\"owner/package\".packages.${pkgs.system}.\"bun-latest\"")
-        );
+        assert!(rendered.contains(
+            "inputs.\"owner/package\".packages.${pkgs.stdenv.hostPlatform.system}.bun-latest"
+        ));
         let _ = fs::remove_file(path);
     }
 }

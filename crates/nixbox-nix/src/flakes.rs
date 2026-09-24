@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{fs, process::Stdio};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -617,104 +616,6 @@ pub async fn fetch_flake_details(hit: &FlakeHit) -> Result<FlakeDetails> {
     })
 }
 
-/// Adds a GitHub flake as a root input and makes `inputs` available to the
-/// selected configuration constructor.
-pub fn ensure_flake_input(
-    flake_file: &Path,
-    repo: &str,
-    special_args: &str,
-    constructor: &str,
-) -> Result<()> {
-    let source = fs::read_to_string(flake_file)
-        .with_context(|| format!("reading {}", flake_file.display()))?;
-    if !source.contains("outputs = inputs@") {
-        bail!(
-            "{} must bind `inputs` in its outputs function before nixbox can install flake outputs",
-            flake_file.display()
-        );
-    }
-
-    let mut updated = source;
-    let input = format!("\"{repo}\"");
-    if !updated.contains(&format!("{input}.url")) {
-        let inputs_pos = updated
-            .find("inputs = {")
-            .context("could not find an `inputs = { ... };` block")?;
-        let open = inputs_pos + "inputs = ".len();
-        let close = matching_brace(&updated, open)
-            .context("could not find the end of the flake inputs block")?;
-        updated.insert_str(close, &format!("\t{input}.url = \"github:{repo}\";\n"));
-    }
-
-    if !updated.contains(special_args) {
-        let constructor_pos = updated
-            .find(constructor)
-            .with_context(|| format!("could not find `{constructor}`"))?;
-        let open = updated[constructor_pos..]
-            .find('{')
-            .map(|offset| constructor_pos + offset)
-            .context("could not find configuration arguments")?;
-        updated.insert_str(
-            open + 1,
-            &format!("\n\t\t{special_args} = {{ inherit inputs; }};"),
-        );
-    }
-
-    fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))
-}
-
-/// Drops the `"owner/repo".url = ...;` line that [`ensure_flake_input`]
-/// added, and reports whether there was one.
-///
-/// The `inherit inputs` wiring stays: other flake modules nixbox manages may
-/// still depend on it, and it is harmless when nothing does.
-pub fn remove_flake_input(flake_file: &Path, repo: &str) -> Result<bool> {
-    if !flake_file.exists() {
-        return Ok(false);
-    }
-    let source = fs::read_to_string(flake_file)
-        .with_context(|| format!("reading {}", flake_file.display()))?;
-    let needle = format!("\"{repo}\".url");
-
-    let trailing_newline = source.ends_with('\n');
-    let mut kept: Vec<&str> = Vec::new();
-    let mut removed = false;
-    for line in source.lines() {
-        if line.trim_start().starts_with(&needle) {
-            removed = true;
-        } else {
-            kept.push(line);
-        }
-    }
-    if !removed {
-        return Ok(false);
-    }
-
-    let mut updated = kept.join("\n");
-    if trailing_newline {
-        updated.push('\n');
-    }
-    fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))?;
-    Ok(true)
-}
-
-fn matching_brace(source: &str, open: usize) -> Option<usize> {
-    let mut depth = 0;
-    for (offset, ch) in source[open..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(open + offset);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 async fn gh_api(args: Vec<String>) -> Result<Vec<u8>> {
     let output = Command::new("gh")
         .arg("api")
@@ -783,12 +684,10 @@ fn balanced_block(source: &str, open: usize) -> Option<&str> {
 mod tests {
     use super::{
         Candidate, EvaluatedOutputs, FlakeInspection, FlakePackage, classify_inputs,
-        classify_output_names, compact_fragment, ensure_flake_input, github_references,
-        insert_candidate, inspection_from_evaluation, repository_name_score,
-        repository_search_query,
+        classify_output_names, compact_fragment, github_references, insert_candidate,
+        inspection_from_evaluation, repository_name_score, repository_search_query,
     };
     use std::collections::BTreeMap;
-    use std::fs;
 
     #[test]
     fn compacts_github_match_fragments_for_result_rows() {
@@ -913,32 +812,6 @@ mod tests {
         );
         assert!(!inspection.nixos_module);
         assert!(!inspection.home_manager_module);
-    }
-
-    #[test]
-    fn adds_input_and_home_manager_special_args() {
-        let dir = std::env::temp_dir().join(format!("nixbox-flake-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("flake.nix");
-        fs::write(
-            &file,
-            "{\n  inputs = { nixpkgs.url = \"github:NixOS/nixpkgs\"; };\n  outputs = inputs@{ self, nixpkgs, ... }: {\n    homeConfigurations.user = inputs.home-manager.lib.homeManagerConfiguration {\n      modules = [ ./home.nix ];\n    };\n  };\n}\n",
-        )
-        .unwrap();
-
-        ensure_flake_input(
-            &file,
-            "owner/module",
-            "extraSpecialArgs",
-            "homeManagerConfiguration",
-        )
-        .unwrap();
-
-        let updated = fs::read_to_string(&file).unwrap();
-        assert!(updated.contains("\"owner/module\".url = \"github:owner/module\";"));
-        assert!(updated.contains("extraSpecialArgs = { inherit inputs; };"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
