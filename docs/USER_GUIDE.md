@@ -12,6 +12,8 @@ gh auth login
 
 NixOS changes run through `sudo nixos-rebuild switch`, so the active terminal must be able to complete the sudo prompt.
 
+This guide covers the terminal UI. The desktop front-end, `nixbox-gui`, is described in [Desktop GUI](GUI.md); it asks for the sudo password in a window of its own.
+
 ## Starting NixBox
 
 ```sh

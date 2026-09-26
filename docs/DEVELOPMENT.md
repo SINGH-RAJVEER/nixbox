@@ -12,6 +12,7 @@
 │	├── nixbox-cmd
 │	├── nixbox-config
 │	├── nixbox-core
+│	├── nixbox-gui
 │	├── nixbox-nix
 │	└── nixbox-tui
 ├── docs
@@ -56,6 +57,26 @@ Cargo unifies features across a workspace build, so `cargo test --workspace` alw
 
 The Nix flake exposes both as `packages.nixbox` and `packages.nixbox-cli`.
 
+## The desktop GUI
+
+`nixbox-gui` is a third binary, built on gpui through `gpui-kit`, which pins gpui and gpui-component together. It is not a feature of `nixbox-cmd`: it has no subcommands and does not share the command tree, only `nixbox-core`. It is marked `publish = false` until it has had real use.
+
+Building it needs pkg-config, fontconfig, freetype, Wayland, xkbcommon, X11/xcb, and the Vulkan loader, and running it needs the Vulkan loader and the windowing libraries on the library path. The devenv shell provides all of that. Nothing else does, so the crate is kept out of every workspace-wide command:
+
+- The root `Cargo.toml` lists every other crate in `default-members`, so a bare `cargo build` or `cargo test` skips it.
+- `just build`, `just check`, `just test`, and `just lint` pass `--exclude nixbox-gui`. `just gui`, `just gui-ci`, and `just release-gui` build it on its own.
+- CI lints and tests it in its own `gui` job, which installs the graphics libraries first.
+- The flake's `nixbox` package runs workspace tests with `--exclude nixbox-gui`, so building the TUI never needs the graphics stack.
+
+To try it without touching your real configuration or queued work, point the settings, cache, and flake directory somewhere disposable:
+
+```sh
+XDG_CONFIG_HOME=/tmp/nbx/config XDG_CACHE_HOME=/tmp/nbx/cache \
+	NIXBOX_CONFIG_DIR=/tmp/nbx/nixos just gui
+```
+
+`app::tests` opens the real window headlessly with gpui-kit's test support and renders every page with a search hit and a rebuild in progress.
+
 ## Development environment
 
 The supported development path is the pinned devenv shell:
@@ -64,7 +85,7 @@ The supported development path is the pinned devenv shell:
 devenv shell
 ```
 
-`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, and `just`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
+`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, `just`, and the libraries `nixbox-gui` builds against, and puts the ones gpui loads at runtime on `LD_LIBRARY_PATH`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
 
 Using the shell matters on NixOS because a Rustup toolchain can retain linker wrappers that point at garbage-collected Nix store paths. If plain Cargo fails inside a Rust linker wrapper while the devenv build succeeds, treat that as a host toolchain problem rather than changing NixBox source.
 
@@ -72,16 +93,19 @@ Using the shell matters on NixOS because a Rustup toolchain can retain linker wr
 
 | Command | Purpose |
 | --- | --- |
-| `just build` | Build the complete workspace in debug mode. |
-| `just release` | Build the complete workspace with release optimizations. |
-| `just check` | Type-check the workspace without code generation. |
-| `just test` | Run the workspace test suite. |
+| `just build` | Build the workspace, except the GUI, in debug mode. |
+| `just release` | Build the workspace, except the GUI, with release optimizations. |
+| `just check` | Type-check the workspace, except the GUI, without code generation. |
+| `just test` | Run the workspace test suite, except the GUI's. |
 | `just cli` | Lint and test `nixbox-cli` and `nixbox-cmd` on their own, which a workspace build does not cover. |
 | `just release-cli` | Build the `nixbox-cli` release binary. |
 | `just run` | Start the debug TUI. |
 | `just fmt` | Format every crate with rustfmt. |
 | `just lint` | Run Clippy for the workspace and deny warnings. |
 | `just fix` | Run formatting and linting. Despite the name, Clippy is not invoked with automatic fixes. |
+| `just gui` | Start the debug desktop GUI. Needs the devenv shell. |
+| `just gui-ci` | Lint and test `nixbox-gui` on its own. |
+| `just release-gui` | Build the `nixbox-gui` release binary. |
 | `just clean` | Remove Cargo build artifacts. |
 | `just dev` | Enter `devenv shell`. |
 | `just dev-update` | Update pinned devenv inputs. |
@@ -104,7 +128,7 @@ devenv shell -- just ci
 
 ## Tests
 
-The workspace has unit and asynchronous tests in every functional module. The tests cover settings defaults and serialization, package and flake manifest rendering, import insertion, package scanning and removal, search parsing and ranking, lock-file catalog resolution, bounded process output, build cancellation, GitHub result parsing and flake mutation, application epochs and state transitions, keyboard handling, queue batching, recovery serialization, and Unicode-aware Vim motions.
+The workspace has unit and asynchronous tests in every functional module. The tests cover settings defaults and serialization, package and flake manifest rendering, import insertion, package scanning and removal, search parsing and ranking, lock-file catalog resolution, bounded process output, build cancellation, GitHub result parsing and flake mutation, application epochs and state transitions, keyboard handling, queue batching and deduplication in the `Session`, askpass escalation, recovery serialization, and Unicode-aware Vim motions.
 
 Five tests are ignored during a normal run because they depend on live machine or network state:
 
@@ -173,8 +197,10 @@ The current code has limited tracing calls, so the TUI status line and Building 
 The repository flake exports:
 
 - `packages.<system>.nixbox` and `packages.<system>.default`.
+- `packages.<system>.nixbox-cli`.
+- `packages.<system>.nixbox-gui`, on Linux systems only. Its wrapper also puts the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`.
 - `apps.<system>.default`.
-- `overlays.default`, which adds `pkgs.nixbox`.
+- `overlays.default`, which adds `pkgs.nixbox`, `pkgs.nixbox-cli`, and `pkgs.nixbox-gui`.
 
 Supported systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. `buildRustPackage` builds only the `nixbox` package target but runs workspace tests. The source set includes Cargo metadata, the license, README, and all crates. The installed executable is wrapped with `gh`, `git`, and `nix` on `PATH`.
 
