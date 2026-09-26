@@ -3,21 +3,25 @@
 //! Everything that mutates the user's configuration lives here: manifest
 //! bookkeeping, writing the managed `.nix` files, inserting the `imports`
 //! entry, keeping git aware of generated files, and working out which rebuild
-//! command applies to a given target. Front-ends (the TUI and the CLI) own
-//! presentation, scheduling, and cancellation — not policy.
+//! command applies to a given target. The [`Session`] drives queued ops
+//! through rebuilds for the interactive front-ends; front-ends own
+//! presentation, not policy.
 
 pub mod engine;
 pub mod flakes;
 pub mod op;
 pub mod rebuild;
 pub mod report;
+pub mod search;
+pub mod session;
 pub mod state;
 
 pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};
 pub use flakes::InstalledFlake;
 pub use op::Op;
-pub use rebuild::{HOME_FALLBACK_NOTE, RebuildCommand};
+pub use rebuild::{Escalation, HOME_FALLBACK_NOTE, RebuildCommand};
 pub use report::{LogReporter, Reporter, SilentReporter};
+pub use session::{BuildEnded, Enqueued, Restored, Session};
 pub use state::{InProgress, PersistedState, state_path};
 
 #[cfg(test)]

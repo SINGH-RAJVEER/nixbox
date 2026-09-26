@@ -1,6 +1,7 @@
 //! The unit of work both front-ends schedule and the engine applies.
 
 use nixbox_config::Target;
+use nixbox_nix::flakes::FlakeDetails;
 use nixbox_nix::manifest::FlakeOutput;
 use nixbox_nix::search::SearchHit;
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,72 @@ impl Op {
         }
     }
 
+    /// True when queueing `self` next to `other` would do the same work
+    /// twice: the same package, flake, or output in the same scope.
+    #[must_use]
+    pub fn duplicates(&self, other: &Op) -> bool {
+        if self.scope() != other.scope() {
+            return false;
+        }
+        match (self, other) {
+            (Op::Install { hit: a, .. }, Op::Install { hit: b, .. }) => a.attr == b.attr,
+            (
+                Op::InstallFlake { repo: a, .. } | Op::InstallFlakePackage { repo: a, .. },
+                Op::InstallFlake { repo: b, .. } | Op::InstallFlakePackage { repo: b, .. },
+            )
+            | (Op::UninstallFlake { repo: a, .. }, Op::UninstallFlake { repo: b, .. })
+            | (Op::Uninstall { name: a, .. }, Op::Uninstall { name: b, .. }) => a == b,
+            (
+                Op::UninstallFlakeOutput {
+                    input: a_input,
+                    output: a_output,
+                    ..
+                },
+                Op::UninstallFlakeOutput {
+                    input: b_input,
+                    output: b_output,
+                    ..
+                },
+            ) => a_input == b_input && a_output == b_output,
+            (Op::Migrate { names: a, .. }, Op::Migrate { names: b, .. }) => {
+                a.iter().any(|name| b.contains(name))
+            }
+            _ => false,
+        }
+    }
+
+    /// The op that installs the flake in `details` for `scope`, or `None`
+    /// when it has nothing that target can use.
+    ///
+    /// A Home Manager module does nothing until its options are set, so for
+    /// home the first package wins; NixOS prefers the module, which is how
+    /// flakes usually expect to be added to a system.
+    #[must_use]
+    pub fn install_flake(details: &FlakeDetails, scope: Target) -> Option<Op> {
+        let repo = details.repo.clone();
+        let package = details.packages.first().map(|package| package.attr.clone());
+        let as_package = |package| Op::InstallFlakePackage {
+            repo: repo.clone(),
+            package,
+            scope,
+        };
+        let as_module = |module| Op::InstallFlake {
+            repo: repo.clone(),
+            module,
+            scope,
+        };
+        match scope {
+            Target::HomeManager => package
+                .map(as_package)
+                .or_else(|| details.home_manager_module.clone().map(as_module)),
+            Target::NixosSystem => details
+                .nixos_module
+                .clone()
+                .map(as_module)
+                .or_else(|| package.map(as_package)),
+        }
+    }
+
     /// Short description used in status lines, logs, and the resume banner.
     #[must_use]
     pub fn label(&self) -> String {
@@ -90,6 +157,7 @@ impl Op {
 mod tests {
     use super::Op;
     use nixbox_config::Target;
+    use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
     use nixbox_nix::search::SearchHit;
 
     fn hit(attr: &str) -> SearchHit {
@@ -192,5 +260,93 @@ mod tests {
             json,
             r#"{"Uninstall":{"name":"fd","scope":"nixos-system"}}"#
         );
+    }
+
+    fn details(packages: &[&str], nixos_module: Option<&str>) -> FlakeDetails {
+        FlakeDetails {
+            repo: "alleneubank/bun-overlay".into(),
+            repo_url: "https://github.com/alleneubank/bun-overlay".into(),
+            path: "flake.nix".into(),
+            description: None,
+            stars: 0,
+            topics: Vec::new(),
+            homepage: None,
+            default_branch: "main".into(),
+            pushed_at: None,
+            archived: false,
+            inputs: Vec::new(),
+            outputs: vec!["packages".into()],
+            packages: packages
+                .iter()
+                .map(|attr| FlakePackage {
+                    attr: (*attr).into(),
+                    name: "bun".into(),
+                    version: "1.4.2".into(),
+                })
+                .collect(),
+            nixos_module: nixos_module.map(Into::into),
+            home_manager_module: None,
+        }
+    }
+
+    #[test]
+    fn a_flake_without_a_module_installs_its_first_package_on_nixos() {
+        let op = Op::install_flake(&details(&["default"], None), Target::NixosSystem);
+
+        assert!(matches!(
+            op,
+            Some(Op::InstallFlakePackage { repo, package, scope: Target::NixosSystem })
+                if repo == "alleneubank/bun-overlay" && package == "default"
+        ));
+    }
+
+    #[test]
+    fn nixos_prefers_the_module_and_home_prefers_the_package() {
+        let both = details(&["default"], Some("default"));
+
+        assert!(matches!(
+            Op::install_flake(&both, Target::NixosSystem),
+            Some(Op::InstallFlake { .. })
+        ));
+        assert!(matches!(
+            Op::install_flake(&both, Target::HomeManager),
+            Some(Op::InstallFlakePackage { .. })
+        ));
+        assert!(Op::install_flake(&details(&[], None), Target::HomeManager).is_none());
+    }
+
+    #[test]
+    fn duplicates_match_the_same_work_in_the_same_scope_only() {
+        let install = |attr, scope| Op::Install {
+            hit: hit(attr),
+            scope,
+        };
+        assert!(install("fd", Target::HomeManager).duplicates(&install("fd", Target::HomeManager)));
+        assert!(
+            !install("fd", Target::HomeManager).duplicates(&install("fd", Target::NixosSystem))
+        );
+        assert!(
+            !install("fd", Target::HomeManager).duplicates(&install("rg", Target::HomeManager))
+        );
+
+        let module = Op::InstallFlake {
+            repo: "a/b".into(),
+            module: "default".into(),
+            scope: Target::HomeManager,
+        };
+        let package = Op::InstallFlakePackage {
+            repo: "a/b".into(),
+            package: "default".into(),
+            scope: Target::HomeManager,
+        };
+        assert!(module.duplicates(&package));
+
+        let migrate = |names: &[&str]| Op::Migrate {
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            scope: Target::HomeManager,
+        };
+        assert!(migrate(&["git", "fd"]).duplicates(&migrate(&["fd"])));
+        assert!(!migrate(&["git"]).duplicates(&migrate(&["fd"])));
+        assert!(!migrate(&["fd"]).duplicates(&install("fd", Target::HomeManager)));
     }
 }

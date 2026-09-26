@@ -3,53 +3,39 @@
 //! The file format lives in `nixbox-core`, because the CLI resumes the same
 //! state; this module is only the part that puts it back into a running TUI.
 
-pub(crate) use nixbox_core::{InProgress, PersistedState};
+use nixbox_core::Restored;
 
-use tokio::sync::mpsc;
+use crate::app::{App, Tab};
 
-use crate::app::{App, AppEvent, Tab};
-use crate::ops::{drain_queue, spawn_rebuild};
+/// Pulls any saved state from disk into `app`'s session, which re-runs an
+/// interrupted rebuild or drains the queued ops, and says so in the status.
+pub(crate) fn restore(app: &mut App) {
+    let restored = app.session.restore();
 
-/// Pulls any saved state from disk into `app` and kicks off whatever work
-/// remains: an interrupted rebuild is re-launched first, otherwise pending
-/// queued operations for each rebuild scope are batched and drained.
-pub(crate) fn restore(app: &mut App, tx: &mpsc::Sender<AppEvent>) {
-    let Some(saved) = PersistedState::load() else {
-        return;
-    };
-
-    if let Some(err) = saved.last_error.clone() {
-        app.last_error = Some(err.clone());
-        app.status = format!("Previous run failed: {}", err);
+    if let Some(err) = &app.session.last_error {
+        app.status = format!("Previous run failed: {err}");
     }
-
-    for op in saved.pending_queue {
-        app.queue.push_back(op);
-    }
-
-    if let Some(ip) = saved.in_progress {
-        // The manifest was already written for this op before it was killed —
-        // re-run the rebuild to actually apply it.
-        let label = if ip.label.starts_with("resume ") {
-            ip.label.clone()
-        } else {
-            format!("resume {}", ip.label)
-        };
-        app.tab = Tab::Building;
-        app.status = format!("Resuming interrupted build: {}.", ip.label);
-        spawn_rebuild(app, tx, ip.scope, label);
-    } else if !app.queue.is_empty() {
-        app.tab = Tab::Queue;
-        app.status = format!("Resuming {} queued op(s).", app.queue.len());
-        drain_queue(app, tx);
+    match restored {
+        Restored::Nothing => {}
+        Restored::Rebuild(label) => {
+            app.tab = Tab::Building;
+            app.status = format!(
+                "Resuming interrupted build: {}.",
+                label.trim_start_matches("resume ")
+            );
+        }
+        Restored::Queue(count) => {
+            app.tab = Tab::Queue;
+            app.status = format!("Resuming {count} queued op(s).");
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{InProgress, PersistedState};
     use crate::app::QueuedOp;
     use nixbox_config::Target;
+    use nixbox_core::{InProgress, PersistedState};
     use nixbox_nix::search::SearchHit;
 
     fn hit(attr: &str) -> SearchHit {

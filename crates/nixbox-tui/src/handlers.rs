@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event as CtEvent, KeyCode, KeyEventKind, KeyModifiers};
 use nixbox_config::InputMode;
-use nixbox_nix::build::BuildEvent;
+use nixbox_core::BuildEnded;
 use nixbox_nix::search::MAX_SEARCH_RESULTS;
 use tokio::sync::mpsc;
 
@@ -11,9 +11,8 @@ use crate::nav::{
     open_settings,
 };
 use crate::ops::{
-    cancel_build, drain_queue, install_selected, install_selected_flake, migrate_all,
-    migrate_selected, schedule_flake_details, schedule_flake_search, schedule_search,
-    uninstall_selected,
+    cancel_build, install_selected, install_selected_flake, migrate_all, migrate_selected,
+    schedule_flake_details, schedule_flake_search, schedule_search, uninstall_selected,
 };
 use crate::theme;
 use crate::vim::VimMode;
@@ -39,7 +38,7 @@ pub(crate) async fn handle_terminal_event(
     }
 
     if matches!(key.code, KeyCode::Esc)
-        && app.engine.config.input_mode == InputMode::Vim
+        && app.session.engine.config.input_mode == InputMode::Vim
         && matches!(app.tab, Tab::Search)
         && !matches!(app.input.mode(), VimMode::Normal)
     {
@@ -48,7 +47,7 @@ pub(crate) async fn handle_terminal_event(
     }
 
     if matches!(key.code, KeyCode::Esc)
-        && app.engine.config.input_mode == InputMode::Vim
+        && app.session.engine.config.input_mode == InputMode::Vim
         && matches!(app.tab, Tab::Flakes)
         && !matches!(app.flake_input.mode(), VimMode::Normal)
     {
@@ -56,7 +55,7 @@ pub(crate) async fn handle_terminal_event(
         return Ok(());
     }
     if matches!(key.code, KeyCode::Esc)
-        && app.engine.config.input_mode == InputMode::Vim
+        && app.session.engine.config.input_mode == InputMode::Vim
         && matches!(app.tab, Tab::Installed)
         && !matches!(app.installed_input.mode(), VimMode::Normal)
     {
@@ -84,7 +83,7 @@ pub(crate) async fn handle_terminal_event(
         _ => {}
     }
 
-    if app.engine.config.input_mode == InputMode::Normal {
+    if app.session.engine.config.input_mode == InputMode::Normal {
         match app.tab {
             Tab::Search => match key.code {
                 KeyCode::Down => move_selection(app, 1),
@@ -117,7 +116,7 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Up => move_installed_selection(app, -1),
                 _ => {
                     if app.installed_input.handle_insert_event(&CtEvent::Key(key)) {
-                        clamp_installed_selection(app);
+                        app.clamp_installed_selection();
                     }
                 }
             },
@@ -311,7 +310,7 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Up => move_installed_selection(app, -1),
                 _ => {
                     if app.installed_input.handle_insert_event(&CtEvent::Key(key)) {
-                        clamp_installed_selection(app);
+                        app.clamp_installed_selection();
                     }
                 }
             },
@@ -331,12 +330,12 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Char('v') => app.installed_input.enter_visual(),
                 KeyCode::Char('x') => {
                     if app.installed_input.delete_char() {
-                        clamp_installed_selection(app);
+                        app.clamp_installed_selection();
                     }
                 }
                 KeyCode::Char('D') => {
                     if app.installed_input.delete_to_end() {
-                        clamp_installed_selection(app);
+                        app.clamp_installed_selection();
                     }
                 }
                 KeyCode::Delete | KeyCode::Char('d') => uninstall_selected(app, tx).await?,
@@ -363,12 +362,12 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Char('$') => app.installed_input.move_end(),
                 KeyCode::Char('d') | KeyCode::Char('x') => {
                     if app.installed_input.delete_selection(false) {
-                        clamp_installed_selection(app);
+                        app.clamp_installed_selection();
                     }
                 }
                 KeyCode::Char('c') => {
                     app.installed_input.delete_selection(true);
-                    clamp_installed_selection(app);
+                    app.clamp_installed_selection();
                 }
                 _ => {}
             },
@@ -383,15 +382,6 @@ pub(crate) async fn handle_terminal_event(
     Ok(())
 }
 
-fn clamp_installed_selection(app: &mut App) {
-    let total = app.installed_total();
-    if total == 0 {
-        app.installed_selected = 0;
-    } else if app.installed_selected >= total {
-        app.installed_selected = total - 1;
-    }
-}
-
 fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if matches!(code, KeyCode::Char('s')) && modifiers.contains(KeyModifiers::CONTROL) {
         app.mode = Mode::Browsing;
@@ -401,13 +391,15 @@ fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 
     match code {
         KeyCode::Up | KeyCode::Char('k')
-            if matches!(code, KeyCode::Up) || app.engine.config.input_mode == InputMode::Vim =>
+            if matches!(code, KeyCode::Up)
+                || app.session.engine.config.input_mode == InputMode::Vim =>
         {
             let n = settings_option_count(app.settings_page);
             app.settings_cursor = app.settings_cursor.checked_sub(1).unwrap_or(n - 1);
         }
         KeyCode::Down | KeyCode::Char('j')
-            if matches!(code, KeyCode::Down) || app.engine.config.input_mode == InputMode::Vim =>
+            if matches!(code, KeyCode::Down)
+                || app.session.engine.config.input_mode == InputMode::Vim =>
         {
             app.settings_cursor =
                 (app.settings_cursor + 1) % settings_option_count(app.settings_page);
@@ -439,16 +431,16 @@ fn select_setting(app: &mut App) {
         app.settings_cursor = match app.settings_page {
             SettingsPage::InputMode => INPUT_MODES
                 .iter()
-                .position(|mode| *mode == app.engine.config.input_mode)
+                .position(|mode| *mode == app.session.engine.config.input_mode)
                 .unwrap_or(0),
             SettingsPage::Theme => app.theme_index,
             SettingsPage::Target => TARGETS
                 .iter()
-                .position(|target| *target == app.engine.config.target)
+                .position(|target| *target == app.session.engine.config.target)
                 .unwrap_or(0),
             SettingsPage::Channel => CHANNELS
                 .iter()
-                .position(|channel| *channel == app.engine.config.channel)
+                .position(|channel| *channel == app.session.engine.config.channel)
                 .unwrap_or(0),
             SettingsPage::Main => 0,
         };
@@ -465,20 +457,23 @@ fn select_setting(app: &mut App) {
         }
         SettingsPage::Theme => {
             app.theme_index = app.settings_cursor;
-            app.engine.config.theme = theme::ALL[app.theme_index].name.to_string();
+            app.session.engine.config.theme = theme::ALL[app.theme_index].name.to_string();
             format!("Theme set to {}.", theme::ALL[app.theme_index].name)
         }
         SettingsPage::Target => {
-            app.engine.config.target = TARGETS[app.settings_cursor];
-            format!("Target set to {}.", app.engine.config.target.label())
+            app.session.engine.config.target = TARGETS[app.settings_cursor];
+            format!(
+                "Target set to {}.",
+                app.session.engine.config.target.label()
+            )
         }
         SettingsPage::Channel => {
-            app.engine.config.channel = CHANNELS[app.settings_cursor].to_string();
-            format!("Channel set to {}.", app.engine.config.channel)
+            app.session.engine.config.channel = CHANNELS[app.settings_cursor].to_string();
+            format!("Channel set to {}.", app.session.engine.config.channel)
         }
         SettingsPage::Main => unreachable!(),
     };
-    let _ = app.engine.config.save();
+    let _ = app.session.engine.config.save();
     app.settings_page = SettingsPage::Main;
     app.settings_cursor = settings_main_index(page);
 }
@@ -538,7 +533,10 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
             app.catalog_loading = false;
             let revision: String = catalog.revision().chars().take(12).collect();
             app.package_catalog = Some(catalog);
-            if app.input.value().is_empty() && !app.build_in_progress && app.last_error.is_none() {
+            if app.input.value().is_empty()
+                && !app.session.is_building()
+                && app.session.last_error.is_none()
+            {
                 app.status = format!("Package catalog ready at {revision}.");
             } else if !app.input.value().is_empty() {
                 schedule_search(app, tx.clone());
@@ -548,7 +546,10 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
             app.catalog_task = None;
             app.catalog_loading = false;
             app.package_catalog = None;
-            if app.input.value().is_empty() && !app.build_in_progress && app.last_error.is_none() {
+            if app.input.value().is_empty()
+                && !app.session.is_building()
+                && app.session.last_error.is_none()
+            {
                 app.status =
                     format!("Package catalog unavailable; live search will be used: {error}");
             } else if !app.input.value().is_empty() {
@@ -591,58 +592,29 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
                 app.status = format!("flake details failed: {}", error);
             }
         }
-        AppEvent::Build(BuildEvent::Line(line)) => {
-            app.log.push(line);
-            if app.log.len() > 1000 {
-                let drop_to = app.log.len() - 1000;
-                app.log.drain(0..drop_to);
-            }
-        }
-        AppEvent::Build(BuildEvent::Finished(result)) => {
-            let label = app
-                .current_op_label
-                .take()
-                .unwrap_or_else(|| "build".into());
-            app.build_in_progress = false;
-            app.build_cancel = None;
-            app.in_progress_op = None;
-            match &result {
-                Ok(()) => {
-                    app.status = format!("{} done.", label);
-                    app.last_error = None;
-                }
-                Err(err) => {
-                    app.status = format!("{} failed: {}.", label, err);
-                    app.last_error = Some(format!("{}: {}", label, err));
-                }
-            }
-            if result.is_ok() {
-                app.refresh_external_packages();
-            }
-            app.persist();
-            drain_queue(app, tx);
-            if !app.visible_tabs().contains(&app.tab) {
-                app.tab = Tab::Search;
-            }
-        }
-        AppEvent::Build(BuildEvent::Cancelled) => {
-            let label = app
-                .current_op_label
-                .take()
-                .unwrap_or_else(|| "build".into());
-            app.build_in_progress = false;
-            app.build_cancel = None;
-            app.in_progress_op = None;
-            app.status = if app.queue.is_empty() {
-                format!("{} cancelled.", label)
-            } else {
-                format!(
-                    "{} cancelled; {} queued operation(s) paused.",
-                    label,
-                    app.queue.len()
-                )
+        AppEvent::Build(event) => {
+            let Some(ended) = app.session.on_build_event(event) else {
+                return;
             };
-            app.persist();
+            app.status = match ended {
+                BuildEnded::Succeeded {
+                    next: Some(next), ..
+                }
+                | BuildEnded::Failed {
+                    next: Some(next), ..
+                } => format!("{next}..."),
+                BuildEnded::Succeeded { label, next: None } => format!("{label} done."),
+                BuildEnded::Failed {
+                    label,
+                    error,
+                    next: None,
+                } => format!("{label} failed: {error}."),
+                BuildEnded::Cancelled { label, paused: 0 } => format!("{label} cancelled."),
+                BuildEnded::Cancelled { label, paused } => {
+                    format!("{label} cancelled; {paused} queued operation(s) paused.")
+                }
+            };
+            app.clamp_installed_selection();
             if !app.visible_tabs().contains(&app.tab) {
                 app.tab = Tab::Search;
             }
@@ -780,7 +752,7 @@ mod tests {
 
         press_with_modifiers(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL).await;
         assert_eq!(app.mode, Mode::Browsing);
-        assert_eq!(app.engine.config.input_mode, InputMode::Vim);
+        assert_eq!(app.session.engine.config.input_mode, InputMode::Vim);
     }
 
     #[tokio::test]
@@ -811,9 +783,9 @@ mod tests {
         }
 
         assert_eq!(app.mode, Mode::Browsing);
-        assert_eq!(app.engine.config.target, Config::default().target);
-        assert_eq!(app.engine.config.channel, Config::default().channel);
-        assert_eq!(app.engine.config.theme, Config::default().theme);
+        assert_eq!(app.session.engine.config.target, Config::default().target);
+        assert_eq!(app.session.engine.config.channel, Config::default().channel);
+        assert_eq!(app.session.engine.config.theme, Config::default().theme);
     }
 
     #[test]

@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +11,7 @@ use crossterm::terminal::{
 };
 use futures::StreamExt;
 use nixbox_config::{DEFAULT_CHANNEL, InputMode, Target};
-use nixbox_core::{Engine, InstalledFlake, ManagedPackage};
+use nixbox_core::{Engine, InstalledFlake, ManagedPackage, Session};
 use nixbox_nix::{
     Manifest,
     build::BuildEvent,
@@ -22,14 +21,11 @@ use nixbox_nix::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::handlers::{handle_app_event, handle_terminal_event};
 use crate::ops::prepare_package_catalog;
-use crate::state::{self, InProgress, PersistedState};
+use crate::state;
 use crate::theme;
 use crate::ui;
 use crate::vim::VimInput;
@@ -118,9 +114,8 @@ pub(crate) enum InstalledCursor {
 }
 
 pub(crate) struct App {
-    /// Settings, both manifests, the external-package scan, and every
-    /// mutation of the user's configuration.
-    pub(crate) engine: Engine,
+    /// The engine, the op queue, the running rebuild, and its log.
+    pub(crate) session: Session,
     pub(crate) input: VimInput,
     pub(crate) results: Vec<SearchHit>,
     pub(crate) selected: usize,
@@ -140,7 +135,6 @@ pub(crate) struct App {
     pub(crate) status: String,
     pub(crate) mode: Mode,
     pub(crate) tab: Tab,
-    pub(crate) log: Vec<String>,
     pub(crate) search_epoch: u64,
     pub(crate) latest_query: String,
     pub(crate) should_quit: bool,
@@ -152,18 +146,7 @@ pub(crate) struct App {
     pub(crate) package_catalog: Option<Arc<PackageCatalog>>,
     pub(crate) catalog_loading: bool,
     pub(crate) catalog_task: Option<JoinHandle<()>>,
-    pub(crate) build_in_progress: bool,
-    pub(crate) build_cancel: Option<oneshot::Sender<()>>,
     pub(crate) spinner_frame: usize,
-    pub(crate) queue: VecDeque<QueuedOp>,
-    pub(crate) current_op_label: Option<String>,
-    /// Set while a rebuild is in flight; mirrors what gets persisted so the
-    /// next launch can detect an interrupted operation. Cleared when the
-    /// rebuild finishes (success or failure).
-    pub(crate) in_progress_op: Option<InProgress>,
-    /// Error message from the previous run that was never acknowledged.
-    /// Survives across launches until the next successful build clears it.
-    pub(crate) last_error: Option<String>,
 }
 
 impl App {
@@ -176,15 +159,17 @@ impl App {
         nixos_manifest: Manifest,
         external_packages: Vec<ExternalPackage>,
     ) -> Self {
-        Self::from_engine(Engine::from_parts(
+        let (session, _build_rx) = Session::new(Engine::from_parts(
             config,
             home_manifest,
             nixos_manifest,
             external_packages,
-        ))
+        ));
+        Self::from_session(session.without_persistence())
     }
 
-    pub(crate) fn from_engine(engine: Engine) -> Self {
+    pub(crate) fn from_session(session: Session) -> Self {
+        let engine = &session.engine;
         let managed = engine.home_manifest.packages.len() + engine.nixos_manifest.packages.len();
         let external = engine.external_packages.len();
         let theme_index = theme::ALL
@@ -206,7 +191,7 @@ impl App {
             installed_input.enter_insert_before();
         }
         Self {
-            engine,
+            session,
             input,
             results: Vec::new(),
             selected: 0,
@@ -226,7 +211,6 @@ impl App {
             status,
             mode: Mode::Browsing,
             tab: Tab::Search,
-            log: Vec::new(),
             search_epoch: 0,
             latest_query: String::new(),
             should_quit: false,
@@ -238,33 +222,27 @@ impl App {
             package_catalog: None,
             catalog_loading: false,
             catalog_task: None,
-            build_in_progress: false,
-            build_cancel: None,
             spinner_frame: 0,
-            queue: VecDeque::new(),
-            current_op_label: None,
-            in_progress_op: None,
-            last_error: None,
         }
     }
 
     pub(crate) fn visible_tabs(&self) -> Vec<Tab> {
         let mut tabs = vec![Tab::Search, Tab::Flakes, Tab::Installed];
-        if self.build_in_progress || !self.log.is_empty() {
+        if self.session.is_building() || !self.session.log.is_empty() {
             tabs.push(Tab::Building);
         }
-        if !self.queue.is_empty() {
+        if !self.session.queue.is_empty() {
             tabs.push(Tab::Queue);
         }
         tabs
     }
 
     pub(crate) fn channel(&self) -> &str {
-        &self.engine.config.channel
+        &self.session.engine.config.channel
     }
 
     pub(crate) fn target_label(&self) -> &'static str {
-        self.engine.config.target.label()
+        self.session.engine.config.target.label()
     }
 
     pub(crate) fn theme(&self) -> &'static theme::Theme {
@@ -279,7 +257,7 @@ impl App {
     }
 
     pub(crate) fn apply_input_mode(&mut self, mode: InputMode) {
-        self.engine.config.input_mode = mode;
+        self.session.engine.config.input_mode = mode;
         match mode {
             InputMode::Vim => {
                 self.input.enter_normal();
@@ -293,13 +271,13 @@ impl App {
     }
 
     pub(crate) fn manifest_for(&self, scope: Target) -> &Manifest {
-        self.engine.manifest_for(scope)
+        self.session.engine.manifest_for(scope)
     }
 
     /// Returns all managed packages from both scopes, home-manager entries
     /// first.
     pub(crate) fn managed_packages(&self) -> Vec<ManagedPackage> {
-        self.engine.managed_packages()
+        self.session.engine.managed_packages()
     }
 
     pub(crate) fn installed_filter(&self) -> Option<String> {
@@ -320,7 +298,8 @@ impl App {
 
     pub(crate) fn filtered_external_packages(&self) -> Vec<ExternalPackage> {
         let filter = self.installed_filter();
-        self.engine
+        self.session
+            .engine
             .external_packages
             .iter()
             .filter(|ep| match &filter {
@@ -334,7 +313,8 @@ impl App {
     /// Flake outputs matching the filter by input, output, or repository.
     pub(crate) fn filtered_flakes(&self) -> Vec<InstalledFlake> {
         let filter = self.installed_filter();
-        self.engine
+        self.session
+            .engine
             .flakes
             .iter()
             .filter(|flake| match &filter {
@@ -378,22 +358,8 @@ impl App {
         }
     }
 
-    /// Writes the current persistable slice of state to disk so the next
-    /// launch can recover from a crash, kill, or interrupted rebuild. Errors
-    /// are swallowed because failing to persist must never break the TUI.
-    pub(crate) fn persist(&self) {
-        let snapshot = PersistedState {
-            pending_queue: self.queue.iter().cloned().collect(),
-            in_progress: self.in_progress_op.clone(),
-            last_error: self.last_error.clone(),
-        };
-        let _ = snapshot.save();
-    }
-
-    /// Re-reads both main config files and refreshes `external_packages`,
-    /// excluding anything already tracked in either manifest.
-    pub(crate) fn refresh_external_packages(&mut self) {
-        self.engine.refresh_externals();
+    /// Keeps the Installed cursor inside the list after it changes size.
+    pub(crate) fn clamp_installed_selection(&mut self) {
         let total = self.installed_total();
         if total == 0 {
             self.installed_selected = 0;
@@ -429,9 +395,10 @@ async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     engine: Engine,
 ) -> Result<()> {
-    let mut app = App::from_engine(engine);
+    let (session, mut build_rx) = Session::new(engine);
+    let mut app = App::from_session(session);
     let (tx, mut rx) = mpsc::channel::<AppEvent>(128);
-    state::restore(&mut app, &tx);
+    state::restore(&mut app);
     prepare_package_catalog(&mut app, tx.clone());
     let mut term_events = EventStream::new();
     let mut spinner_tick = tokio::time::interval(Duration::from_millis(80));
@@ -462,7 +429,10 @@ async fn event_loop(
             Some(app_ev) = rx.recv() => {
                 handle_app_event(&mut app, &tx, app_ev);
             }
-            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.build_in_progress => {
+            Some(build_ev) = build_rx.recv() => {
+                handle_app_event(&mut app, &tx, AppEvent::Build(build_ev));
+            }
+            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.session.is_building() => {
                 app.spinner_frame = app.spinner_frame.wrapping_add(1);
             }
         }
@@ -546,13 +516,13 @@ mod tests {
     #[test]
     fn visible_tabs_include_build_and_queue_only_when_needed() {
         let mut app = test_app();
-        app.build_in_progress = true;
+        let _cancel = app.session.fake_build(Target::HomeManager, "build");
         assert_eq!(
             app.visible_tabs(),
             vec![Tab::Search, Tab::Flakes, Tab::Installed, Tab::Building]
         );
 
-        app.queue.push_back(QueuedOp::Uninstall {
+        app.session.queue.push_back(QueuedOp::Uninstall {
             name: "ripgrep".into(),
             scope: Target::HomeManager,
         });

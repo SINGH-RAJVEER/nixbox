@@ -45,7 +45,7 @@ pub(crate) fn cycle_tab_back(app: &mut App) {
 
 pub(crate) fn set_tab(app: &mut App, tab: Tab) {
     app.tab = tab;
-    if app.engine.config.input_mode == InputMode::Vim {
+    if app.session.engine.config.input_mode == InputMode::Vim {
         match tab {
             Tab::Search => app.input.enter_normal(),
             Tab::Flakes => app.flake_input.enter_normal(),

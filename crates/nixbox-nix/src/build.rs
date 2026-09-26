@@ -95,9 +95,13 @@ pub fn nixos_rebuild_switch_cmd(config_dir: &Path) -> (String, Vec<String>) {
     )
 }
 
+/// Runs `command_name` with `args`, streaming its output to `tx` until it
+/// exits or `cancel` fires. `envs` is added to the inherited environment;
+/// a desktop front-end uses it to hand sudo an askpass helper.
 pub async fn rebuild(
     command_name: &str,
     args: &[&str],
+    envs: &[(String, String)],
     tx: mpsc::Sender<BuildEvent>,
     mut cancel: oneshot::Receiver<()>,
 ) -> Result<()> {
@@ -107,6 +111,7 @@ pub async fn rebuild(
     let mut process = Command::new(&resolved);
     process
         .args(args)
+        .envs(envs.iter().map(|(key, value)| (key, value)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -242,7 +247,13 @@ mod tests {
     async fn cancellation_stops_rebuild_and_emits_cancelled() {
         let (tx, mut rx) = mpsc::channel(8);
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let task = tokio::spawn(super::rebuild("sh", &["-c", "sleep 30"], tx, cancel_rx));
+        let task = tokio::spawn(super::rebuild(
+            "sh",
+            &["-c", "sleep 30"],
+            &[],
+            tx,
+            cancel_rx,
+        ));
 
         tokio::task::yield_now().await;
         cancel_tx.send(()).expect("send cancellation");
