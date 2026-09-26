@@ -17,6 +17,16 @@ use tokio::sync::{mpsc, oneshot};
 pub const HOME_FALLBACK_NOTE: &str =
     "No standalone homeConfigurations found; applying via nixos-rebuild.";
 
+/// Set to `1` in the environment of a rebuild that uses
+/// [`Escalation::Askpass`].
+pub const ASKPASS_ENV: &str = "NIXBOX_ASKPASS";
+
+/// Carries `LD_LIBRARY_PATH` to the askpass helper. sudo is setuid, so the
+/// loader strips every `LD_` variable from its environment before the helper
+/// inherits it, and a helper that loads its graphics libraries at runtime
+/// needs the path back.
+pub const ASKPASS_LIBRARY_PATH_ENV: &str = "NIXBOX_LD_LIBRARY_PATH";
+
 /// How a rebuild that needs root gets it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Escalation {
@@ -27,6 +37,10 @@ pub enum Escalation {
     /// `sudo -A` with `SUDO_ASKPASS` pointing at this program, for a
     /// front-end started without a terminal. sudo stays the parent of the
     /// rebuild, so cancelling can still signal the whole process group.
+    ///
+    /// sudo runs the helper with the prompt as its only argument and the
+    /// rebuild's environment, so [`ASKPASS_ENV`] is set there too: it is how
+    /// the helper knows to ask for a password instead of starting normally.
     Askpass(PathBuf),
 }
 
@@ -60,6 +74,10 @@ impl RebuildCommand {
             self.args.insert(0, "-A".into());
             self.envs
                 .push(("SUDO_ASKPASS".into(), helper.display().to_string()));
+            self.envs.push((ASKPASS_ENV.into(), "1".into()));
+            if let Ok(path) = std::env::var("LD_LIBRARY_PATH") {
+                self.envs.push((ASKPASS_LIBRARY_PATH_ENV.into(), path));
+            }
         }
         self
     }
@@ -187,11 +205,14 @@ mod tests {
         assert_eq!(cmd.args[0], "-A");
         assert_eq!(cmd.args[1], "nixos-rebuild");
         assert_eq!(
-            cmd.envs,
-            vec![(
-                "SUDO_ASKPASS".to_string(),
-                "/run/current-system/sw/bin/nixbox-gui".to_string()
-            )]
+            cmd.envs[..2],
+            [
+                (
+                    "SUDO_ASKPASS".to_string(),
+                    "/run/current-system/sw/bin/nixbox-gui".to_string()
+                ),
+                (super::ASKPASS_ENV.to_string(), "1".to_string()),
+            ]
         );
     }
 

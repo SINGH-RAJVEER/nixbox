@@ -44,11 +44,12 @@ jobs:
 
       # --all-targets so tests and examples are linted too, not just the
       # library and binary targets.
+      # The desktop front-end needs the graphics stack; the gui job covers it.
       - name: Lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude nixbox-gui --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude nixbox-gui --locked
 
       # A workspace build unifies features, so the above always compiles
       # nixbox-cmd with `tui` on and says nothing about the nixbox-cli
@@ -106,6 +107,34 @@ jobs:
           fi
           grep -q 'This is nixbox-cli' bare.log
 
+  gui:
+    name: Desktop GUI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install the graphics stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig-dev libfreetype-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-dev \
+            libx11-xcb-dev libxcb1-dev libvulkan-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Lint and test
+        run: |
+          cargo clippy -p nixbox-gui --all-targets --locked -- -D warnings
+          cargo test -p nixbox-gui --locked
+
   publish:
     name: Publish workspace crates
     needs: test
@@ -122,8 +151,9 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      # nixbox-gui is not published yet, so it is left out here too.
       - name: Verify workspace
-        run: cargo check --workspace --locked
+        run: cargo check --workspace --exclude nixbox-gui --locked
 
       - name: Publish crates
         env:

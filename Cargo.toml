@@ -8,6 +8,18 @@ members = [
     "crates/nixbox-core",
     "crates/nixbox-nix",
     "crates/nixbox-config",
+    "crates/nixbox-gui",
+]
+# The desktop front-end pulls in gpui and the graphics stack, so a plain
+# `cargo build`/`cargo test` leaves it out. Build it with `-p nixbox-gui`.
+default-members = [
+    "crates/nixbox",
+    "crates/nixbox-cli",
+    "crates/nixbox-cmd",
+    "crates/nixbox-tui",
+    "crates/nixbox-core",
+    "crates/nixbox-nix",
+    "crates/nixbox-config",
 ]
 
 [workspace.package]

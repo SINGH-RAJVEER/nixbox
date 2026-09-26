@@ -5,19 +5,23 @@ default:
 
 # Build debug binary
 build:
-    cargo build --workspace
+    cargo build --workspace --exclude nixbox-gui
 
 # Build release binary
 release:
-    cargo build --workspace --release
+    cargo build --workspace --exclude nixbox-gui --release
 
 # Type-check without codegen
 check:
-    cargo check --workspace
+    cargo check --workspace --exclude nixbox-gui
+
+# The desktop front-end is excluded from the workspace-wide recipes: it needs
+# the graphics stack, which only the devenv shell provides. `just gui-ci`
+# covers it.
 
 # Run all tests
 test:
-    cargo test --workspace
+    cargo test --workspace --exclude nixbox-gui
 
 # Run the TUI (debug build)
 run:
@@ -36,6 +40,19 @@ cli:
 release-cli:
     cargo build --release -p nixbox-cli
 
+# Run the desktop GUI (debug build)
+gui:
+    cargo run -p nixbox-gui
+
+# Build the nixbox-gui release binary
+release-gui:
+    cargo build --release -p nixbox-gui
+
+# Lint and test the desktop GUI
+gui-ci:
+    cargo clippy -p nixbox-gui --all-targets -- -D warnings
+    cargo test -p nixbox-gui
+
 # Format all crates
 fmt:
     cargo fmt --all
@@ -44,7 +61,7 @@ fmt:
 
 # Lint with clippy
 lint:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --exclude nixbox-gui --all-targets -- -D warnings
 
 # Format + lint
 fix: fmt lint

@@ -198,6 +198,20 @@ impl Session {
         self.drain().map_or(Enqueued::NotWritten, Enqueued::Started)
     }
 
+    /// Drops the queued op at `index` without applying it.
+    pub fn dequeue(&mut self, index: usize) -> Option<Op> {
+        let op = self.queue.remove(index)?;
+        self.persist();
+        Some(op)
+    }
+
+    /// Forgets the last rebuild failure once the user has seen it.
+    pub fn dismiss_error(&mut self) {
+        if self.last_error.take().is_some() {
+            self.persist();
+        }
+    }
+
     /// Takes the oldest scope in the queue, writes all of its ops, and starts
     /// one rebuild for them. Returns the rebuild's label, or `None` when
     /// something is already running or nothing could be written.

@@ -1,0 +1,34 @@
+[package]
+name = "nixbox-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Desktop front-end for nixbox, built on gpui"
+# Not on crates.io until it has had real use; install it from the flake.
+publish = false
+
+[[bin]]
+# Its own name, like `nixbox-cli`, so it can share a profile with `nixbox`.
+name = "nixbox-gui"
+path = "src/main.rs"
+
+[dependencies]
+nixbox-core = { path = "../nixbox-core", version = "0.2.4" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.4" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.4" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# One facade over gpui, gpui-component, and the Lucide icons, pinned together.
+gpui-kit = "0.6.6"
+
+[dev-dependencies]
+gpui-kit = { version = "0.6.6", features = ["test-support"] }
+nixbox-core = { path = "../nixbox-core", version = "0.2.4", features = ["test-util"] }
