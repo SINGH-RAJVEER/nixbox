@@ -46,6 +46,12 @@ pub enum Op {
         names: Vec<String>,
         scope: Target,
     },
+    /// Moves a hand-declared flake package into nixbox's generated module.
+    MigrateFlakePackage {
+        input: String,
+        package: String,
+        scope: Target,
+    },
 }
 
 impl Op {
@@ -60,7 +66,8 @@ impl Op {
             | Op::UninstallFlake { scope, .. }
             | Op::UninstallFlakeOutput { scope, .. }
             | Op::Uninstall { scope, .. }
-            | Op::Migrate { scope, .. } => *scope,
+            | Op::Migrate { scope, .. }
+            | Op::MigrateFlakePackage { scope, .. } => *scope,
         }
     }
 
@@ -94,6 +101,18 @@ impl Op {
             (Op::Migrate { names: a, .. }, Op::Migrate { names: b, .. }) => {
                 a.iter().any(|name| b.contains(name))
             }
+            (
+                Op::MigrateFlakePackage {
+                    input: a_input,
+                    package: a_package,
+                    ..
+                },
+                Op::MigrateFlakePackage {
+                    input: b_input,
+                    package: b_package,
+                    ..
+                },
+            ) => a_input == b_input && a_package == b_package,
             _ => false,
         }
     }
@@ -149,6 +168,9 @@ impl Op {
                 [only] => format!("migrate {} [{}]", only, tag),
                 rest => format!("migrate {} packages [{}]", rest.len(), tag),
             },
+            Op::MigrateFlakePackage { input, package, .. } => {
+                format!("migrate {input}#{package} [{tag}]")
+            }
         }
     }
 }

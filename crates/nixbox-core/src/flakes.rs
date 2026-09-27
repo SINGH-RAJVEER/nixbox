@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use nixbox_config::{Config, Target};
 use nixbox_nix::{
-    manifest::{FlakeOutput, ManagedFlakeFile},
+    manifest::{FlakeOutput, ImportStatus, ManagedFlakeFile, ensure_imported},
     scan::{remove_flake_package_from_source, scan_flake_packages},
     wiring::{
         ensure_flake_input, ensure_home_manager_special_args, ensure_inputs_passed,
@@ -33,6 +33,7 @@ pub struct InstalledFlake {
     /// Whether nixbox can take the output out again. Hand-written entries
     /// sharing a line with other entries cannot be removed cleanly.
     pub removable: bool,
+    pub migratable: bool,
 }
 
 impl InstalledFlake {
@@ -45,6 +46,11 @@ impl InstalledFlake {
     #[must_use]
     pub fn is_managed(&self) -> bool {
         self.declared_in.is_none()
+    }
+
+    #[must_use]
+    pub fn migratable(&self) -> bool {
+        self.migratable
     }
 }
 
@@ -69,6 +75,7 @@ pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
                 scope,
                 declared_in: None,
                 removable: true,
+                migratable: false,
             });
         }
         let Ok(found) = scan_flake_packages(&config.main_file_for(scope), scan_target(scope))
@@ -76,6 +83,7 @@ pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
             continue;
         };
         for entry in found {
+            let migratable = entry.migratable && repos.contains_key(&entry.input);
             let output = FlakeOutput::Package(entry.package);
             if out[first..]
                 .iter()
@@ -90,6 +98,7 @@ pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
                 scope,
                 declared_in: Some(entry.source_attr),
                 removable: entry.removable,
+                migratable,
             });
         }
     }
@@ -97,6 +106,84 @@ pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
 }
 
 impl Engine {
+    /// Moves a dedicated flake-package line into the generated module while
+    /// keeping the existing root input and every other use of it.
+    pub(crate) fn migrate_flake_package(
+        &mut self,
+        input: &str,
+        package: &str,
+        scope: Target,
+        reporter: &mut dyn Reporter,
+    ) -> Result<()> {
+        let main_file = self.config.main_file_for(scope);
+        let found = scan_flake_packages(&main_file, scan_target(scope))?;
+        if !found
+            .iter()
+            .any(|entry| entry.input == input && entry.package == package && entry.migratable)
+        {
+            bail!(
+                "{input}#{package} is not declared on a dedicated line in {}",
+                main_file.display()
+            );
+        }
+        if found
+            .iter()
+            .any(|entry| entry.input == input && entry.package == package && !entry.migratable)
+        {
+            bail!(
+                "{input}#{package} also has a declaration that cannot be migrated in {}; move that line by hand",
+                main_file.display()
+            );
+        }
+        let flake_file = self.config.flake_file();
+        let repo = input_repos(&flake_file).remove(input).ok_or_else(|| {
+            anyhow::anyhow!("input `{input}` does not point to a supported GitHub repository")
+        })?;
+        let managed = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
+        let mut manifest = managed.load()?;
+        if manifest.contains(&repo) && manifest.input_for(&repo) != input {
+            bail!("{repo} is already managed through a different input");
+        }
+        let wired = self.pass_inputs(scope)?;
+        manifest.inputs.insert(repo.clone(), input.to_string());
+        manifest.add_package(repo, package.to_string());
+        match scope {
+            Target::HomeManager => managed.write_home_manager(&manifest)?,
+            Target::NixosSystem => managed.write_nixos(&manifest)?,
+        }
+        match ensure_imported(&main_file, managed.path())? {
+            ImportStatus::MainFileMissing => {
+                bail!("{} disappeared during migration", main_file.display());
+            }
+            ImportStatus::AlreadyImported => {}
+            ImportStatus::InsertedIntoList | ImportStatus::CreatedList => reporter.info(format!(
+                "Added import of {} to {}.",
+                managed.path().display(),
+                main_file.display()
+            )),
+        }
+        if !remove_flake_package_from_source(&main_file, scan_target(scope), input, package)? {
+            bail!(
+                "{input}#{package} changed in {} during migration",
+                main_file.display()
+            );
+        }
+        for path in [flake_file.as_path(), managed.path(), main_file.as_path()]
+            .into_iter()
+            .chain(wired.as_deref())
+        {
+            if path.exists() {
+                git_track(path, reporter);
+            }
+        }
+        reporter.info(format!(
+            "Moved {input}#{package} into {}.",
+            managed.path().display()
+        ));
+        self.refresh_externals();
+        Ok(())
+    }
+
     /// Adds `repo` as a flake input and wires `output` into the managed flake
     /// file, unless the user already declares that package by hand.
     pub(crate) fn apply_flake_output(
@@ -418,6 +505,79 @@ mod tests {
             FLAKE
         );
         drop(dir);
+    }
+
+    #[test]
+    fn migrating_flake_package_keeps_the_input_and_other_outputs() {
+        let dir = crate::tests::temp_dir("flakes-migrate");
+        let mut engine = engine(&dir);
+        engine
+            .apply(
+                &Op::MigrateFlakePackage {
+                    input: "llm-agents".into(),
+                    package: "chatgpt".into(),
+                    scope: Target::HomeManager,
+                },
+                &mut SilentReporter,
+            )
+            .unwrap();
+
+        let home =
+            std::fs::read_to_string(engine.config.main_file_for(Target::HomeManager)).unwrap();
+        assert!(!home.contains(".chatgpt"));
+        assert!(home.contains(".claude-code"));
+        assert!(home.contains("nixbox-home-flakes.nix"));
+        let managed =
+            std::fs::read_to_string(engine.config.flake_manifest_for(Target::HomeManager)).unwrap();
+        assert!(
+            managed
+                .contains("inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.chatgpt")
+        );
+        assert!(
+            std::fs::read_to_string(engine.config.flake_file())
+                .unwrap()
+                .contains("llm-agents.url")
+        );
+        assert!(
+            engine
+                .flakes
+                .iter()
+                .any(|flake| flake.name() == "llm-agents#chatgpt" && flake.is_managed())
+        );
+        assert!(
+            engine
+                .flakes
+                .iter()
+                .any(|flake| flake.name() == "llm-agents#claude-code" && !flake.is_managed())
+        );
+    }
+
+    #[test]
+    fn inline_flake_package_is_left_untouched() {
+        let dir = crate::tests::temp_dir("flakes-migrate-inline");
+        let mut engine = engine(&dir);
+        let home_file = engine.config.main_file_for(Target::HomeManager);
+        std::fs::write(&home_file, "{ inputs, ... }: { home.packages = [ inputs.llm-agents.packages.x86_64-linux.chatgpt ]; }\n").unwrap();
+        engine.refresh_externals();
+        assert!(!engine.flakes[0].migratable());
+        assert!(
+            engine
+                .apply(
+                    &Op::MigrateFlakePackage {
+                        input: "llm-agents".into(),
+                        package: "chatgpt".into(),
+                        scope: Target::HomeManager,
+                    },
+                    &mut SilentReporter
+                )
+                .is_err()
+        );
+        assert!(
+            !engine
+                .config
+                .flake_manifest_for(Target::HomeManager)
+                .exists()
+        );
     }
 
     #[test]

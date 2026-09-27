@@ -172,10 +172,25 @@ pub(crate) async fn migrate_selected(app: &mut App, _tx: &mpsc::Sender<AppEvent>
             return Ok(());
         }
         InstalledCursor::Flake(flake) => {
-            app.status = format!(
-                "{} comes from a flake and is not migrated — press d to uninstall.",
-                flake.name()
-            );
+            let name = flake.name();
+            if !flake.migratable() {
+                app.status = format!(
+                    "{name} cannot be migrated automatically. It needs a dedicated package line and a GitHub input."
+                );
+                return Ok(());
+            }
+            if let nixbox_nix::manifest::FlakeOutput::Package(package) = flake.output {
+                enqueue(
+                    app,
+                    QueuedOp::MigrateFlakePackage {
+                        input: flake.input,
+                        package,
+                        scope: flake.scope,
+                    },
+                    format!("Queued migrate: {name} [{}].", flake.scope.tag()),
+                    format!("{name} already queued for migration."),
+                );
+            }
             return Ok(());
         }
     };
@@ -206,13 +221,14 @@ pub(crate) async fn migrate_selected(app: &mut App, _tx: &mpsc::Sender<AppEvent>
 pub(crate) async fn migrate_all(app: &mut App, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
     let ops = app.session.migrate_all_ops();
     if ops.is_empty() {
-        app.status = "No external packages left to migrate.".into();
+        app.status = "No external packages or flake outputs left to migrate.".into();
         return Ok(());
     }
     let count = |target: Target| {
         ops.iter()
             .filter_map(|op| match op {
                 QueuedOp::Migrate { names, scope } if *scope == target => Some(names.len()),
+                QueuedOp::MigrateFlakePackage { scope, .. } if *scope == target => Some(1),
                 _ => None,
             })
             .sum::<usize>()

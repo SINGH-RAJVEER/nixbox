@@ -21,7 +21,13 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
         .engine
         .external_packages
         .iter()
-        .any(|package| package.migratable);
+        .any(|package| package.migratable)
+        || app
+            .session
+            .engine
+            .flakes
+            .iter()
+            .any(|flake| flake.migratable());
     let header = page_header(
         "Installed",
         "Packages nixbox manages, flake outputs, and packages declared in your own config.",
@@ -29,7 +35,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
             Button::new("migrate-all")
                 .outline()
                 .label("Migrate all")
-                .tooltip("Move every hand-declared package into nixbox's managed files")
+                .tooltip("Move every eligible package and flake output into nixbox's managed files")
                 .disabled(!migratable)
                 .on_click(cx.listener(|this, _, window, cx| this.migrate_all(window, cx)))
                 .into_any_element(),
@@ -90,6 +96,19 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
                             .child(muted(format!("{repo}, {origin}"), cx)),
                     )
                     .child(Tag::secondary().xsmall().child(flake.scope.tag()))
+                    .when(flake.migratable(), |row| {
+                        let flake = flake.clone();
+                        row.child(
+                            Button::new(("migrate-flake", index))
+                                .small()
+                                .ghost()
+                                .icon(IconName::ArrowRight)
+                                .label("Migrate")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.migrate_flake(flake.clone(), window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         Button::new(("remove-flake", index))
                             .small()

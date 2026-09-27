@@ -117,6 +117,8 @@ Migration rescans the source file, removes every dedicated line associated with 
 
 Migration is not transactional across the source file and generated module. If removing source lines succeeds and a later write or rebuild fails, the files remain in their latest state. Use version control as the rollback mechanism.
 
+Flake-package migration records the existing GitHub input and package attribute in the generated flake module, adds its import, then removes the dedicated source line. It preserves the root input and other outputs. Inline entries, non-GitHub inputs, and hand-declared module imports are not migrated automatically. If a write fails between these steps, inspect both files before retrying.
+
 `M` queues separate Home Manager and NixOS migration operations. Queue batching produces at most one rebuild per affected target for that migration run.
 
 ## Queue and recovery

@@ -207,6 +207,50 @@ mod tests {
     }
 
     #[test]
+    fn flake_migrate_accepts_one_output_or_all() {
+        use super::Command;
+        use crate::commands::flake::Action;
+
+        let one = Cli::try_parse_from([
+            "nixbox",
+            "flake",
+            "migrate",
+            "llm-agents#chatgpt",
+            "--dry-run",
+        ])
+        .unwrap();
+        assert!(matches!(
+            one.command,
+            Some(Command::Flake {
+                action: Action::Migrate {
+                    output: Some(_),
+                    all: false,
+                    ..
+                }
+            })
+        ));
+        let all = Cli::try_parse_from([
+            "nixbox",
+            "flake",
+            "migrate",
+            "--all",
+            "--target",
+            "home-manager",
+        ])
+        .unwrap();
+        assert!(matches!(
+            all.command,
+            Some(Command::Flake {
+                action: Action::Migrate {
+                    output: None,
+                    all: true,
+                    ..
+                }
+            })
+        ));
+    }
+
+    #[test]
     fn a_bare_invocation_carries_no_subcommand() {
         let cli = Cli::parse_from(["nixbox"]);
         assert!(cli.command.is_none());

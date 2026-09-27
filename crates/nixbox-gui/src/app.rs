@@ -523,10 +523,35 @@ impl NixboxApp {
         );
     }
 
+    pub fn migrate_flake(
+        &mut self,
+        flake: InstalledFlake,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = flake.name();
+        if !flake.migratable() {
+            self.set_status(format!("{name} cannot be migrated automatically."), cx);
+            return;
+        }
+        if let nixbox_nix::manifest::FlakeOutput::Package(package) = flake.output {
+            self.enqueue(
+                Op::MigrateFlakePackage {
+                    input: flake.input,
+                    package,
+                    scope: flake.scope,
+                },
+                format!("{name} is already queued for migration."),
+                window,
+                cx,
+            );
+        }
+    }
+
     pub fn migrate_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ops = self.session.migrate_all_ops();
         if ops.is_empty() {
-            self.set_status("No external packages left to migrate.", cx);
+            self.set_status("No external packages or flake outputs left to migrate.", cx);
             return;
         }
         let outcome = self.session.enqueue_all(ops);

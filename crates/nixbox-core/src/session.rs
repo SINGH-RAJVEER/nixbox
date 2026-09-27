@@ -417,11 +417,28 @@ impl Session {
                 ScanTarget::Nixos => nixos.push(package.name.clone()),
             }
         }
-        [(home, Target::HomeManager), (nixos, Target::NixosSystem)]
+        let mut ops: Vec<Op> = [(home, Target::HomeManager), (nixos, Target::NixosSystem)]
             .into_iter()
             .filter(|(names, _)| !names.is_empty())
             .filter_map(|(names, scope)| self.unqueued_part(Op::Migrate { names, scope }))
-            .collect()
+            .collect();
+        ops.extend(
+            self.engine
+                .flakes
+                .iter()
+                .filter(|flake| flake.migratable())
+                .filter_map(|flake| {
+                    let nixbox_nix::manifest::FlakeOutput::Package(package) = &flake.output else {
+                        return None;
+                    };
+                    self.unqueued_part(Op::MigrateFlakePackage {
+                        input: flake.input.clone(),
+                        package: package.clone(),
+                        scope: flake.scope,
+                    })
+                }),
+        );
+        ops
     }
 
     /// Writes the part of the session that must survive a crash. Failing to

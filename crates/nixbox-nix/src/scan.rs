@@ -57,6 +57,9 @@ pub struct ExternalFlakePackage {
     pub line: usize,
     /// True when the entry has a line of its own and can be removed cleanly.
     pub removable: bool,
+    /// True when moving this entry to the generated package list preserves
+    /// its option and system selector.
+    pub migratable: bool,
     pub scope: ScanTarget,
 }
 
@@ -89,12 +92,23 @@ fn parse_flake_packages(raw: &str, target: ScanTarget) -> Vec<ExternalFlakePacka
         .into_iter()
         .filter_map(|entry| {
             let (input, package) = flake_package_token(&entry.token)?;
+            let migratable = entry.own_line
+                && matches!(
+                    (target, entry.source_attr.as_str()),
+                    (ScanTarget::HomeManager, "home.packages")
+                        | (ScanTarget::Nixos, "environment.systemPackages")
+                )
+                && (entry
+                    .token
+                    .contains(".packages.${pkgs.stdenv.hostPlatform.system}.")
+                    || entry.token.contains(".packages.${pkgs.system}."));
             Some(ExternalFlakePackage {
                 input,
                 package,
                 source_attr: entry.source_attr,
                 line: entry.line,
                 removable: entry.own_line,
+                migratable,
                 scope: target,
             })
         })
@@ -516,6 +530,24 @@ mod tests {
 
     fn names(pkgs: &[ExternalPackage]) -> Vec<&str> {
         pkgs.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    #[test]
+    fn flake_migration_requires_the_same_package_option_and_system_selector() {
+        let src = r#"{ inputs, pkgs, ... }: {
+	home.packages = [
+		inputs.demo.packages.${pkgs.stdenv.hostPlatform.system}.default
+		inputs.demo.packages.x86_64-linux.fixed
+	];
+	home.extraPackages = [
+		inputs.demo.packages.${pkgs.system}.font
+	];
+}"#;
+        let found = parse_flake_packages(src, ScanTarget::HomeManager);
+        assert_eq!(found.len(), 3);
+        assert!(found[0].migratable);
+        assert!(!found[1].migratable);
+        assert!(!found[2].migratable);
     }
 
     #[test]
