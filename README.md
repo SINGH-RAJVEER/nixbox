@@ -67,7 +67,7 @@ For a standalone Home Manager configuration, add the same input and include its 
 })
 ```
 
-Here `nixbox` is the flake input available in the enclosing `outputs` function. Use `.nixbox-cli` instead of `.default` for the command-line-only binary. On Linux, `.nixbox-gui` installs the desktop application; the current GUI is on the `dev` branch, so use `github:SINGH-RAJVEER/nixbox/dev` as the input URL for it until that branch reaches the default branch.
+Here `nixbox` is the flake input available in the enclosing `outputs` function. Use `.nixbox-cli` instead of `.default` for the command-line-only binary. On Linux, `.nixbox-gui` installs the desktop application.
 
 The flake also exports `overlays.default`, which adds `pkgs.nixbox` and `pkgs.nixbox-cli`:
 
