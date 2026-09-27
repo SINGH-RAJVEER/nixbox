@@ -7,12 +7,17 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use super::{SPINNER, panel};
 use crate::app::{App, Mode, SettingsPage, Tab};
+use crate::options::OptionEditor;
 use crate::vim::VimMode;
 
 pub(super) fn draw_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let t = app.theme();
     let dim = Style::default().add_modifier(Modifier::DIM);
     let (input, placeholder) = match app.tab {
+        Tab::Installed if app.options_panel_active() => match &app.options_panel {
+            Some(panel) => (&panel.filter, "filter options"),
+            None => (&app.installed_input, "search installed applications"),
+        },
         Tab::Flakes => (&app.flake_input, "search GitHub flake contents"),
         Tab::Installed => (&app.installed_input, "search installed applications"),
         _ => (&app.input, "search nixpkgs"),
@@ -169,6 +174,9 @@ pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn context_keys(app: &App) -> &'static str {
+    if let (Mode::Browsing, true) = (&app.mode, app.options_panel_active()) {
+        return options_keys(app);
+    }
     match app.mode {
         Mode::SettingsSelect
             if app.settings_page == SettingsPage::Main
@@ -190,7 +198,7 @@ fn context_keys(app: &App) -> &'static str {
                 }
                 Tab::Flakes => "type  ←→ cursor  ↑↓ results  Enter install  tab/shift-tab tabs",
                 Tab::Installed => {
-                    "type to filter  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ctrl-s settings"
+                    "type to filter  ↑↓ results  ↵ options  tab/shift-tab tabs  ctrl-s settings"
                 }
                 Tab::Building if app.session.is_building() => {
                     "c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
@@ -223,11 +231,9 @@ fn context_keys(app: &App) -> &'static str {
             },
             Tab::Installed => match app.installed_input.mode() {
                 VimMode::Insert => {
-                    "type to filter  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ctrl-s settings"
+                    "type to filter  ↑↓ results  ↵ options  tab/shift-tab tabs  esc normal"
                 }
-                VimMode::Normal => {
-                    "h/l cursor  i/a filter  tab/shift-tab tabs  d uninstall  ctrl-s settings"
-                }
+                VimMode::Normal => "i/a filter  j/k results  ↵ options  d uninstall  m migrate",
                 VimMode::Visual => {
                     "h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
                 }
@@ -237,5 +243,25 @@ fn context_keys(app: &App) -> &'static str {
             }
             Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
         },
+    }
+}
+
+fn options_keys(app: &App) -> &'static str {
+    let Some(panel) = &app.options_panel else {
+        return "";
+    };
+    match &panel.editor {
+        Some(OptionEditor::Text { .. }) => return "type  ↵ stage  esc cancel",
+        Some(OptionEditor::Choice { .. }) => return "↑↓/j/k choose  ↵ stage  esc cancel",
+        None => {}
+    }
+    if app.session.engine.config.input_mode == InputMode::Normal {
+        return "type to filter  ↑↓ move  ↵ edit  ctrl-u unset  ctrl-z discard  ctrl-w apply  esc close";
+    }
+    match panel.filter.mode() {
+        VimMode::Normal => {
+            "j/k move  ↵ edit  u unset  U discard  w apply  / filter  r reload  esc close"
+        }
+        _ => "type to filter  ↑↓ move  ↵ edit  esc normal",
     }
 }

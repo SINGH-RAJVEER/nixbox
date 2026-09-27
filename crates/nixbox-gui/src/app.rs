@@ -4,6 +4,7 @@
 //! await its join handles and fold the results back in here. Queued ops and
 //! rebuilds go through the shared [`Session`], exactly as in the TUI.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,12 +20,14 @@ use nixbox_core::search::{catalog_cache_path, search_packages};
 use nixbox_core::{BuildEnded, Enqueued, InstalledFlake, Op, Restored, Session};
 use nixbox_nix::build::BuildEvent;
 use nixbox_nix::flakes::{FlakeDetails, FlakeHit, fetch_flake_details, search_flakes};
+use nixbox_nix::options::OptionSet;
 use nixbox_nix::scan::ExternalPackage;
 use nixbox_nix::search::{MAX_SEARCH_RESULTS, PackageCatalog, SearchHit};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::model::target_of;
+use crate::options::OptionsView;
 use crate::theme;
 
 actions!(nixbox, [Quit, FocusSearch]);
@@ -42,6 +45,8 @@ pub enum Page {
     Packages,
     Flakes,
     Installed,
+    /// One installed package's options, opened from the Installed page.
+    Options,
     Queue,
     Build,
     Settings,
@@ -51,7 +56,7 @@ pub struct NixboxApp {
     pub session: Session,
     pub page: Page,
     pub status: SharedString,
-    runtime: Handle,
+    pub(crate) runtime: Handle,
 
     pub search_input: Entity<InputState>,
     pub results: Vec<SearchHit>,
@@ -75,6 +80,14 @@ pub struct NixboxApp {
     pub installed_input: Entity<InputState>,
     pub log_scroll: UniformListScrollHandle,
 
+    pub options: Option<OptionsView>,
+    pub(crate) options_cache: HashMap<(Target, String), Arc<OptionSet>>,
+    pub(crate) options_epoch: u64,
+    pub(crate) options_task: Option<Task<()>>,
+    pub options_filter: Entity<InputState>,
+    /// The value field for the selected option's text editor.
+    pub option_input: Entity<InputState>,
+
     _build_events: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -96,6 +109,8 @@ impl NixboxApp {
         });
         let installed_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter installed packages"));
+        let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
+        let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
         search_input.update(cx, |input, cx| input.focus(window, cx));
 
         let subscriptions = vec![
@@ -112,6 +127,16 @@ impl NixboxApp {
             cx.subscribe_in(&installed_input, window, |_, _, event, _, cx| {
                 if let InputEvent::Change = event {
                     cx.notify();
+                }
+            }),
+            cx.subscribe_in(&options_filter, window, |_, _, event, _, cx| {
+                if let InputEvent::Change = event {
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&option_input, window, |this, _, event, _, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    this.stage_text(cx);
                 }
             }),
         ];
@@ -153,6 +178,12 @@ impl NixboxApp {
             flake_detail_task: None,
             installed_input,
             log_scroll: UniformListScrollHandle::new(),
+            options: None,
+            options_cache: HashMap::new(),
+            options_epoch: 0,
+            options_task: None,
+            options_filter,
+            option_input,
             _build_events: build_events,
             _subscriptions: subscriptions,
         };
@@ -188,6 +219,7 @@ impl NixboxApp {
             Page::Packages => Some(&self.search_input),
             Page::Flakes => Some(&self.flake_input),
             Page::Installed => Some(&self.installed_input),
+            Page::Options => Some(&self.options_filter),
             Page::Queue | Page::Build | Page::Settings => None,
         };
         if let Some(input) = input {
@@ -560,7 +592,13 @@ impl NixboxApp {
 
     // ── queue and rebuilds ──────────────────────────────────────────────
 
-    fn enqueue(&mut self, op: Op, duplicate: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn enqueue(
+        &mut self,
+        op: Op,
+        duplicate: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let outcome = self.session.enqueue(op);
         self.report_enqueued(outcome, duplicate, window, cx);
     }
@@ -644,6 +682,7 @@ impl NixboxApp {
         };
         window.push_notification(note, cx);
         self.set_status(status, cx);
+        self.options_after_build(cx);
     }
 
     fn scroll_log_to_end(&self) {
@@ -754,6 +793,7 @@ mod tests {
             Page::Packages,
             Page::Flakes,
             Page::Installed,
+            Page::Options,
             Page::Queue,
             Page::Build,
             Page::Settings,

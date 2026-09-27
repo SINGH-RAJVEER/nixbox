@@ -1,1 +1,10 @@
 - setup testing and compiling pipleine using watchexec and nextest
+- package options panel: Enter on an Installed row opens its module options, fetched from the user's flake and editable
+	- [x] settings file paths in `nixbox-config` and `SettingsManifest` render/parse in `nixbox-nix`
+	- [x] option fetch and namespace resolution in `nixbox-nix/src/options.rs`
+	- [x] `Op::SetOptions`, engine apply arm, and same-path merging in the session queue
+	- [x] TUI panel, read-only: Enter opens it, Esc closes it, async load with epoch and cache
+	- [x] TUI editing: staged edits, typed editors, unset, apply as one queued op
+	- [x] docs: `PACKAGE_OPTIONS.md`, `USER_GUIDE.md`, `MANAGED_FILES.md`, `ARCHITECTURE.md`
+	- [x] GUI: Options page reached from the Installed page
+	- [ ] follow-ups: `nixbox options` CLI, flake module options, complex types, `mkForce` overrides

@@ -41,5 +41,6 @@ tracing-subscriber = { workspace = true, optional = true }
 gpui-kit = { version = "0.6.6", optional = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 gpui-kit = { version = "0.6.6", features = ["test-support"] }
 nixbox-core = { path = "../nixbox-core", version = "0.2.7", features = ["test-util"] }

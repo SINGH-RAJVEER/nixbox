@@ -4518,6 +4518,7 @@ dependencies = [
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

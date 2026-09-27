@@ -62,6 +62,25 @@ Package names use a `BTreeSet`, so duplicates are removed and generated lines so
 
 Input and package attribute names are quoted and escaped only when they are not plain Nix identifiers. Each line ends with a `# github:<owner>/<repository>` comment that ties it back to its repository. The loader also reads lines written by earlier releases, which used the quoted repository as the input name, had no trailing comment, and used `${pkgs.system}`; those keep working until the flake is reinstalled. On the Home Manager target the Flakes tab enqueues a flake-package operation whenever the selected repository has packages, and on the NixOS target when it has no default module, using the first package from the evaluated and ranked package list.
 
+## Generated settings modules
+
+Package options set from the [options panel](PACKAGE_OPTIONS.md) are written to `<configuration-root>/nixbox-home-settings.nix` for Home Manager and `<configuration-root>/nixbox-system-settings.nix` for NixOS:
+
+```nix
+# Managed by nixbox. Do not edit by hand.
+{ ... }:
+{
+	# nixbox:settings:start
+	programs.git.ignores = [ ".direnv" "*.swp" ];
+	programs.git.signing.format = "ssh";
+	# nixbox:settings:end
+}
+```
+
+Each option is one `path = value;` line, sorted by path. Path segments that are not plain Nix identifiers are quoted. Values are limited to `null`, booleans, integers, floats, strings, and lists of strings. Strings escape `\`, `"`, newlines, tabs, and `${`, so a value can never become an interpolation. When loading, NixBox accepts only lines it could have written itself and drops everything else on the next write, including hand-added lines inside the markers.
+
+NixBox writes an option only when no other file under the configuration root defines it, because a second definition of a non-mergeable value fails evaluation. See [What can be edited](PACKAGE_OPTIONS.md#what-can-be-edited).
+
 ## Automatic imports
 
 After writing a generated module, NixBox ensures the target entry file imports it. It calculates a relative path when possible and checks for the complete path token before editing, which makes repeated insertion idempotent and avoids treating `.nix.bak` as the same import.

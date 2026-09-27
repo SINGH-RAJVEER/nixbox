@@ -68,6 +68,13 @@ mod tests {
                     names: vec!["git".into(), "neovim".into()],
                     scope: Target::HomeManager,
                 },
+                QueuedOp::SetOptions {
+                    changes: vec![nixbox_core::OptionChange {
+                        path: vec!["programs".into(), "git".into(), "enable".into()],
+                        value: Some(nixbox_nix::SettingValue::Bool(true)),
+                    }],
+                    scope: Target::HomeManager,
+                },
             ],
             in_progress: Some(InProgress {
                 scope: Target::HomeManager,
@@ -79,7 +86,7 @@ mod tests {
         let json = serde_json::to_string(&state).expect("serialize");
         let restored: PersistedState = serde_json::from_str(&json).expect("deserialize");
 
-        assert_eq!(restored.pending_queue.len(), 4);
+        assert_eq!(restored.pending_queue.len(), 5);
         assert!(matches!(
             &restored.pending_queue[0],
             QueuedOp::Install { hit, scope: Target::HomeManager } if hit.attr == "ripgrep"
@@ -96,6 +103,11 @@ mod tests {
         assert!(matches!(
             &restored.pending_queue[3],
             QueuedOp::Migrate { names, scope: Target::HomeManager } if names == &vec!["git".to_string(), "neovim".to_string()]
+        ));
+        assert!(matches!(
+            &restored.pending_queue[4],
+            QueuedOp::SetOptions { changes, scope: Target::HomeManager }
+                if changes[0].value == Some(nixbox_nix::SettingValue::Bool(true))
         ));
         let ip = restored.in_progress.expect("in_progress preserved");
         assert_eq!(ip.scope, Target::HomeManager);

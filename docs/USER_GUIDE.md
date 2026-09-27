@@ -58,6 +58,8 @@ Press `m` on a hand-declared flake package to move it into NixBox's generated fl
 
 The Installed tab's text field filters the combined list without changing configuration. It matches flake rows by name or repository.
 
+Press `Enter` on a managed or external package to open its options panel. The panel lists the package's `programs.*` or `services.*` module options, read from your configuration, and lets you stage and apply changes to the simple ones. Flake rows have no options panel yet. See [Package options](PACKAGE_OPTIONS.md).
+
 ### Building
 
 The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
@@ -82,7 +84,7 @@ Choose Vim mode or Normal mode under `Ctrl-S`, then `Input mode`. NixBox saves t
 
 ### Normal input mode
 
-Normal input mode keeps the search and filter fields ready for typing. Use the arrow keys to select results and `Enter` to install from the nixpkgs or Flakes tabs. The current Normal-mode handler does not expose uninstall or migration keys in the Installed tab, so switch to Vim input mode for those actions.
+Normal input mode keeps the search and filter fields ready for typing. Use the arrow keys to select results and `Enter` to install from the nixpkgs or Flakes tabs, or to open a package's options panel from the Installed tab. The current Normal-mode handler does not expose uninstall or migration keys in the Installed tab, so switch to Vim input mode for those actions.
 
 ### Vim input mode
 
@@ -107,7 +109,7 @@ The nixpkgs, Flakes, and Installed fields support Vim-like text editing. This is
 | `c` | Visual | Delete the inclusive selection and enter Insert mode. |
 | `Esc` | Insert or Visual | Return to Normal mode. |
 
-Use `j` and `k` to move through results in Vim Normal mode. The arrow keys also work while editing. Press `Enter` in the nixpkgs or Flakes tabs to install the selected item.
+Use `j` and `k` to move through results in Vim Normal mode. The arrow keys also work while editing. Press `Enter` in the nixpkgs or Flakes tabs to install the selected item, or in the Installed tab to open the selected package's options panel.
 
 ## Settings
 

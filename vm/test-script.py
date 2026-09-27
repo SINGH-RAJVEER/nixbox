@@ -338,3 +338,81 @@ with subtest("flake remove drops every managed output of a flake at once"):
 	nixbox(f"flake remove {REPO} --no-rebuild --yes")
 	machine.succeed(f"diff -u /tmp/flake.before {CONFIG}/flake.nix")
 	assert "helium-browser" not in managed_flakes(), managed_flakes()
+
+
+# ── Package options ────────────────────────────────────────────────────────
+#
+# The options panel evaluates the guest's own configuration, which works
+# offline. Applying writes the settings module and then rebuilds; the
+# rebuild needs git-lfs from a substituter and fails here, which is fine:
+# what is checked is the file nixbox wrote and that Nix accepts it.
+
+SETTINGS = "nixbox-system-settings.nix"
+
+
+def screen_has(text: str, timeout: int = 60) -> None:
+	machine.wait_until_succeeds(
+		f"su -l tester -c 'tmux capture-pane -p -t nb' | grep -qF -- '{text}'",
+		timeout=timeout,
+	)
+
+
+def evaluated(option: str) -> str:
+	return machine.succeed(
+		"su -l tester -c \"nix eval --impure --json --expr "
+		+ "'(builtins.getFlake \\\"/home/tester/.config/nixos\\\").nixosConfigurations.nixos.config."
+		+ option
+		+ "'\""
+	).strip()
+
+
+with subtest("Enter on an Installed package opens its options"):
+	nixbox("install git --no-rebuild --yes")
+	nixbox("config set input-mode vim")
+	machine.succeed("su -l tester -c 'tmux new-session -d -s nb -x 200 -y 50 nixbox'")
+	screen_has("Installed")
+	tui("Tab")
+	tui("Tab")
+	screen_has("Managed  (")
+	tui("i")
+	machine.succeed("su -l tester -c \"tmux send-keys -t nb -l 'git'\"")
+	tui("Escape")
+	screen_has("d uninstall")
+	tui("Enter")
+	screen_has("options in programs.git", timeout=600)
+	shown = screen()
+	assert "lfs.enable" in shown, shown
+	assert "<git-" in shown, shown
+
+with subtest("a staged option is applied into the settings module"):
+	tui("/")
+	machine.succeed("su -l tester -c \"tmux send-keys -t nb -l 'lfs.enable'\"")
+	tui("Escape")
+	tui("Enter")
+	screen_has("Staged programs.git.lfs.enable = true.")
+	tui("w")
+	machine.wait_until_succeeds(
+		f"grep -qF 'programs.git.lfs.enable = true;' {CONFIG}/{SETTINGS}", timeout=60
+	)
+	assert f"./{SETTINGS}" in main_config(), main_config()
+	tracked = machine.succeed("su -l tester -c 'git -C ~/.config/nixos ls-files'")
+	assert SETTINGS in tracked, tracked
+	assert evaluated("programs.git.lfs.enable") == "true"
+
+with subtest("after the rebuild the panel shows the value as nixbox's"):
+	# The rebuild fails offline; when it ends the open panel reads its
+	# options again, now from a configuration that includes the new file.
+	screen_has("change(s) failed", timeout=600)
+	tui("BTab")
+	screen_has("· nixbox", timeout=600)
+
+with subtest("unsetting removes the line again"):
+	tui("u")
+	screen_has("Staged unset programs.git.lfs.enable.")
+	tui("w")
+	machine.wait_until_succeeds(f"! grep -qF 'lfs' {CONFIG}/{SETTINGS}", timeout=600)
+	assert "nixbox:settings:start" in read(SETTINGS), read(SETTINGS)
+	assert evaluated("programs.git.lfs.enable") == "false"
+	machine.succeed("su -l tester -c 'tmux kill-session -t nb'")
+	nixbox("config set input-mode normal")
+	nixbox("remove git --no-rebuild --yes")

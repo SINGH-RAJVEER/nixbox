@@ -11,6 +11,7 @@ mod bars;
 mod build;
 mod flakes;
 mod installed;
+mod options;
 mod popups;
 mod queue;
 mod search;
@@ -62,6 +63,9 @@ pub(crate) fn draw(f: &mut Frame, app: &App) {
     match app.tab {
         Tab::Search => search::draw_search_body(f, body_area, app),
         Tab::Flakes => flakes::draw_flakes_body(f, body_area, app),
+        Tab::Installed if app.options_panel.is_some() => {
+            options::draw_options_body(f, body_area, app);
+        }
         Tab::Installed => installed::draw_installed_body(f, body_area, app),
         Tab::Building => build::draw_build_body(f, body_area, app),
         Tab::Queue => queue::draw_queue_body(f, body_area, app),

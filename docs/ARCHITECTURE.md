@@ -63,6 +63,7 @@ Every front-end goes through the same engine, so a change applied by `nixbox ins
 - Package search: the input editor, results, selected row, epoch, latest query, catalog handle, loading state, and task handles.
 - Flake search: a separate input editor, results, selected row, details, epochs, query, loading flags, and task handles.
 - Installed view: filter input and selected combined row.
+- Options panel: the open `OptionsPanel` (package, scope, evaluated options, filter, staged edits, and the active editor), a cache of evaluated option sets keyed by scope and package, an epoch, and the evaluation task handle.
 - UI state: active tab, settings page, status, theme index, spinner frame, and quit flag.
 - `session`: a `nixbox_core::Session` holding the engine, the pending queue, the build log, the running rebuild and its cancel sender, and the last error.
 
@@ -115,6 +116,8 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 
 - `search.rs` owns live search, the locked-revision catalog, cache serialization, bounded subprocess output, package-attribute normalization, and relevance ranking.
 - `manifest.rs` owns generated package and flake-module files, package marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list.
+- `settings.rs` owns the generated settings modules: `SettingValue`, the `SettingsManifest` map from option path to value, rendering, and the strict line parser.
+- `options.rs` and `options.nix` evaluate a package's module options from the user's flake. The query goes to Nix as JSON in an environment variable, and the result is decoded into an `OptionSet` of `OptionEntry` values with an `OptionKind`, the evaluated value, and the files that define each option.
 - `scan.rs` detects simple package tokens in selected Nix lists and removes dedicated lines during migration.
 - `flakes.rs` calls GitHub through `gh api`, ranks repository candidates, evaluates locked revisions for package and module outputs, caches inspections in memory, reads root `flake.nix` files for input names, and edits a conventional root flake for output installation.
 - `build.rs` resolves executables in common Nix profiles, chooses Home Manager or NixOS commands, starts rebuild process groups, forwards output, and cancels a complete process group.
@@ -125,8 +128,9 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `op.rs` defines `Op`, the unit of work both front-ends queue. Its variant and field names are an on-disk format, because the queue is persisted verbatim in `state.json`.
 - `state.rs` defines `PersistedState` and `InProgress`, the `state.json` format, and its load, save, and clear operations. It lives here rather than in the UI crate because `nixbox resume` reads the same file.
 - `engine.rs` owns `Engine`, which holds the settings and both manifests, applies an `Op`, writes the managed file, wires the import into the main config, stages files for Git-aware flake evaluation, and installs or removes flake inputs and outputs.
+- `options.rs` defines `OptionChange`, picks the configuration an option query evaluates (`load_options`), and applies `Op::SetOptions` by writing the settings module and wiring its import. It also holds the editing rules both front-ends share: why an option is locked, the values a choice offers, how typed text is read as a value, how an evaluated value is summarized, which options NixBox sets (`Engine::sets_option`), and what the queue holds for an option (`Session::queued_option`).
 - `rebuild.rs` selects the rebuild command for a target, reports when a Home Manager rebuild falls back to `nixos-rebuild`, applies the `Escalation` (plain `sudo`, or `sudo -A` with an askpass helper), and `run` resolves and runs the rebuild, racing the cancel signal. The CLI and the `Session` both use `run`.
-- `session.rs` owns `Session`, the operation pipeline behind the TUI and the GUI: deduplicated enqueueing, per-target batching, one rebuild at a time, cancellation, the capped build log, `state.json` persistence, and restoring an interrupted run. Rebuilds are spawned on a tokio runtime handle, so a front-end whose own loop is not tokio can still drive it.
+- `session.rs` owns `Session`, the operation pipeline behind the TUI and the GUI: deduplicated enqueueing, merging of waiting `SetOptions` ops per scope, per-target batching, one rebuild at a time, cancellation, the capped build log, `state.json` persistence, and restoring an interrupted run. Rebuilds are spawned on a tokio runtime handle, so a front-end whose own loop is not tokio can still drive it.
 - `search.rs` searches the package catalog when it is ready and falls back to live `nix search`, and names the catalog cache path.
 - `report.rs` defines the `Reporter` trait plus a silent and a log-collecting implementation, which is how the same engine feeds the TUI's log pane and the CLI's stderr.
 
@@ -160,9 +164,10 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `main.rs` starts a multithreaded tokio runtime for the nix work, builds a `Session` with `Escalation::Askpass` pointing at its own executable, and opens the window. Started by sudo as the askpass helper (`NIXBOX_ASKPASS` set), it shows the password prompt instead.
 - `askpass.rs` is that prompt: it prints the password to stdout for sudo, or exits non-zero on cancel so the rebuild stops.
 - `app.rs` owns `NixboxApp`, the window state. Searches and flake lookups run on the tokio runtime; gpui tasks await their join handles, debounce input, and discard stale results by epoch, as the TUI does. A gpui task feeds `BuildEvent`s to the `Session` and raises notifications when a rebuild ends.
+- `options.rs` holds the Options page's state (`OptionsView`): the package and scope, the evaluated options, the selected option, and staged edits, plus the actions that load, stage, unset, discard, and apply them. Evaluations run on the tokio runtime and are cached per scope and package until a rebuild ends, as in the TUI.
 - `model.rs` computes the Installed page's filtered sections and a search hit's installed scopes without gpui, so they are unit tested.
 - `theme.rs` maps the theme names in `nixbox-config::THEMES` onto gpui-component: `default` follows the desktop appearance, the others are dark with the TUI palette's background and accent.
-- `ui/` renders the sidebar, status line, and the nixpkgs, Flakes, Installed, Queue, Build, and Settings pages with gpui-component, as flat lists separated by rules.
+- `ui/` renders the sidebar, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, and Settings pages with gpui-component, as flat lists separated by rules.
 
 ## Design constraints
 

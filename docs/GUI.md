@@ -37,14 +37,15 @@ The sidebar lists the pages. The status line at the bottom reports the last thin
 | --- | --- |
 | nixpkgs | Searches the package catalog for your locked nixpkgs revision, falling back to live `nix search` while the catalog is built. Each hit shows where it is already installed and has an Install button. |
 | Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs; Install adds the package or module that suits the current target, as the TUI does. |
-| Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. |
+| Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
+| Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The sidebar shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Settings | Install target, channel, and theme, saved immediately to `~/.config/nixbox/settings.json`. |
 
 Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
 
-Installing, removing, and migrating all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
+Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
 
 ## Themes
 

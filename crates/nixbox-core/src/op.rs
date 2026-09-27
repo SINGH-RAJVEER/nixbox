@@ -6,6 +6,8 @@ use nixbox_nix::manifest::FlakeOutput;
 use nixbox_nix::search::SearchHit;
 use serde::{Deserialize, Serialize};
 
+use crate::options::OptionChange;
+
 /// A single pending change to the user's configuration.
 ///
 /// This is persisted verbatim in `state.json`, so variant names and field
@@ -52,6 +54,13 @@ pub enum Op {
         package: String,
         scope: Target,
     },
+    /// Sets or unsets package options in nixbox's settings module. Queuing
+    /// another for the same scope merges into the waiting one, so staged
+    /// edits share a rebuild.
+    SetOptions {
+        changes: Vec<OptionChange>,
+        scope: Target,
+    },
 }
 
 impl Op {
@@ -67,7 +76,8 @@ impl Op {
             | Op::UninstallFlakeOutput { scope, .. }
             | Op::Uninstall { scope, .. }
             | Op::Migrate { scope, .. }
-            | Op::MigrateFlakePackage { scope, .. } => *scope,
+            | Op::MigrateFlakePackage { scope, .. }
+            | Op::SetOptions { scope, .. } => *scope,
         }
     }
 
@@ -171,6 +181,10 @@ impl Op {
             Op::MigrateFlakePackage { input, package, .. } => {
                 format!("migrate {input}#{package} [{tag}]")
             }
+            Op::SetOptions { changes, .. } => match changes.as_slice() {
+                [only] => format!("set {} [{tag}]", only.label()),
+                rest => format!("set {} options [{tag}]", rest.len()),
+            },
         }
     }
 }

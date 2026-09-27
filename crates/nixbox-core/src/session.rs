@@ -173,6 +173,30 @@ impl Session {
         (!names.is_empty()).then_some(Op::Migrate { names, scope })
     }
 
+    /// Folds a [`Op::SetOptions`] into one already waiting for the same
+    /// scope, newer values winning, so staged edits share one rebuild.
+    /// Hands back any op it did not merge.
+    fn merge_settings(&mut self, op: Op) -> Result<(), Op> {
+        let Op::SetOptions { changes, scope } = op else {
+            return Err(op);
+        };
+        let waiting = self.queue.iter_mut().find_map(|queued| match queued {
+            Op::SetOptions {
+                changes,
+                scope: queued_scope,
+            } if *queued_scope == scope => Some(changes),
+            _ => None,
+        });
+        let Some(waiting) = waiting else {
+            return Err(Op::SetOptions { changes, scope });
+        };
+        for change in changes {
+            waiting.retain(|queued| queued.path != change.path);
+            waiting.push(change);
+        }
+        Ok(())
+    }
+
     /// Queues `op` and starts it if nothing else is running.
     pub fn enqueue(&mut self, op: Op) -> Enqueued {
         self.enqueue_all(vec![op])
@@ -183,6 +207,13 @@ impl Session {
     pub fn enqueue_all(&mut self, ops: Vec<Op>) -> Enqueued {
         let mut added = false;
         for op in ops {
+            let op = match self.merge_settings(op) {
+                Ok(()) => {
+                    added = true;
+                    continue;
+                }
+                Err(op) => op,
+            };
             if let Some(op) = self.unqueued_part(op) {
                 self.queue.push_back(op);
                 added = true;
@@ -640,5 +671,36 @@ mod tests {
             })
             .collect();
         assert_eq!(queued, ["git", "fd"]);
+    }
+
+    #[test]
+    fn option_edits_for_a_scope_merge_into_the_waiting_op() {
+        use crate::options::OptionChange;
+        use nixbox_nix::settings::SettingValue;
+
+        let dir = temp_dir("session-settings");
+        let mut session = session(dir.config());
+        let _cancel = session.fake_build(Target::NixosSystem, "busy");
+        let set = |name: &str, value: Option<bool>| Op::SetOptions {
+            changes: vec![OptionChange {
+                path: vec!["programs".into(), "git".into(), name.into()],
+                value: value.map(SettingValue::Bool),
+            }],
+            scope: Target::HomeManager,
+        };
+
+        assert_eq!(session.enqueue(set("enable", Some(true))), Enqueued::Queued);
+        assert_eq!(session.enqueue(set("lfs", Some(true))), Enqueued::Queued);
+        assert_eq!(session.enqueue(set("enable", None)), Enqueued::Queued);
+
+        assert_eq!(session.queue.len(), 1);
+        let Some(Op::SetOptions { changes, .. }) = session.queue.front() else {
+            panic!("expected one settings op");
+        };
+        let summary: Vec<String> = changes.iter().map(OptionChange::label).collect();
+        assert_eq!(
+            summary,
+            ["programs.git.lfs = true", "unset programs.git.enable"]
+        );
     }
 }
