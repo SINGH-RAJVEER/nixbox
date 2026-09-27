@@ -32,7 +32,13 @@ For the command line without the terminal UI, install the sibling package instea
 cargo install nixbox-cli
 ```
 
-On Linux, install the desktop GUI separately. It needs the graphics development libraries listed in the [GUI guide](docs/GUI.md):
+On Linux, install the desktop GUI from the flake to get its native libraries and runtime wrapper without configuring a build environment:
+
+```sh
+nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
+```
+
+The GUI is also published to crates.io. Its default Cargo installation is a small launcher that runs the matching flake package, so it needs Nix with flakes enabled but no graphics development libraries:
 
 ```sh
 cargo install nixbox-gui

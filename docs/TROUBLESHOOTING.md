@@ -186,7 +186,7 @@ If ordinary errors leave the terminal broken, that is a cleanup bug because `run
 
 ## The desktop GUI does not open
 
-`nixbox-gui` needs a Vulkan driver and the Wayland or X11 client libraries at runtime. The flake package puts them on `LD_LIBRARY_PATH`; a binary built with Cargo outside the devenv shell does not get that wrapper. Run it from `devenv shell`, or install the flake package. `RUST_LOG=warn nixbox-gui` prints the driver the renderer tried.
+`nixbox-gui` needs a Vulkan driver and the Wayland or X11 client libraries at runtime. The flake package puts the client libraries on `LD_LIBRARY_PATH`; the default Cargo-installed launcher runs that same package. A binary built with Cargo's `native` feature outside the devenv shell does not get the wrapper. Run that build from `devenv shell`, or install the flake package. `RUST_LOG=warn nixbox-gui` prints the driver the renderer tried.
 
 ## The GUI rebuild fails with a sudo error
 

@@ -42,16 +42,16 @@ release-cli:
 
 # Run the desktop GUI (debug build)
 gui:
-    cargo run -p nixbox-gui
+    cargo run -p nixbox-gui --features native
 
 # Build the nixbox-gui release binary
 release-gui:
-    cargo build --release -p nixbox-gui
+    cargo build --release -p nixbox-gui --features native
 
 # Lint and test the desktop GUI
 gui-ci:
-    cargo clippy -p nixbox-gui --all-targets -- -D warnings
-    cargo test -p nixbox-gui
+    cargo clippy -p nixbox-gui --features native --all-targets -- -D warnings
+    cargo test -p nixbox-gui --features native
 
 # Format all crates
 fmt:
