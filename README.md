@@ -26,10 +26,16 @@ Install the published crate:
 cargo install nixbox
 ```
 
-For the command line without the terminal UI, install the sibling package instead. It has the same subcommands, installs as `nixbox-cli`, and pulls 60 dependency packages instead of 108:
+For the command line without the terminal UI, install the sibling package instead. It has the same subcommands, installs as `nixbox-cli`, and leaves out the terminal UI dependencies:
 
 ```sh
 cargo install nixbox-cli
+```
+
+On Linux, install the desktop GUI separately. It needs the graphics development libraries listed in the [GUI guide](docs/GUI.md):
+
+```sh
+cargo install nixbox-gui
 ```
 
 Run NixBox directly from its flake:

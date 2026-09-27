@@ -48,7 +48,7 @@ tui = ["dep:nixbox-tui"]
 
 They install under different names on purpose. Two packages producing the same executable collide in one `target/` directory, which cargo warns about and may one day reject, and the second `cargo install` would silently replace the first. `nixbox-cmd` learns which name is running from `env!("CARGO_BIN_NAME")`, so the usage line, the completion script, and hints like "run `nixbox-cli apply`" all name the command the user actually has.
 
-With the UI off, `nixbox-tui` and its terminal dependencies are not built at all: `cargo tree -p nixbox-cli` reports 60 packages against 108 for `nixbox`. Keeping that working is a constraint on where code goes — anything the command line needs belongs below the UI crate, not in it. Two things moved down for this reason, each with a test in `nixbox-tui` pinning it to its former home:
+With the UI off, `nixbox-tui` and its terminal dependencies are not built at all. Keeping that working is a constraint on where code goes: anything the command line needs belongs below the UI crate, not in it. Two things moved down for this reason, each with a test in `nixbox-tui` pinning it to its former home:
 
 - `nixbox_config::THEMES` holds the theme names `nixbox config set theme` validates against. `theme::tests::the_palettes_match_the_names_the_settings_file_accepts` asserts the palettes and the names agree.
 - `nixbox_core::state` holds `PersistedState` and `InProgress`, the `state.json` format that `nixbox resume` reads. The UI crate re-exports them.
@@ -59,7 +59,7 @@ The Nix flake exposes both as `packages.nixbox` and `packages.nixbox-cli`.
 
 ## The desktop GUI
 
-`nixbox-gui` is a third binary, built on gpui through `gpui-kit`, which pins gpui and gpui-component together. It is not a feature of `nixbox-cmd`: it has no subcommands and does not share the command tree, only `nixbox-core`. It is marked `publish = false` until it has had real use.
+`nixbox-gui` is a third binary, built on gpui through `gpui-kit`, which pins gpui and gpui-component together. It is not a feature of `nixbox-cmd`: it has no subcommands and does not share the command tree, only `nixbox-core`. It is published separately to crates.io and needs the graphics development libraries when installed with Cargo.
 
 Building it needs pkg-config, fontconfig, freetype, Wayland, xkbcommon, X11/xcb, and the Vulkan loader, and running it needs the Vulkan loader and the windowing libraries on the library path. The devenv shell provides all of that. Nothing else does, so the crate is kept out of every workspace-wide command:
 
@@ -245,11 +245,11 @@ Published crates must use one version across the workspace. Before merging a rel
 6. Inspect the Jujutsu diff and commit only the intended release files.
 7. Merge the verified `dev` commit into `master` through the project's normal review workflow.
 
-`.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains two jobs.
+`.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains three jobs.
 
-The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked`, followed by the same two checks `just cli` runs and a step that builds each binary package separately and confirms `nixbox-cli` rejects `tui` with `unrecognized subcommand`. It runs on both triggers, so a pull request reports the same gate before the merge happens.
+The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox-gui --all-targets --locked -- -D warnings`, and `cargo test --workspace --exclude nixbox-gui --locked`, followed by the same two checks `just cli` runs and a step that builds each terminal binary package separately and confirms `nixbox-cli` rejects `tui` with `unrecognized subcommand`. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox-gui`. Both run on pull requests, so a release reports the gates before the merge happens.
 
-The `publish` job declares `needs: test` and is restricted to `push` events, so it never runs from a pull request and never starts unless the `test` job succeeded. It checks the locked workspace, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, and `nixbox-cli` in dependency order. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
+The `publish` job declares `needs: [test, gui]` and is restricted to `push` events, so it never runs from a pull request and never starts unless both checks succeeded. It installs the graphics development libraries, checks the locked workspace including the GUI, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, `nixbox-cli`, and `nixbox-gui` in dependency order. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
 
 The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell runs nightly while this workflow runs stable, so a lint can fire in one and not the other. Run the gate on stable before a release if the local shell is on a different channel.
 

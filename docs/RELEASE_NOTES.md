@@ -4,6 +4,14 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+## 0.2.6 - 2026-09-27
+
+- Published `nixbox-gui` as a separate Linux desktop crate. It can now be installed with `cargo install nixbox-gui` when the graphics development libraries are available.
+- Updated Ratatui, Crossterm, and tui-input, replacing the vulnerable `lru` 0.12 dependency with a patched version.
+- Made the release workflow wait for the GUI checks before publishing all eight crates.
+
+## 0.2.5 - 2026-09-27
+
 - Added a Linux desktop GUI built with GPUI. It shares NixBox's queue, settings, and rebuild engine with the terminal and command-line front ends, and uses a password window for sudo rebuilds.
 - Added migration of eligible hand-declared flake packages into NixBox's generated modules from the CLI, terminal UI, and desktop GUI.
 - Extended the test VM's headless check to flake wiring, applying queued flake changes offline with `nixbox resume`. It covers the `{ ... }@inputs` form, input naming and `follows`, two packages from one flake, skipping a package the entry file already declares, keeping an input until its last package is removed, and `nixbox flake remove`.
