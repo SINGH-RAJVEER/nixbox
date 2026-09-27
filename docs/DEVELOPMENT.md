@@ -238,7 +238,7 @@ Do not describe a local commit as pushed. Compare `dev`, `master`, and their rem
 Published crates must use one version across the workspace. Before merging a release into `master`:
 
 1. Choose the next semantic version and replace `workspace.package.version` in the root manifest.
-2. Update every internal dependency version in `crates/nixbox-core/Cargo.toml`, `crates/nixbox-tui/Cargo.toml`, and `crates/nixbox/Cargo.toml`.
+2. Update every internal dependency version in the crate manifests to match the workspace version, including `nixbox-gui` and the `nixbox-core` test dependency.
 3. Regenerate `Cargo.lock` with the pinned development toolchain.
 4. Move the current `Unreleased` notes to a dated version heading and add a fresh empty `Unreleased` section.
 5. Run `just ci`, `nix flake check`, and a release build.
@@ -253,7 +253,7 @@ The `publish` job declares `needs: test` and is restricted to `push` events, so 
 
 The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell runs nightly while this workflow runs stable, so a lint can fire in one and not the other. Run the gate on stable before a release if the local shell is on a different channel.
 
-The current `dev` manifest says `0.2.4`. Bump it again before the next merge, because publishing skips any version that already exists on crates.io.
+Before merging a release into `master`, confirm the workspace version is newer than every published crate version. Publishing skips a version that already exists on crates.io.
 
 Nothing after `0.2.0` reached crates.io before `0.2.3`: the `0.2.1` and `0.2.2` publishes both failed on an expired token, which is why `nixbox-core` had no released version at all despite two attempts. A failed publish leaves no trace on crates.io, so a version that failed to upload can be reused; a version that uploaded cannot, even after a yank.
 

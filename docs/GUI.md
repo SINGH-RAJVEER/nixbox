@@ -4,10 +4,10 @@
 
 ## Installing
 
-The GUI is Linux only for now and is not on crates.io. Install it from the flake:
+The GUI is Linux only for now and is not on crates.io. Until this version reaches the default branch, install it from `dev`:
 
 ```sh
-nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
+nix profile install github:SINGH-RAJVEER/nixbox/dev#nixbox-gui
 ```
 
 or add `nixbox-gui` from the flake's overlay to `environment.systemPackages` or `home.packages`. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.

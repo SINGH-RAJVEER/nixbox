@@ -19,9 +19,9 @@ name = "nixbox-gui"
 path = "src/main.rs"
 
 [dependencies]
-nixbox-core = { path = "../nixbox-core", version = "0.2.4" }
-nixbox-config = { path = "../nixbox-config", version = "0.2.4" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.4" }
+nixbox-core = { path = "../nixbox-core", version = "0.2.5" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.5" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.5" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -31,4 +31,4 @@ gpui-kit = "0.6.6"
 
 [dev-dependencies]
 gpui-kit = { version = "0.6.6", features = ["test-support"] }
-nixbox-core = { path = "../nixbox-core", version = "0.2.4", features = ["test-util"] }
+nixbox-core = { path = "../nixbox-core", version = "0.2.5", features = ["test-util"] }

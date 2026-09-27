@@ -4321,7 +4321,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nixbox"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nixbox-cmd",
  "tokio",
@@ -4329,7 +4329,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-cli"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "nixbox-cmd",
  "tokio",
@@ -4337,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-cmd"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -4357,7 +4357,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-config"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "directories",
@@ -4367,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-core"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "directories",
@@ -4380,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-gui"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "gpui-kit",
@@ -4394,7 +4394,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-nix"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "libc",
@@ -4407,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-tui"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "crossterm",
