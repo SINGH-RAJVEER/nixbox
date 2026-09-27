@@ -17,7 +17,7 @@ pub(super) fn draw_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Tab::Installed => (&app.installed_input, "search installed applications"),
         _ => (&app.input, "search nixpkgs"),
     };
-    let (mode_label, mode_style) = match (app.engine.config.input_mode, input.mode()) {
+    let (mode_label, mode_style) = match (app.session.engine.config.input_mode, input.mode()) {
         (InputMode::Normal, _) => (" NORMAL ", t.title_style()),
         (InputMode::Vim, VimMode::Insert) => (" INSERT ", t.title_style()),
         (InputMode::Vim, VimMode::Normal) => (" NORMAL ", dim),
@@ -114,12 +114,12 @@ pub(super) fn draw_tab_strip(f: &mut Frame, area: Rect, app: &App) {
         let is_active = *tab == app.tab;
 
         let mut label = tab.label().to_string();
-        if matches!(tab, Tab::Building) && app.build_in_progress {
+        if matches!(tab, Tab::Building) && app.session.is_building() {
             let spin = SPINNER[app.spinner_frame % SPINNER.len()];
             label = format!("{} {}", spin, label);
         }
-        if matches!(tab, Tab::Queue) && !app.queue.is_empty() {
-            label = format!("{} ({})", label, app.queue.len());
+        if matches!(tab, Tab::Queue) && !app.session.queue.is_empty() {
+            label = format!("{} ({})", label, app.session.queue.len());
         }
 
         let style = if is_active { t.selection_style() } else { dim };
@@ -172,30 +172,32 @@ fn context_keys(app: &App) -> &'static str {
     match app.mode {
         Mode::SettingsSelect
             if app.settings_page == SettingsPage::Main
-                && app.engine.config.input_mode == InputMode::Normal =>
+                && app.session.engine.config.input_mode == InputMode::Normal =>
         {
             "↑↓ select  ↵ open  esc close"
         }
-        Mode::SettingsSelect if app.engine.config.input_mode == InputMode::Normal => {
+        Mode::SettingsSelect if app.session.engine.config.input_mode == InputMode::Normal => {
             "↑↓ select  ↵ confirm  esc back"
         }
         Mode::SettingsSelect if app.settings_page == SettingsPage::Main => {
             "↑↓/j/k select  ↵ open  esc close"
         }
         Mode::SettingsSelect => "↑↓/j/k select  ↵ confirm  esc back",
-        Mode::Browsing if app.engine.config.input_mode == InputMode::Normal => match app.tab {
-            Tab::Search => {
-                "type  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ↵ install  ctrl-s settings"
+        Mode::Browsing if app.session.engine.config.input_mode == InputMode::Normal => {
+            match app.tab {
+                Tab::Search => {
+                    "type  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ↵ install  ctrl-s settings"
+                }
+                Tab::Flakes => "type  ←→ cursor  ↑↓ results  Enter install  tab/shift-tab tabs",
+                Tab::Installed => {
+                    "type to filter  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ctrl-s settings"
+                }
+                Tab::Building if app.session.is_building() => {
+                    "c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
+                }
+                Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
             }
-            Tab::Flakes => "type  ←→ cursor  ↑↓ results  Enter install  tab/shift-tab tabs",
-            Tab::Installed => {
-                "type to filter  ←→ cursor  ↑↓ results  tab/shift-tab tabs  ctrl-s settings"
-            }
-            Tab::Building if app.build_in_progress => {
-                "c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
-            }
-            Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
-        },
+        }
         Mode::Browsing => match app.tab {
             Tab::Search => match app.input.mode() {
                 VimMode::Insert => {
@@ -230,7 +232,7 @@ fn context_keys(app: &App) -> &'static str {
                     "h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
                 }
             },
-            Tab::Building if app.build_in_progress => {
+            Tab::Building if app.session.is_building() => {
                 "c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
             }
             Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",

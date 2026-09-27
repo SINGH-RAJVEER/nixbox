@@ -48,11 +48,18 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
                 format!(
                     "  {:<12} {}  ›",
                     "Input mode",
-                    app.engine.config.input_mode.label()
+                    app.session.engine.config.input_mode.label()
                 ),
                 format!("  {:<12} {}  ›", "Theme", theme::ALL[app.theme_index].name),
-                format!("  {:<12} {}  ›", "Target", app.engine.config.target.label()),
-                format!("  {:<12} {}  ›", "Channel", app.engine.config.channel),
+                format!(
+                    "  {:<12} {}  ›",
+                    "Target",
+                    app.session.engine.config.target.label()
+                ),
+                format!(
+                    "  {:<12} {}  ›",
+                    "Channel", app.session.engine.config.channel
+                ),
             ],
             selected,
         ),
@@ -60,7 +67,9 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
             " Input Mode ",
             INPUT_MODES
                 .iter()
-                .map(|mode| option_label(mode.label(), *mode == app.engine.config.input_mode))
+                .map(|mode| {
+                    option_label(mode.label(), *mode == app.session.engine.config.input_mode)
+                })
                 .collect(),
             selected,
         ),
@@ -77,7 +86,9 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
             " Target ",
             TARGETS
                 .iter()
-                .map(|target| option_label(target.label(), *target == app.engine.config.target))
+                .map(|target| {
+                    option_label(target.label(), *target == app.session.engine.config.target)
+                })
                 .collect(),
             selected,
         ),
@@ -85,7 +96,7 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
             " Channel ",
             CHANNELS
                 .iter()
-                .map(|channel| option_label(channel, *channel == app.engine.config.channel))
+                .map(|channel| option_label(channel, *channel == app.session.engine.config.channel))
                 .collect(),
             selected,
         ),

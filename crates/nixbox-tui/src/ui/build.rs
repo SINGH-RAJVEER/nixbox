@@ -8,7 +8,7 @@ use crate::app::App;
 
 pub(super) fn draw_build_body(f: &mut Frame, area: Rect, app: &App) {
     let t = app.theme();
-    let title = match app.current_op_label.as_ref() {
+    let title = match app.session.build_label() {
         Some(label) => format!("Build output  ·  {}", label),
         None => "Build output".to_string(),
     };
@@ -17,8 +17,8 @@ pub(super) fn draw_build_body(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let log_height = inner.height as usize;
-    let start = app.log.len().saturating_sub(log_height);
-    let text: Vec<Line> = app.log[start..]
+    let start = app.session.log.len().saturating_sub(log_height);
+    let text: Vec<Line> = app.session.log[start..]
         .iter()
         .map(|l| Line::from(l.clone()))
         .collect();

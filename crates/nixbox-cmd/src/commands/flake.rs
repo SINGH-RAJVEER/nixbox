@@ -60,6 +60,20 @@ pub enum Action {
         #[command(flatten)]
         apply: ApplyOpts,
     },
+
+    /// Move an existing hand-declared flake package into nixbox management.
+    Migrate {
+        /// Output as `input#package`; omit when using `--all`.
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        output: Option<String>,
+
+        /// Move every eligible flake package for the active target.
+        #[arg(long, short = 'a')]
+        all: bool,
+
+        #[command(flatten)]
+        apply: ApplyOpts,
+    },
 }
 
 pub async fn run(action: &Action, global: &GlobalArgs) -> Result<ExitCode> {
@@ -69,7 +83,69 @@ pub async fn run(action: &Action, global: &GlobalArgs) -> Result<ExitCode> {
         Action::List => list(global),
         Action::Add { repo, apply } => add(repo, apply, global).await,
         Action::Remove { repo, apply } => remove(repo, apply, global).await,
+        Action::Migrate { output, all, apply } => {
+            migrate(output.as_deref(), *all, apply, global).await
+        }
     }
+}
+
+async fn migrate(
+    output: Option<&str>,
+    all: bool,
+    opts: &ApplyOpts,
+    global: &GlobalArgs,
+) -> Result<ExitCode> {
+    let mut engine = global.engine()?;
+    let scope = engine.config.target;
+    let eligible: Vec<_> = engine
+        .flakes
+        .iter()
+        .filter(|flake| flake.scope == scope && flake.migratable())
+        .collect();
+    let selected: Vec<_> = if all {
+        eligible
+    } else {
+        let name = output.unwrap_or_default();
+        let flake = eligible
+            .into_iter()
+            .find(|flake| flake.name() == name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{name} is not a migratable flake package for {}",
+                    target_name(scope)
+                )
+            })?;
+        vec![flake]
+    };
+    if selected.is_empty() {
+        eprintln!("Nothing to migrate for {}.", target_name(scope));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let summary = selected
+        .iter()
+        .map(|flake| format!("migrate {} [{}]", flake.name(), scope.tag()))
+        .collect();
+    let ops = selected
+        .into_iter()
+        .filter_map(|flake| match &flake.output {
+            FlakeOutput::Package(package) => Some(Op::MigrateFlakePackage {
+                input: flake.input.clone(),
+                package: package.clone(),
+                scope,
+            }),
+            FlakeOutput::Module(_) => None,
+        })
+        .collect();
+    execute(
+        &mut engine,
+        Plan {
+            scope,
+            ops,
+            summary,
+        },
+        opts,
+    )
+    .await
 }
 
 #[derive(Serialize)]

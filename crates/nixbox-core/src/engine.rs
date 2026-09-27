@@ -218,6 +218,9 @@ impl Engine {
                 self.external_packages
                     .retain(|ep| !(scope_matches(ep.scope, scope) && removed.contains(&ep.name)));
             }
+            Op::MigrateFlakePackage { input, package, .. } => {
+                return self.migrate_flake_package(input, package, scope, reporter);
+            }
         }
 
         let managed = self.write_manifest(scope)?;

@@ -10,11 +10,8 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Args;
 use nixbox_config::Target;
-use nixbox_core::{
-    Engine, HOME_FALLBACK_NOTE, InProgress, Op, PersistedState, Reporter,
-    rebuild::resolve as resolve_rebuild,
-};
-use nixbox_nix::build::{BuildEvent, rebuild};
+use nixbox_core::{Engine, Escalation, InProgress, Op, PersistedState, Reporter, rebuild};
+use nixbox_nix::build::BuildEvent;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::cli::EXIT_FAILURE;
@@ -139,25 +136,15 @@ fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
 /// pick that up instead of leaving it to be noticed by accident.
 pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> Result<ExitCode> {
     mark_in_progress(scope, label);
-    let config_dir = engine.config.home_manager_dir();
-    let command = resolve_rebuild(&config_dir, scope).await;
-    if command.via_nixos_fallback {
-        eprintln!("{HOME_FALLBACK_NOTE}");
-    }
-    eprintln!("$ {}", command.display());
-
     let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
     let (cancel_tx, cancel_rx) = oneshot::channel();
-    let program = command.program.clone();
-    let args = command.args.clone();
-    let task = tokio::spawn(async move {
-        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        if let Err(e) = rebuild(&program, &borrowed, build_tx.clone(), cancel_rx).await {
-            let _ = build_tx
-                .send(BuildEvent::Finished(Err(e.to_string())))
-                .await;
-        }
-    });
+    let task = tokio::spawn(rebuild::run(
+        engine.config.home_manager_dir(),
+        scope,
+        Escalation::Terminal,
+        build_tx,
+        cancel_rx,
+    ));
 
     let mut cancel = Some(cancel_tx);
     let mut outcome = Outcome::Succeeded;

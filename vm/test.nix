@@ -14,9 +14,14 @@ testers.runNixOSTest {
 
 	node.specialArgs = { inherit nixbox nixboxCli nixpkgsFlake; };
 
-	nodes.machine = {
-		imports = [ ./host.nix ];
-	};
+	nodes.machine =
+		{ pkgs, ... }:
+		{
+			imports = [ ./host.nix ];
+			# Gives the check a terminal to run the TUI in and read it back
+			# from. Kept out of host.nix, which the interactive VM shares.
+			environment.systemPackages = [ pkgs.tmux ];
+		};
 
 	testScript = builtins.readFile ./test-script.py;
 }

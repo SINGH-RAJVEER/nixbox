@@ -1,5 +1,5 @@
 [package]
-name = "nixbox-tui"
+name = "nixbox-gui"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,22 +9,26 @@ homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Ratatui front-end (search/build views, theming) for the nixbox TUI."
+description = "Desktop front-end for nixbox, built on gpui"
+# Not on crates.io until it has had real use; install it from the flake.
+publish = false
+
+[[bin]]
+# Its own name, like `nixbox-cli`, so it can share a profile with `nixbox`.
+name = "nixbox-gui"
+path = "src/main.rs"
 
 [dependencies]
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.5" }
 nixbox-core = { path = "../nixbox-core", version = "0.2.5" }
 nixbox-config = { path = "../nixbox-config", version = "0.2.5" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.5" }
 anyhow = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true }
-tui-input = { workspace = true }
 tokio = { workspace = true }
-futures = { workspace = true }
 tracing = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-directories = { workspace = true }
+tracing-subscriber = { workspace = true }
+# One facade over gpui, gpui-component, and the Lucide icons, pinned together.
+gpui-kit = "0.6.6"
 
 [dev-dependencies]
+gpui-kit = { version = "0.6.6", features = ["test-support"] }
 nixbox-core = { path = "../nixbox-core", version = "0.2.5", features = ["test-util"] }

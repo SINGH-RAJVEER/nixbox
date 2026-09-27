@@ -184,6 +184,14 @@ reset
 
 If ordinary errors leave the terminal broken, that is a cleanup bug because `run()` is designed to restore raw mode and the alternate screen after the event loop returns.
 
+## The desktop GUI does not open
+
+`nixbox-gui` needs a Vulkan driver and the Wayland or X11 client libraries at runtime. The flake package puts them on `LD_LIBRARY_PATH`; a binary built with Cargo outside the devenv shell does not get that wrapper. Run it from `devenv shell`, or install the flake package. `RUST_LOG=warn nixbox-gui` prints the driver the renderer tried.
+
+## The GUI rebuild fails with a sudo error
+
+A system rebuild from the GUI runs `sudo -A`, and sudo starts `nixbox-gui` again to ask for the password. Pressing Cancel in that window makes sudo fail on purpose. If no password window appears at all, check that the `nixbox-gui` executable is still at the path it was started from, and that your sudo configuration does not disable askpass.
+
 ## Increase logging
 
 Run with a tracing filter:

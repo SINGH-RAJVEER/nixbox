@@ -1,168 +1,52 @@
-use std::{collections::VecDeque, time::Duration};
+use std::time::Duration;
 
-use anyhow::{Result, anyhow};
-use directories::BaseDirs;
+use anyhow::Result;
 use nixbox_config::Target;
 use nixbox_core::{
-    HOME_FALLBACK_NOTE, InstalledFlake, LogReporter, rebuild::resolve as resolve_rebuild,
+    Enqueued, InstalledFlake,
+    search::{catalog_cache_path, search_packages},
 };
 use nixbox_nix::{
-    build::{BuildEvent, rebuild},
     flakes::{fetch_flake_details, search_flakes},
     scan::ScanTarget,
     search::PackageCatalog,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 use crate::app::{App, AppEvent, InstalledCursor, QueuedOp, Tab};
-use crate::state::InProgress;
-
-pub(crate) fn spawn_rebuild(
-    app: &mut App,
-    tx: &mpsc::Sender<AppEvent>,
-    scope: Target,
-    action_label: String,
-) {
-    app.build_in_progress = true;
-    let (cancel_tx, mut cancel_rx) = oneshot::channel();
-    app.build_cancel = Some(cancel_tx);
-    app.current_op_label = Some(action_label.clone());
-    app.in_progress_op = Some(InProgress {
-        scope,
-        label: action_label.clone(),
-    });
-    app.log.clear();
-    app.status = format!("{}...", action_label);
-    app.persist();
-
-    let config_dir = app.engine.config.home_manager_dir();
-    let app_tx = tx.clone();
-    tokio::spawn(async move {
-        let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
-        let forward_tx = app_tx.clone();
-        let forwarder = tokio::spawn(async move {
-            while let Some(ev) = build_rx.recv().await {
-                if forward_tx.send(AppEvent::Build(ev)).await.is_err() {
-                    break;
-                }
-            }
-        });
-        // Resolving a home-manager rebuild evaluates the flake, which is slow
-        // enough to be worth racing against the cancel signal.
-        let command = tokio::select! {
-            command = resolve_rebuild(&config_dir, scope) => command,
-            _ = &mut cancel_rx => {
-                let _ = build_tx.send(BuildEvent::Cancelled).await;
-                drop(build_tx);
-                let _ = forwarder.await;
-                return;
-            }
-        };
-        if command.via_nixos_fallback {
-            let _ = app_tx
-                .send(AppEvent::Build(BuildEvent::Line(HOME_FALLBACK_NOTE.into())))
-                .await;
-        }
-        if let Err(e) = rebuild(
-            &command.program,
-            &command.arg_refs(),
-            build_tx.clone(),
-            cancel_rx,
-        )
-        .await
-        {
-            let _ = build_tx
-                .send(BuildEvent::Finished(Err(e.to_string())))
-                .await;
-        }
-        drop(build_tx);
-        let _ = forwarder.await;
-    });
-}
 
 pub(crate) fn cancel_build(app: &mut App) {
-    if !app.build_in_progress {
-        return;
-    }
-    let Some(cancel) = app.build_cancel.take() else {
-        return;
-    };
-    if cancel.send(()).is_ok() {
+    if app.session.cancel_build() {
         app.status = "Cancelling build...".into();
     }
 }
 
-pub(crate) fn drain_queue(app: &mut App, tx: &mpsc::Sender<AppEvent>) {
-    if app.build_in_progress {
-        return;
-    }
-    let Some(scope) = app.queue.front().map(QueuedOp::scope) else {
-        app.persist();
-        return;
-    };
-
-    let batch = take_queued_scope(app, scope);
-    let mut applied = 0;
-    for op in batch {
-        let label = op.label();
-        match apply_op_to_manifest(app, &op) {
-            Ok(()) => applied += 1,
-            Err(e) => app
-                .log
-                .push(format!("{}: failed to write manifest: {}", label, e)),
+/// Hands `op` to the session and reports what became of it: started, queued
+/// behind the running rebuild, or already waiting.
+fn enqueue(app: &mut App, op: QueuedOp, queued: String, duplicate: String) {
+    match app.session.enqueue(op) {
+        Enqueued::Duplicate => app.status = duplicate,
+        Enqueued::Queued => {
+            app.status = queued;
+            app.tab = Tab::Queue;
+        }
+        Enqueued::Started(label) => {
+            app.status = format!("{label}...");
+            app.tab = Tab::Building;
+        }
+        Enqueued::NotWritten => {
+            app.status = "The queued changes could not be written; see the build log.".into();
+            app.tab = Tab::Building;
         }
     }
-    if applied == 0 {
-        app.status = format!("No queued {} changes could be written.", scope.label());
-        app.persist();
-        drain_queue(app, tx);
-        return;
-    }
-    if !app.visible_tabs().contains(&app.tab) {
-        app.tab = Tab::Search;
-    }
-    let label = format!("apply {} queued {} change(s)", applied, scope.label(),);
-    spawn_rebuild(app, tx, scope, label);
-}
-
-/// Removes every pending operation for `scope`, preserving the order of work
-/// for any other scope that requires a separate rebuild command.
-fn take_queued_scope(app: &mut App, scope: Target) -> Vec<QueuedOp> {
-    let mut batch = Vec::new();
-    let mut remaining = VecDeque::new();
-    while let Some(op) = app.queue.pop_front() {
-        if op.scope() == scope {
-            batch.push(op);
-        } else {
-            remaining.push_back(op);
-        }
-    }
-    app.queue = remaining;
-    batch
-}
-
-/// Hands one queued op to the engine and folds whatever it reports into the
-/// build log, then keeps the Installed cursor inside the new bounds.
-fn apply_op_to_manifest(app: &mut App, op: &QueuedOp) -> Result<()> {
-    let mut reporter = LogReporter::new();
-    let result = app.engine.apply(op, &mut reporter);
-    app.log.extend(reporter.into_lines());
-    result?;
-
-    let total = app.installed_total();
-    if total == 0 {
-        app.installed_selected = 0;
-    } else if app.installed_selected >= total {
-        app.installed_selected = total - 1;
-    }
-    Ok(())
+    app.clamp_installed_selection();
 }
 
 pub(crate) async fn install_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
     if app.package_catalog.as_ref().is_some_and(|catalog| {
         !catalog
-            .is_current_for(&app.engine.config.home_manager_dir())
+            .is_current_for(&app.session.engine.config.home_manager_dir())
             .unwrap_or(false)
     }) {
         app.package_catalog = None;
@@ -176,91 +60,31 @@ pub(crate) async fn install_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>)
         return Ok(());
     };
 
-    let scope = app.engine.config.target;
-    let already_tracked = app.manifest_for(scope).packages.contains(&hit.attr);
-    let already_queued = app.queue.iter().any(|op| match op {
-        QueuedOp::Install { hit: h, scope: s } => *s == scope && h.attr == hit.attr,
-        _ => false,
-    });
-    if already_tracked || already_queued {
-        app.status = format!("{} already tracked or queued.", hit.attr);
+    let scope = app.session.engine.config.target;
+    let attr = hit.attr.clone();
+    if app.manifest_for(scope).packages.contains(&attr) {
+        app.status = format!("{attr} already tracked or queued.");
         return Ok(());
     }
-
-    let attr = hit.attr.clone();
-    app.queue.push_back(QueuedOp::Install { hit, scope });
-    app.persist();
-    if app.build_in_progress {
-        app.status = format!("Queued install: {}.", attr);
-        app.tab = Tab::Queue;
-    } else {
-        app.tab = Tab::Building;
-        drain_queue(app, tx);
-    }
+    enqueue(
+        app,
+        QueuedOp::Install { hit, scope },
+        format!("Queued install: {attr}."),
+        format!("{attr} already tracked or queued."),
+    );
     Ok(())
 }
 
 pub(crate) async fn install_selected_flake(
     app: &mut App,
-    tx: &mpsc::Sender<AppEvent>,
+    _tx: &mpsc::Sender<AppEvent>,
 ) -> Result<()> {
     let Some(details) = app.flake_details.clone() else {
         app.status = "Wait for flake details before installing.".into();
         return Ok(());
     };
-    let scope = app.engine.config.target;
-    if app.queue.iter().any(|op| {
-        matches!(
-            op,
-            QueuedOp::InstallFlake { repo, scope: queued_scope, .. }
-                if repo == &details.repo && *queued_scope == scope
-        ) || matches!(
-            op,
-            QueuedOp::InstallFlakePackage { repo, scope: queued_scope, .. }
-                if repo == &details.repo && *queued_scope == scope
-        )
-    }) {
-        app.status = format!("{} is already queued.", details.repo);
-        return Ok(());
-    }
-
-    let package = details.packages.first().map(|package| package.attr.clone());
-    let op = match scope {
-        // A Home Manager module does nothing until its options are set, so
-        // the package goes straight into `home.packages` whenever there is one.
-        Target::HomeManager => package
-            .map(|package| QueuedOp::InstallFlakePackage {
-                repo: details.repo.clone(),
-                package,
-                scope,
-            })
-            .or_else(|| {
-                details
-                    .home_manager_module
-                    .clone()
-                    .map(|module| QueuedOp::InstallFlake {
-                        repo: details.repo.clone(),
-                        module,
-                        scope,
-                    })
-            }),
-        Target::NixosSystem => details
-            .nixos_module
-            .clone()
-            .map(|module| QueuedOp::InstallFlake {
-                repo: details.repo.clone(),
-                module,
-                scope,
-            })
-            .or_else(|| {
-                package.map(|package| QueuedOp::InstallFlakePackage {
-                    repo: details.repo.clone(),
-                    package,
-                    scope,
-                })
-            }),
-    };
-    let Some(op) = op else {
+    let scope = app.session.engine.config.target;
+    let Some(op) = QueuedOp::install_flake(&details, scope) else {
         app.status = format!(
             "{} has no installable package for this system or default {} module.",
             details.repo,
@@ -268,29 +92,26 @@ pub(crate) async fn install_selected_flake(
         );
         return Ok(());
     };
-    app.queue.push_back(op);
-    app.persist();
-    if app.build_in_progress {
-        app.status = format!("Queued flake install: {}.", details.repo);
-        app.tab = Tab::Queue;
-    } else {
-        app.tab = Tab::Building;
-        drain_queue(app, tx);
-    }
+    enqueue(
+        app,
+        op,
+        format!("Queued flake install: {}.", details.repo),
+        format!("{} is already queued.", details.repo),
+    );
     Ok(())
 }
 
-pub(crate) async fn uninstall_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
-    let cursor = match app.installed_cursor() {
-        Some(c) => c,
-        None => {
-            app.status = "No selection.".into();
-            return Ok(());
-        }
+pub(crate) async fn uninstall_selected(app: &mut App, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
+    let Some(cursor) = app.installed_cursor() else {
+        app.status = "No selection.".into();
+        return Ok(());
     };
     let pkg = match cursor {
         InstalledCursor::Managed(p) => p,
-        InstalledCursor::Flake(flake) => return uninstall_flake(app, tx, flake),
+        InstalledCursor::Flake(flake) => {
+            uninstall_flake(app, flake);
+            return Ok(());
+        }
         InstalledCursor::External(ep) => {
             app.status = format!(
                 "{} is external (in {}) — press m to migrate first.",
@@ -301,37 +122,22 @@ pub(crate) async fn uninstall_selected(app: &mut App, tx: &mpsc::Sender<AppEvent
     };
 
     let scope = pkg.scope;
-    if app.queue.iter().any(|op| match op {
-        QueuedOp::Uninstall { name, scope: s } => *s == scope && *name == pkg.name,
-        _ => false,
-    }) {
-        app.status = format!("{} already queued for removal.", pkg.name);
-        return Ok(());
-    }
-
-    let name = pkg.name.clone();
-    app.queue.push_back(QueuedOp::Uninstall {
-        name: name.clone(),
-        scope,
-    });
-    app.persist();
-    if app.build_in_progress {
-        app.status = format!("Queued remove: {} [{}].", name, scope.tag());
-        app.tab = Tab::Queue;
-    } else {
-        app.tab = Tab::Building;
-        drain_queue(app, tx);
-    }
+    let name = pkg.name;
+    enqueue(
+        app,
+        QueuedOp::Uninstall {
+            name: name.clone(),
+            scope,
+        },
+        format!("Queued remove: {} [{}].", name, scope.tag()),
+        format!("{name} already queued for removal."),
+    );
     Ok(())
 }
 
 /// Queues removal of one flake output. The engine takes it out of whichever
 /// file declares it and drops the flake's input once nothing uses it.
-fn uninstall_flake(
-    app: &mut App,
-    tx: &mpsc::Sender<AppEvent>,
-    flake: InstalledFlake,
-) -> Result<()> {
+fn uninstall_flake(app: &mut App, flake: InstalledFlake) {
     let name = flake.name();
     if !flake.removable {
         app.status = format!(
@@ -339,43 +145,25 @@ fn uninstall_flake(
             name,
             flake.declared_in.as_deref().unwrap_or("your config"),
         );
-        return Ok(());
+        return;
     }
     let scope = flake.scope;
-    if app.queue.iter().any(|op| {
-        matches!(
-            op,
-            QueuedOp::UninstallFlakeOutput { input, output, scope: s }
-                if *s == scope && *input == flake.input && *output == flake.output
-        )
-    }) {
-        app.status = format!("{} already queued for removal.", name);
-        return Ok(());
-    }
-
-    app.queue.push_back(QueuedOp::UninstallFlakeOutput {
-        input: flake.input,
-        output: flake.output,
-        scope,
-    });
-    app.persist();
-    if app.build_in_progress {
-        app.status = format!("Queued remove: {} [{}].", name, scope.tag());
-        app.tab = Tab::Queue;
-    } else {
-        app.tab = Tab::Building;
-        drain_queue(app, tx);
-    }
-    Ok(())
+    enqueue(
+        app,
+        QueuedOp::UninstallFlakeOutput {
+            input: flake.input,
+            output: flake.output,
+            scope,
+        },
+        format!("Queued remove: {} [{}].", name, scope.tag()),
+        format!("{name} already queued for removal."),
+    );
 }
 
-pub(crate) async fn migrate_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
-    let cursor = match app.installed_cursor() {
-        Some(c) => c,
-        None => {
-            app.status = "No selection.".into();
-            return Ok(());
-        }
+pub(crate) async fn migrate_selected(app: &mut App, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
+    let Some(cursor) = app.installed_cursor() else {
+        app.status = "No selection.".into();
+        return Ok(());
     };
     let ep = match cursor {
         InstalledCursor::External(ep) => ep,
@@ -384,10 +172,25 @@ pub(crate) async fn migrate_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>)
             return Ok(());
         }
         InstalledCursor::Flake(flake) => {
-            app.status = format!(
-                "{} comes from a flake and is not migrated — press d to uninstall.",
-                flake.name()
-            );
+            let name = flake.name();
+            if !flake.migratable() {
+                app.status = format!(
+                    "{name} cannot be migrated automatically. It needs a dedicated package line and a GitHub input."
+                );
+                return Ok(());
+            }
+            if let nixbox_nix::manifest::FlakeOutput::Package(package) = flake.output {
+                enqueue(
+                    app,
+                    QueuedOp::MigrateFlakePackage {
+                        input: flake.input,
+                        package,
+                        scope: flake.scope,
+                    },
+                    format!("Queued migrate: {name} [{}].", flake.scope.tag()),
+                    format!("{name} already queued for migration."),
+                );
+            }
             return Ok(());
         }
     };
@@ -402,69 +205,47 @@ pub(crate) async fn migrate_selected(app: &mut App, tx: &mpsc::Sender<AppEvent>)
         ScanTarget::HomeManager => Target::HomeManager,
         ScanTarget::Nixos => Target::NixosSystem,
     };
-    let name = ep.name.clone();
-    if app.queue.iter().any(|op| match op {
-        QueuedOp::Migrate { names, scope: s } => *s == scope && names.contains(&name),
-        _ => false,
-    }) {
-        app.status = format!("{} already queued for migration.", name);
-        return Ok(());
-    }
-    app.queue.push_back(QueuedOp::Migrate {
-        names: vec![name.clone()],
-        scope,
-    });
-    app.persist();
-    if app.build_in_progress {
-        app.status = format!("Queued migrate: {} [{}].", name, scope.tag());
-        app.tab = Tab::Queue;
-    } else {
-        app.tab = Tab::Building;
-        drain_queue(app, tx);
-    }
+    let name = ep.name;
+    enqueue(
+        app,
+        QueuedOp::Migrate {
+            names: vec![name.clone()],
+            scope,
+        },
+        format!("Queued migrate: {} [{}].", name, scope.tag()),
+        format!("{name} already queued for migration."),
+    );
     Ok(())
 }
 
-pub(crate) async fn migrate_all(app: &mut App, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
-    let mut hm: Vec<String> = Vec::new();
-    let mut nx: Vec<String> = Vec::new();
-    for ep in &app.engine.external_packages {
-        if !ep.migratable {
-            continue;
-        }
-        match ep.scope {
-            ScanTarget::HomeManager => hm.push(ep.name.clone()),
-            ScanTarget::Nixos => nx.push(ep.name.clone()),
-        }
-    }
-    if hm.is_empty() && nx.is_empty() {
-        app.status = "No migratable external packages found.".into();
+pub(crate) async fn migrate_all(app: &mut App, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
+    let ops = app.session.migrate_all_ops();
+    if ops.is_empty() {
+        app.status = "No external packages or flake outputs left to migrate.".into();
         return Ok(());
     }
-    let hm_count = hm.len();
-    let nx_count = nx.len();
-    if !hm.is_empty() {
-        app.queue.push_back(QueuedOp::Migrate {
-            names: hm,
-            scope: Target::HomeManager,
-        });
-    }
-    if !nx.is_empty() {
-        app.queue.push_back(QueuedOp::Migrate {
-            names: nx,
-            scope: Target::NixosSystem,
-        });
-    }
-    app.persist();
-    let summary = format!("Queued migrate-all ({} hm, {} nixos).", hm_count, nx_count,);
-    if app.build_in_progress {
-        app.status = summary;
-        app.tab = Tab::Queue;
+    let count = |target: Target| {
+        ops.iter()
+            .filter_map(|op| match op {
+                QueuedOp::Migrate { names, scope } if *scope == target => Some(names.len()),
+                QueuedOp::MigrateFlakePackage { scope, .. } if *scope == target => Some(1),
+                _ => None,
+            })
+            .sum::<usize>()
+    };
+    let summary = format!(
+        "Queued migrate-all ({} hm, {} nixos).",
+        count(Target::HomeManager),
+        count(Target::NixosSystem),
+    );
+    let outcome = app.session.enqueue_all(ops);
+    app.tab = if matches!(outcome, Enqueued::Queued) {
+        Tab::Queue
     } else {
-        app.status = summary;
-        app.tab = Tab::Building;
-        drain_queue(app, tx);
-    }
+        Tab::Building
+    };
+    app.status = summary;
+    app.clamp_installed_selection();
     Ok(())
 }
 
@@ -473,15 +254,11 @@ pub(crate) fn prepare_package_catalog(app: &mut App, tx: mpsc::Sender<AppEvent>)
         task.abort();
     }
 
-    let Some(base_dirs) = BaseDirs::new() else {
+    let Some(cache_path) = catalog_cache_path() else {
         app.catalog_loading = false;
         return;
     };
-    let config_dir = app.engine.config.home_manager_dir();
-    let cache_path = base_dirs
-        .cache_dir()
-        .join("nixbox")
-        .join("package-catalog.json");
+    let config_dir = app.session.engine.config.home_manager_dir();
     app.catalog_loading = true;
     app.catalog_task = Some(tokio::spawn(async move {
         match PackageCatalog::load_or_build(&config_dir, &cache_path).await {
@@ -515,7 +292,7 @@ pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
     app.searching = true;
     app.search_epoch += 1;
     let epoch = app.search_epoch;
-    let channel = app.engine.config.channel.clone();
+    let channel = app.session.engine.config.channel.clone();
     app.latest_query = query.clone();
 
     if app.catalog_loading {
@@ -525,7 +302,7 @@ pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
 
     if app.package_catalog.as_ref().is_some_and(|catalog| {
         !catalog
-            .is_current_for(&app.engine.config.home_manager_dir())
+            .is_current_for(&app.session.engine.config.home_manager_dir())
             .unwrap_or(false)
     }) {
         app.package_catalog = None;
@@ -538,14 +315,7 @@ pub(crate) fn schedule_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
 
     app.search_task = Some(tokio::spawn(async move {
         sleep(Duration::from_millis(180)).await;
-        let result = if let Some(catalog) = catalog {
-            tokio::task::spawn_blocking(move || catalog.search(&query))
-                .await
-                .map_err(|error| anyhow!("joining package catalog search: {error}"))
-        } else {
-            nixbox_nix::search::search(&channel, &query).await
-        };
-        match result {
+        match search_packages(catalog, &channel, query).await {
             Ok(hits) => {
                 let _ = tx.send(AppEvent::SearchDone { epoch, hits }).await;
             }
@@ -648,11 +418,7 @@ mod tests {
     use crate::app::App;
     use crate::vim::VimInput;
     use nixbox_config::Config;
-    use nixbox_nix::{
-        flakes::{FlakeDetails, FlakePackage},
-        manifest::Manifest,
-        search::SearchHit,
-    };
+    use nixbox_nix::{manifest::Manifest, search::SearchHit};
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::timeout;
 
@@ -731,79 +497,28 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_build_signals_active_rebuild() {
-        let (cancel_tx, cancel_rx) = oneshot::channel();
         let mut app = test_app();
-        app.build_in_progress = true;
-        app.build_cancel = Some(cancel_tx);
+        let cancel_rx = app.session.fake_build(Target::HomeManager, "build");
 
         cancel_build(&mut app);
 
         cancel_rx.await.expect("build should be signalled");
-        assert!(app.build_cancel.is_none());
-        assert!(app.build_in_progress);
+        assert!(app.session.is_building());
         assert_eq!(app.status, "Cancelling build...");
     }
 
     #[tokio::test]
-    async fn install_flake_queues_its_preferred_package_when_no_module_exists() {
+    async fn installing_during_a_rebuild_queues_behind_it() {
         let (tx, _rx) = mpsc::channel(1);
         let mut app = test_app();
-        app.build_in_progress = true;
-        app.flake_details = Some(FlakeDetails {
-            repo: "alleneubank/bun-overlay".into(),
-            repo_url: "https://github.com/alleneubank/bun-overlay".into(),
-            path: "flake.nix".into(),
-            description: None,
-            stars: 0,
-            topics: Vec::new(),
-            homepage: None,
-            default_branch: "main".into(),
-            pushed_at: None,
-            archived: false,
-            inputs: Vec::new(),
-            outputs: vec!["packages".into()],
-            packages: vec![FlakePackage {
-                attr: "default".into(),
-                name: "bun".into(),
-                version: "1.4.2".into(),
-            }],
-            nixos_module: None,
-            home_manager_module: None,
-        });
+        let _cancel = app.session.fake_build(Target::HomeManager, "build");
+        app.results = vec![hit("ripgrep")];
 
-        install_selected_flake(&mut app, &tx).await.unwrap();
+        install_selected(&mut app, &tx).await.unwrap();
+        install_selected(&mut app, &tx).await.unwrap();
 
-        assert!(matches!(
-            app.queue.front(),
-            Some(QueuedOp::InstallFlakePackage { repo, package, scope: Target::NixosSystem })
-                if repo == "alleneubank/bun-overlay" && package == "default"
-        ));
-    }
-
-    #[test]
-    fn taking_a_scope_batches_all_of_its_pending_operations() {
-        let mut app = test_app();
-        app.queue.push_back(QueuedOp::Install {
-            hit: hit("ripgrep"),
-            scope: Target::HomeManager,
-        });
-        app.queue.push_back(QueuedOp::Install {
-            hit: hit("fd"),
-            scope: Target::NixosSystem,
-        });
-        app.queue.push_back(QueuedOp::Uninstall {
-            name: "neovim".into(),
-            scope: Target::HomeManager,
-        });
-
-        let batch = take_queued_scope(&mut app, Target::HomeManager);
-
-        assert_eq!(batch.len(), 2);
-        assert!(batch.iter().all(|op| op.scope() == Target::HomeManager));
-        assert_eq!(app.queue.len(), 1);
-        assert!(matches!(
-            app.queue.front(),
-            Some(QueuedOp::Install { hit, scope: Target::NixosSystem }) if hit.attr == "fd"
-        ));
+        assert_eq!(app.session.queue.len(), 1);
+        assert_eq!(app.tab, Tab::Queue);
+        assert_eq!(app.status, "ripgrep already tracked or queued.");
     }
 }
