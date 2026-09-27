@@ -9,23 +9,37 @@ homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Desktop front-end for nixbox, built on gpui"
+description = "Desktop GUI for NixBox, with a Nix-backed Cargo launcher"
+
+[features]
+default = []
+native = [
+	"dep:nixbox-core",
+	"dep:nixbox-config",
+	"dep:nixbox-nix",
+	"dep:anyhow",
+	"dep:tokio",
+	"dep:tracing",
+	"dep:tracing-subscriber",
+	"dep:gpui-kit",
+]
+
 [[bin]]
 # Its own name, like `nixbox-cli`, so it can share a profile with `nixbox`.
 name = "nixbox-gui"
 path = "src/main.rs"
 
 [dependencies]
-nixbox-core = { path = "../nixbox-core", version = "0.2.6" }
-nixbox-config = { path = "../nixbox-config", version = "0.2.6" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.6" }
-anyhow = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+nixbox-core = { path = "../nixbox-core", version = "0.2.7", optional = true }
+nixbox-config = { path = "../nixbox-config", version = "0.2.7", optional = true }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.7", optional = true }
+anyhow = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 # One facade over gpui, gpui-component, and the Lucide icons, pinned together.
-gpui-kit = "0.6.6"
+gpui-kit = { version = "0.6.6", optional = true }
 
 [dev-dependencies]
 gpui-kit = { version = "0.6.6", features = ["test-support"] }
-nixbox-core = { path = "../nixbox-core", version = "0.2.6", features = ["test-util"] }
+nixbox-core = { path = "../nixbox-core", version = "0.2.7", features = ["test-util"] }

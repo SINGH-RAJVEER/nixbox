@@ -4,6 +4,11 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+## 0.2.7 - 2026-09-27
+
+- Made `cargo install nixbox-gui` install a small launcher that runs the matching flake release, without requiring graphics development libraries in the Cargo build environment. Native GUI builds remain available with the `native` feature.
+- Exposed named CLI and GUI flake apps alongside the existing default app.
+
 ## 0.2.6 - 2026-09-27
 
 - Published `nixbox-gui` as a separate Linux desktop crate. It can now be installed with `cargo install nixbox-gui` when the graphics development libraries are available.

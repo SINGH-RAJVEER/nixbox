@@ -4,17 +4,26 @@
 
 ## Installing
 
-The GUI is Linux only for now. Install it from crates.io after installing the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries, plus `pkg-config`:
-
-```sh
-cargo install nixbox-gui
-```
-
-Alternatively, install it from the repository flake, which provides the runtime libraries in its wrapper:
+The GUI is Linux only for now. Install it from the repository flake to get its native libraries and runtime wrapper without setting up a build environment:
 
 ```sh
 nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
 ```
+
+You can also run it without installing it into your profile:
+
+```sh
+nix run github:SINGH-RAJVEER/nixbox#nixbox-gui
+```
+
+The crates.io package installs a small launcher that runs the matching tagged flake release. It needs Nix with flakes enabled and fetches or builds the GUI on first run, but it does not need graphics development libraries in your Cargo environment:
+
+```sh
+cargo install nixbox-gui
+nixbox-gui
+```
+
+To compile the native GUI from a checkout, use `devenv shell -- cargo run -p nixbox-gui --features native`. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
 
 To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";` and include `nixbox.packages.${pkgs.stdenv.hostPlatform.system}.nixbox-gui` in `environment.systemPackages` or `home.packages`. Here `nixbox` is the input available in the enclosing `outputs` function. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
 

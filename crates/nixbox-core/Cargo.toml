@@ -16,8 +16,8 @@ description = "Headless engine behind nixbox: manifest mutation, config wiring, 
 test-util = []
 
 [dependencies]
-nixbox-config = { path = "../nixbox-config", version = "0.2.6" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.6" }
+nixbox-config = { path = "../nixbox-config", version = "0.2.7" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.7" }
 anyhow = { workspace = true }
 directories = { workspace = true }
 serde = { workspace = true }

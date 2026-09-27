@@ -60,6 +60,9 @@
           cargoBuildFlags = [
             "--package"
             package
+          ] ++ pkgs.lib.optionals gui [
+            "--features"
+            "native"
           ];
           # A workspace test run unifies features and always enables the UI,
           # so the CLI package is tested on its own to cover the other half.
@@ -76,6 +79,8 @@
               [
                 "--package"
                 "nixbox-gui"
+                "--features"
+                "native"
               ]
             else
               [
@@ -142,13 +147,28 @@
         }
       );
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = "${self.packages.${system}.default}/bin/nixbox";
-          meta.description = "Run NixBox";
-        };
-      });
+      apps = forAllSystems (
+        system:
+        {
+          default = {
+            type = "app";
+            program = "${self.packages.${system}.default}/bin/nixbox";
+            meta.description = "Run NixBox";
+          };
+          nixbox-cli = {
+            type = "app";
+            program = "${self.packages.${system}.nixbox-cli}/bin/nixbox-cli";
+            meta.description = "Run the NixBox command line";
+          };
+        }
+        // nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
+          nixbox-gui = {
+            type = "app";
+            program = "${self.packages.${system}.nixbox-gui}/bin/nixbox-gui";
+            meta.description = "Run the NixBox desktop GUI";
+          };
+        }
+      );
 
       overlays.default = final: _prev: {
         nixbox = mkNixbox { pkgs = final; };
