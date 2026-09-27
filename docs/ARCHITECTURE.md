@@ -33,16 +33,16 @@ The workspace uses Rust edition 2024 and contains eight crates. The dependency d
 | `nixbox-nix` | Package search, package catalog, generated manifests, source scanning and migration, flake discovery and installation, rebuild command selection, output streaming, and cancellation. | None. |
 | `nixbox-core` | The headless engine: the `Op` every front-end queues, the persisted `state.json` format, manifest mutation, import wiring, external-package scanning, flake input and output installation, rebuild command selection and privilege escalation, and the `Session` that drives queued ops through rebuilds for the interactive front-ends. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
 | `nixbox-tui` | Terminal lifecycle, event handling, search scheduling, Vim input behavior, navigation, themes, and rendering. The queue and rebuilds are the `Session`'s. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
-| `nixbox-gui` | The `nixbox-gui` binary: a gpui desktop front-end over the same `Session`, and sudo's askpass helper for its system rebuilds. Not published to crates.io yet. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
+| `nixbox-gui` | The `nixbox-gui` binary: a gpui desktop front-end over the same `Session`, and sudo's askpass helper for its system rebuilds. Published separately to crates.io. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
 | `nixbox-cmd` | Clap command tree, the non-interactive commands, output rendering, tracing setup, and the call to `nixbox_tui::run` when no subcommand is given. Shared by both binaries. | `nixbox-config`, `nixbox-core`, `nixbox-nix`, and `nixbox-tui` behind the `tui` feature. |
 | `nixbox` | The `nixbox` binary: a `main` that calls `nixbox_cmd::run`, with the `tui` feature on. | `nixbox-cmd`. |
 | `nixbox-cli` | The `nixbox-cli` binary: the same `main`, with the `tui` feature off. | `nixbox-cmd`. |
 
-The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, then `nixbox-cli`. The engine sits on the two leaf libraries, both front-ends sit on the engine, and the two binaries sit on the command tree.
+The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, `nixbox-cli`, then `nixbox-gui`. The engine sits on the two leaf libraries, both front-ends sit on the engine, and the terminal binaries sit on the command tree.
 
-`nixbox-gui` is outside that order because it is not published. It is also left out of `default-members`, `just ci`, and the workspace-wide CI steps, because building it needs the graphics stack (Wayland, xkbcommon, X11, Vulkan, fontconfig); `just gui-ci` and a separate CI job cover it.
+`nixbox-gui` is left out of `default-members`, `just ci`, and the workspace-wide CLI checks because building it needs the graphics stack (Wayland, xkbcommon, X11, Vulkan, fontconfig); `just gui-ci` and a separate CI job cover it. Publishing waits for both the CLI and GUI checks.
 
-There are two published binaries rather than one binary with a switch, because crates.io lists packages and not feature combinations. `nixbox` and `nixbox-cli` are both a four-line `main` over `nixbox-cmd`; the only difference is whether they enable that crate's `tui` feature. `nixbox-cli` pulls 60 packages against `nixbox`'s 108, excluding `ratatui`, `crossterm`, `tui-input`, and `nixbox-tui` itself.
+`nixbox` and `nixbox-cli` are separate packages because crates.io lists packages and not feature combinations. Both are a four-line `main` over `nixbox-cmd`; the only difference is whether they enable that crate's `tui` feature. `nixbox-cli` excludes `ratatui`, `crossterm`, `tui-input`, and `nixbox-tui` itself. The GUI is a third binary with its own front-end.
 
 Nothing the command line needs lives in the UI crate: the theme names the settings file accepts are declared in `nixbox-config` and the persisted-state format in `nixbox-core`, each with a test in the UI crate asserting the two stay in step.
 

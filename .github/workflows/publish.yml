@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 # Publishing is not idempotent across concurrent runs: two pushes racing up
-# the seven-crate chain can each see a version as unpublished and both try to
+# the eight-crate chain can each see a version as unpublished and both try to
 # upload it. Never cancel one in flight, though, or the chain is left half
 # published.
 concurrency:
@@ -137,7 +137,7 @@ jobs:
 
   publish:
     name: Publish workspace crates
-    needs: test
+    needs: [test, gui]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
@@ -145,15 +145,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install the graphics stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig-dev libfreetype-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-dev \
+            libx11-xcb-dev libxcb1-dev libvulkan-dev
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      # nixbox-gui is not published yet, so it is left out here too.
       - name: Verify workspace
-        run: cargo check --workspace --exclude nixbox-gui --locked
+        run: cargo check --workspace --locked
 
       - name: Publish crates
         env:
@@ -164,11 +170,12 @@ jobs:
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           # Dependency order: nixbox-core sits on the two leaf libraries,
           # nixbox-cmd sits on nixbox-core and optionally nixbox-tui, and the
-          # two published binaries are both thin wrappers over nixbox-cmd.
+          # two terminal binaries are both thin wrappers over nixbox-cmd.
+          # The GUI depends on nixbox-core, nixbox-config, and nixbox-nix.
           # Each crate depends on the published version of the one before it,
           # so the order is load-bearing. cargo waits for the index after
           # each upload, which is what makes the next one resolvable.
-          crates=(nixbox-config nixbox-nix nixbox-core nixbox-tui nixbox-cmd nixbox nixbox-cli)
+          crates=(nixbox-config nixbox-nix nixbox-core nixbox-tui nixbox-cmd nixbox nixbox-cli nixbox-gui)
 
           for crate in "${crates[@]}"; do
             echo "::group::Publishing ${crate} ${version}"

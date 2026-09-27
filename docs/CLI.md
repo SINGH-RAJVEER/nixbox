@@ -86,7 +86,7 @@ NixBox publishes two binaries. They are the same program with the same subcomman
 | `cargo install nixbox` | `nixbox` | yes |
 | `cargo install nixbox-cli` | `nixbox-cli` | no |
 
-`nixbox-cli` exists for machines that will never run a UI: servers, CI, containers, and anything reached over SSH. It pulls 60 dependency packages against `nixbox`'s 108, leaving out `ratatui`, `crossterm`, and `tui-input` entirely.
+`nixbox-cli` exists for machines that will never run a UI: servers, CI, containers, and anything reached over SSH. It leaves out `ratatui`, `crossterm`, and `tui-input` entirely.
 
 The two install under different names, so one machine can have both. Everything else is identical, including `nixbox config set theme`, because the theme names live in `nixbox-config` rather than in the UI. The only visible differences are that `nixbox-cli` has no `tui` subcommand, and that running it with no subcommand prints help and exits `1` instead of opening a UI.
 

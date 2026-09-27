@@ -4,7 +4,13 @@
 
 ## Installing
 
-The GUI is Linux only for now and is not on crates.io. Install it from the repository flake:
+The GUI is Linux only for now. Install it from crates.io after installing the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries, plus `pkg-config`:
+
+```sh
+cargo install nixbox-gui
+```
+
+Alternatively, install it from the repository flake, which provides the runtime libraries in its wrapper:
 
 ```sh
 nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
