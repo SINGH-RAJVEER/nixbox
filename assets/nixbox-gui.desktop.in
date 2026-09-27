@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=NixBox
+GenericName=Nix package manager
+Comment=Manage NixOS and Home Manager packages
+Exec=@NIXBOX_GUI_EXEC@
+Icon=nixbox-gui
+Terminal=false
+Categories=System;Settings;PackageManager;
+StartupNotify=true
+StartupWMClass=nixbox-gui

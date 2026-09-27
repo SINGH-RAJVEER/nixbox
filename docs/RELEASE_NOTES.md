@@ -4,6 +4,8 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added a NixBox desktop entry and icon to the Linux GUI flake package, so profile and declarative installs can show it in the application menu.
+
 ## 0.2.7 - 2026-09-27
 
 - Made `cargo install nixbox-gui` install a small launcher that runs the matching flake release, without requiring graphics development libraries in the Cargo build environment. Native GUI builds remain available with the `native` feature.

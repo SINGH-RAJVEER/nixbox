@@ -87,7 +87,7 @@ fn run() -> Result<()> {
                 let opened = cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
-                        app_id: Some("nixbox".into()),
+                        app_id: Some("nixbox-gui".into()),
                         titlebar: Some(TitlebarOptions {
                             title: Some("NixBox".into()),
                             ..TitlebarOptions::default()

@@ -90,7 +90,10 @@
                 "nixbox-cmd"
               ];
 
-          nativeBuildInputs = [ pkgs.makeWrapper ] ++ pkgs.lib.optional gui pkgs.pkg-config;
+          nativeBuildInputs = [ pkgs.makeWrapper ] ++ pkgs.lib.optionals gui [
+            pkgs.pkg-config
+            pkgs.desktop-file-utils
+          ];
           buildInputs = pkgs.lib.optionals gui (
             guiLibraries
             ++ [
@@ -108,6 +111,13 @@
                   pkgs.nix
                 ]
               }${pkgs.lib.optionalString gui " --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibraries}"}
+            ${pkgs.lib.optionalString gui ''
+              install -Dm644 ${./assets/nixbox-gui.svg} "$out/share/icons/hicolor/scalable/apps/nixbox-gui.svg"
+              install -Dm644 ${./assets/nixbox-gui.desktop.in} "$out/share/applications/nixbox-gui.desktop"
+              substituteInPlace "$out/share/applications/nixbox-gui.desktop" \
+                --replace-fail '@NIXBOX_GUI_EXEC@' "$out/bin/nixbox-gui"
+              desktop-file-validate "$out/share/applications/nixbox-gui.desktop"
+            ''}
           '';
 
           meta = {
