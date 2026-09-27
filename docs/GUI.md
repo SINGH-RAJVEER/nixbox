@@ -10,7 +10,7 @@ The GUI is Linux only for now and is not on crates.io. Until this version reache
 nix profile install github:SINGH-RAJVEER/nixbox/dev#nixbox-gui
 ```
 
-or add `nixbox-gui` from the flake's overlay to `environment.systemPackages` or `home.packages`. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
+To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox/dev";` and include `nixbox.packages.${pkgs.stdenv.hostPlatform.system}.nixbox-gui` in `environment.systemPackages` or `home.packages`. Here `nixbox` is the input available in the enclosing `outputs` function. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
 
 ## Pages
 

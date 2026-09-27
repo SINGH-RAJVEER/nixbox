@@ -42,15 +42,16 @@ Add NixBox to another flake:
 
 ```nix
 {
+	inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 	inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";
+	inputs.nixbox.inputs.nixpkgs.follows = "nixpkgs";
 
-	outputs = inputs@{ self, nixpkgs, nixbox, ... }: {
+	outputs = { nixpkgs, nixbox, ... }: {
 		nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
-			specialArgs = { inherit inputs; };
 			modules = [
 				./configuration.nix
 				({ pkgs, ... }: {
-					environment.systemPackages = [ nixbox.packages.${pkgs.system}.default ];
+					environment.systemPackages = [ nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default ];
 				})
 			];
 		};
@@ -58,7 +59,15 @@ Add NixBox to another flake:
 }
 ```
 
-The flake exposes both: `packages.nixbox` and `packages.nixbox-cli`.
+For a standalone Home Manager configuration, add the same input and include its package in the modules passed to `home-manager.lib.homeManagerConfiguration`:
+
+```nix
+({ pkgs, ... }: {
+	home.packages = [ nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+})
+```
+
+Here `nixbox` is the flake input available in the enclosing `outputs` function. Use `.nixbox-cli` instead of `.default` for the command-line-only binary. On Linux, `.nixbox-gui` installs the desktop application; the current GUI is on the `dev` branch, so use `github:SINGH-RAJVEER/nixbox/dev` as the input URL for it until that branch reaches the default branch.
 
 The flake also exports `overlays.default`, which adds `pkgs.nixbox` and `pkgs.nixbox-cli`:
 
