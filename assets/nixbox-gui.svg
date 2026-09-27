@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+	<title id="title">NixBox</title>
+	<rect x="2" y="2" width="60" height="60" rx="14" fill="#1e1e2e"/>
+	<path d="M32 10 51 21 32 32 13 21Z" fill="#88c0d0"/>
+	<path d="M13 21 32 32v22L13 43Z" fill="#81a1c1"/>
+	<path d="M51 21 32 32v22l19-11Z" fill="#5e81ac"/>
+	<path d="M32 10 51 21v22L32 54 13 43V21Z" fill="none" stroke="#d8dee9" stroke-width="2" stroke-linejoin="round"/>
+</svg>

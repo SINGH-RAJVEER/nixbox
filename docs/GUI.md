@@ -10,6 +10,8 @@ The GUI is Linux only for now. Install it from the repository flake to get its n
 nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
 ```
 
+The flake package includes a NixBox desktop entry and icon. NixOS and Home Manager installs expose it through their application menus, and a `nix profile` install exposes it in desktops that discover the profile's `share/applications` directory. The entry launches the wrapped GUI binary from its Nix store path.
+
 You can also run it without installing it into your profile:
 
 ```sh

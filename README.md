@@ -38,6 +38,8 @@ On Linux, install the desktop GUI from the flake to get its native libraries and
 nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
 ```
 
+The flake GUI package includes a desktop entry and icon for application menus.
+
 The GUI is also published to crates.io. Its default Cargo installation is a small launcher that runs the matching flake package, so it needs Nix with flakes enabled but no graphics development libraries:
 
 ```sh
