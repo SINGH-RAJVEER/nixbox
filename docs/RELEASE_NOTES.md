@@ -2,6 +2,11 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Extended the test VM's headless check to flake wiring, applying queued flake changes offline with `nixbox resume`. It covers the `{ ... }@inputs` form, input naming and `follows`, two packages from one flake, skipping a package the entry file already declares, keeping an input until its last package is removed, and `nixbox flake remove`.
+- Drove the real TUI in the VM through tmux to confirm the Installed tab lists flake packages from both the managed files and hand-written configuration, and that `d` removes a hand-written one.
+
 ## 0.2.4 - 2026-09-24
 
 Flake packages, wherever they are declared, now show up in the Installed tab and can be removed there, and flake installation follows hand-written configurations.
