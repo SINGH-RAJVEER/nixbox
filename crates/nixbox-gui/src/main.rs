@@ -7,6 +7,8 @@ mod model;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "native")]
+mod options;
+#[cfg(feature = "native")]
 mod theme;
 #[cfg(feature = "native")]
 mod ui;

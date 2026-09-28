@@ -14,6 +14,9 @@ use crate::ops::{
     cancel_build, install_selected, install_selected_flake, migrate_all, migrate_selected,
     schedule_flake_details, schedule_flake_search, schedule_search, uninstall_selected,
 };
+use crate::options::{
+    handle_panel_key, on_build_ended, on_options_failed, on_options_loaded, open_options_panel,
+};
 use crate::theme;
 use crate::vim::VimMode;
 
@@ -34,6 +37,10 @@ pub(crate) async fn handle_terminal_event(
 
     if let Mode::SettingsSelect = app.mode {
         handle_settings_select(app, key.code, key.modifiers);
+        return Ok(());
+    }
+
+    if app.options_panel_active() && handle_panel_key(app, tx, key) {
         return Ok(());
     }
 
@@ -114,6 +121,7 @@ pub(crate) async fn handle_terminal_event(
             Tab::Installed => match key.code {
                 KeyCode::Down => move_installed_selection(app, 1),
                 KeyCode::Up => move_installed_selection(app, -1),
+                KeyCode::Enter => open_options_panel(app, tx),
                 _ => {
                     if app.installed_input.handle_insert_event(&CtEvent::Key(key)) {
                         app.clamp_installed_selection();
@@ -308,6 +316,7 @@ pub(crate) async fn handle_terminal_event(
             VimMode::Insert => match key.code {
                 KeyCode::Down => move_installed_selection(app, 1),
                 KeyCode::Up => move_installed_selection(app, -1),
+                KeyCode::Enter => open_options_panel(app, tx),
                 _ => {
                     if app.installed_input.handle_insert_event(&CtEvent::Key(key)) {
                         app.clamp_installed_selection();
@@ -341,6 +350,7 @@ pub(crate) async fn handle_terminal_event(
                 KeyCode::Delete | KeyCode::Char('d') => uninstall_selected(app, tx).await?,
                 KeyCode::Char('m') => migrate_selected(app, tx).await?,
                 KeyCode::Char('M') => migrate_all(app, tx).await?,
+                KeyCode::Enter => open_options_panel(app, tx),
                 KeyCode::Char('i') | KeyCode::Char('/') => {
                     app.installed_input.enter_insert_before();
                 }
@@ -592,10 +602,13 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
                 app.status = format!("flake details failed: {}", error);
             }
         }
+        AppEvent::OptionsLoaded { epoch, key, set } => on_options_loaded(app, epoch, key, set),
+        AppEvent::OptionsFailed { epoch, error } => on_options_failed(app, epoch, error),
         AppEvent::Build(event) => {
             let Some(ended) = app.session.on_build_event(event) else {
                 return;
             };
+            on_build_ended(app, tx);
             app.status = match ended {
                 BuildEnded::Succeeded {
                     next: Some(next), ..

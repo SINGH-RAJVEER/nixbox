@@ -64,9 +64,20 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
                     .map(|(index, package)| {
                         let name = package.name.clone();
                         let scope = package.scope;
+                        let options_name = name.clone();
                         row(cx)
                             .child(name_cell(&package.name))
                             .child(Tag::secondary().xsmall().child(scope.tag()))
+                            .child(
+                                Button::new(("options-managed", index))
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::Settings)
+                                    .label("Options")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_options(options_name.clone(), scope, window, cx);
+                                    })),
+                            )
                             .child(
                                 Button::new(("remove-managed", index))
                                     .small()
@@ -132,6 +143,8 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
                     .enumerate()
                     .map(|(index, package)| {
                         let migratable = package.migratable;
+                        let options_name = package.name.clone();
+                        let scope = target_of(package.scope);
                         row(cx)
                             .child(
                                 v_flex()
@@ -155,6 +168,16 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
                                 Tag::secondary()
                                     .xsmall()
                                     .child(target_of(package.scope).tag()),
+                            )
+                            .child(
+                                Button::new(("options-external", index))
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::Settings)
+                                    .label("Options")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_options(options_name.clone(), scope, window, cx);
+                                    })),
                             )
                             .child(
                                 Button::new(("migrate", index))

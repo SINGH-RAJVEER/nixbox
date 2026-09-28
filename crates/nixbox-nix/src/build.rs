@@ -15,7 +15,7 @@ pub enum BuildEvent {
     Cancelled,
 }
 
-fn find_in_nix_profiles(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_in_nix_profiles(name: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let user = std::env::var("USER").unwrap_or_default();
     let candidates = [

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum Target {
     HomeManager,
@@ -136,6 +136,14 @@ impl Config {
         match target {
             Target::HomeManager => nixos_config_dir().join("nixbox-home-flakes.nix"),
             Target::NixosSystem => nixos_config_dir().join("nixbox-system-flakes.nix"),
+        }
+    }
+
+    /// Returns the generated module that sets package options for `target`.
+    pub fn settings_file_for(&self, target: Target) -> PathBuf {
+        match target {
+            Target::HomeManager => nixos_config_dir().join("nixbox-home-settings.nix"),
+            Target::NixosSystem => nixos_config_dir().join("nixbox-system-settings.nix"),
         }
     }
 

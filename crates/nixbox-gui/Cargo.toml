@@ -30,9 +30,9 @@ name = "nixbox-gui"
 path = "src/main.rs"
 
 [dependencies]
-nixbox-core = { path = "../nixbox-core", version = "0.2.7", optional = true }
-nixbox-config = { path = "../nixbox-config", version = "0.2.7", optional = true }
-nixbox-nix = { path = "../nixbox-nix", version = "0.2.7", optional = true }
+nixbox-core = { path = "../nixbox-core", version = "0.2.8", optional = true }
+nixbox-config = { path = "../nixbox-config", version = "0.2.8", optional = true }
+nixbox-nix = { path = "../nixbox-nix", version = "0.2.8", optional = true }
 anyhow = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
@@ -41,5 +41,6 @@ tracing-subscriber = { workspace = true, optional = true }
 gpui-kit = { version = "0.6.6", optional = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 gpui-kit = { version = "0.6.6", features = ["test-support"] }
-nixbox-core = { path = "../nixbox-core", version = "0.2.7", features = ["test-util"] }
+nixbox-core = { path = "../nixbox-core", version = "0.2.8", features = ["test-util"] }

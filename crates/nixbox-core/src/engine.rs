@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use anyhow::Result;
 use nixbox_config::{Config, Target};
 use nixbox_nix::{
-    Manifest,
+    Manifest, SettingsFile, SettingsManifest,
     manifest::{FlakeOutput, ImportStatus, ManagedFile, ensure_imported},
     scan::{ExternalPackage, ScanTarget, remove_from_source, scan},
 };
@@ -57,6 +57,10 @@ pub struct Engine {
     /// Flake outputs in the configuration, whether nixbox wired them in or
     /// the user did.
     pub flakes: Vec<InstalledFlake>,
+    /// Options set in `nixbox-home-settings.nix`.
+    pub home_settings: SettingsManifest,
+    /// Options set in `nixbox-system-settings.nix`.
+    pub nixos_settings: SettingsManifest,
 }
 
 impl Engine {
@@ -75,12 +79,18 @@ impl Engine {
             ManagedFile::new(config.managed_file_for(Target::NixosSystem)).load()?;
         let external_packages = scan_externals(&config, &home_manifest, &nixos_manifest);
         let flakes = scan_flakes(&config);
+        let home_settings =
+            SettingsFile::new(config.settings_file_for(Target::HomeManager)).load()?;
+        let nixos_settings =
+            SettingsFile::new(config.settings_file_for(Target::NixosSystem)).load()?;
         Ok(Self {
             config,
             home_manifest,
             nixos_manifest,
             external_packages,
             flakes,
+            home_settings,
+            nixos_settings,
         })
     }
 
@@ -98,6 +108,8 @@ impl Engine {
             nixos_manifest,
             external_packages,
             flakes: Vec::new(),
+            home_settings: SettingsManifest::default(),
+            nixos_settings: SettingsManifest::default(),
         }
     }
 
@@ -220,6 +232,9 @@ impl Engine {
             }
             Op::MigrateFlakePackage { input, package, .. } => {
                 return self.migrate_flake_package(input, package, scope, reporter);
+            }
+            Op::SetOptions { changes, .. } => {
+                return self.apply_settings(changes, scope, reporter);
             }
         }
 

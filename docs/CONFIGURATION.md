@@ -46,6 +46,8 @@ The configuration root determines these paths:
 | `<root>/nixbox-system-packages.nix` | Generated NixOS package module. |
 | `<root>/nixbox-home-flakes.nix` | Generated Home Manager imports and the reserved external-flake package block. |
 | `<root>/nixbox-system-flakes.nix` | Generated NixOS imports and the reserved external-flake package block. |
+| `<root>/nixbox-home-settings.nix` | Home Manager package options set from the options panel. |
+| `<root>/nixbox-system-settings.nix` | NixOS package options set from the options panel. |
 
 If `<root>/configuration.nix` does not exist and `nixos_main_file` is unset, NixBox uses `/etc/nixos/configuration.nix`. The generated files still stay under the configuration root.
 

@@ -29,7 +29,6 @@ impl Default for VimInput {
 }
 
 impl VimInput {
-    #[cfg(test)]
     pub(crate) fn new(value: String) -> Self {
         let input = Input::new(value);
         let mut this = Self {

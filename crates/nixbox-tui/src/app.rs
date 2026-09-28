@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,6 +17,7 @@ use nixbox_nix::{
     Manifest,
     build::BuildEvent,
     flakes::{FlakeDetails, FlakeHit},
+    options::OptionSet,
     scan::ExternalPackage,
     search::{PackageCatalog, SearchHit},
 };
@@ -25,6 +27,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::handlers::{handle_app_event, handle_terminal_event};
 use crate::ops::prepare_package_catalog;
+use crate::options::{OptionsPanel, PanelKey};
 use crate::state;
 use crate::theme;
 use crate::ui;
@@ -102,6 +105,15 @@ pub(crate) enum AppEvent {
         epoch: u64,
         error: String,
     },
+    OptionsLoaded {
+        epoch: u64,
+        key: PanelKey,
+        set: Arc<OptionSet>,
+    },
+    OptionsFailed {
+        epoch: u64,
+        error: String,
+    },
     Build(BuildEvent),
 }
 
@@ -147,6 +159,11 @@ pub(crate) struct App {
     pub(crate) catalog_loading: bool,
     pub(crate) catalog_task: Option<JoinHandle<()>>,
     pub(crate) spinner_frame: usize,
+    /// The package options panel, open over the Installed tab.
+    pub(crate) options_panel: Option<OptionsPanel>,
+    pub(crate) options_cache: HashMap<PanelKey, Arc<OptionSet>>,
+    pub(crate) options_epoch: u64,
+    pub(crate) options_task: Option<JoinHandle<()>>,
 }
 
 impl App {
@@ -223,6 +240,10 @@ impl App {
             catalog_loading: false,
             catalog_task: None,
             spinner_frame: 0,
+            options_panel: None,
+            options_cache: HashMap::new(),
+            options_epoch: 0,
+            options_task: None,
         }
     }
 
@@ -358,6 +379,18 @@ impl App {
         }
     }
 
+    /// Whether the options panel is waiting on an evaluation.
+    pub(crate) fn options_loading(&self) -> bool {
+        self.options_panel
+            .as_ref()
+            .is_some_and(|panel| panel.loading)
+    }
+
+    /// Whether keys and drawing go to the options panel.
+    pub(crate) fn options_panel_active(&self) -> bool {
+        self.tab == Tab::Installed && self.options_panel.is_some()
+    }
+
     /// Keeps the Installed cursor inside the list after it changes size.
     pub(crate) fn clamp_installed_selection(&mut self) {
         let total = self.installed_total();
@@ -419,6 +452,9 @@ async fn event_loop(
             if let Some(task) = app.catalog_task.take() {
                 task.abort();
             }
+            if let Some(task) = app.options_task.take() {
+                task.abort();
+            }
             break;
         }
 
@@ -432,7 +468,7 @@ async fn event_loop(
             Some(build_ev) = build_rx.recv() => {
                 handle_app_event(&mut app, &tx, AppEvent::Build(build_ev));
             }
-            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.session.is_building() => {
+            _ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.options_loading() || app.session.is_building() => {
                 app.spinner_frame = app.spinner_frame.wrapping_add(1);
             }
         }
@@ -447,6 +483,9 @@ async fn event_loop(
         handle.abort();
     }
     if let Some(handle) = app.catalog_task.take() {
+        handle.abort();
+    }
+    if let Some(handle) = app.options_task.take() {
         handle.abort();
     }
     Ok(())

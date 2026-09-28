@@ -10,6 +10,7 @@ The README is the short entry point. These documents describe the behavior that 
 - [Configuration and stored state](CONFIGURATION.md) lists every setting, default path, environment override, generated file, cache file, and recovery file.
 - [Package search](SEARCH.md) explains catalog creation, revision pinning, invalidation, ranking, live fallback, resource limits, and measured performance.
 - [Managed files and package operations](MANAGED_FILES.md) explains package manifests, automatic imports, external-package scanning, migration, queuing, rebuild selection, cancellation, recovery, and the mutations NixBox performs.
+- [Package options](PACKAGE_OPTIONS.md) explains package options in the terminal UI and the desktop GUI: where options are read from, which ones can be edited, the editors and keys, and how changes are applied.
 - [GitHub flake browser](FLAKE_BROWSER.md) explains GitHub authentication, discovery, ranking, detail inspection, module installation, required flake structure, and current limitations.
 - [Troubleshooting](TROUBLESHOOTING.md) maps common symptoms to checks and fixes.
 

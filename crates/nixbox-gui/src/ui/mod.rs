@@ -3,6 +3,7 @@
 
 mod flakes;
 mod installed;
+mod options;
 mod packages;
 mod queue;
 mod settings;
@@ -25,6 +26,7 @@ impl Render for NixboxApp {
             Page::Packages => packages::render(self, cx),
             Page::Flakes => flakes::render(self, cx),
             Page::Installed => installed::render(self, cx),
+            Page::Options => options::render(self, cx),
             Page::Queue => queue::render_queue(self, cx),
             Page::Build => queue::render_build(self, cx),
             Page::Settings => settings::render(self, cx),
@@ -54,7 +56,9 @@ impl NixboxApp {
         let item = |label: &'static str, icon: IconName, page: Page| {
             SidebarMenuItem::new(label)
                 .icon(icon)
-                .active(self.page == page)
+                .active(
+                    self.page == page || (page == Page::Installed && self.page == Page::Options),
+                )
                 .on_click(cx.listener(move |this, _, window, cx| this.set_page(page, window, cx)))
         };
         let queue = item("Queue", IconName::GalleryVerticalEnd, Page::Queue)
