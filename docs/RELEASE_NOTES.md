@@ -4,6 +4,8 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+## 0.2.8 - 2026-09-28
+
 - Added a NixBox desktop entry and icon to the Linux GUI flake package, so profile and declarative installs can show it in the application menu.
 - Added package options to the terminal UI's Installed tab and the desktop GUI's Installed page. `Enter`, or the Options button, on a package lists its `programs.*` or `services.*` options from your own configuration, and simple values can be staged and applied as one rebuild through a new generated settings module.
 - Extended the test VM's headless check to the options panel, from opening a package's options to writing, evaluating, and unsetting a value. A full round trip in the interactive VM, `programs.git.lfs.enable` applied with a real `nixos-rebuild switch` and then unset, installed and removed `git-lfs`.
