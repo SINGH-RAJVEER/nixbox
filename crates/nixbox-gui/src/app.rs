@@ -17,7 +17,7 @@ use gpui_kit::{
 };
 use nixbox_config::Target;
 use nixbox_core::search::{catalog_cache_path, search_packages};
-use nixbox_core::{BuildEnded, Enqueued, InstalledFlake, Op, Restored, Session};
+use nixbox_core::{BuildEnded, Enqueued, InstalledFlake, Op, Restored, Session, flake_choices};
 use nixbox_nix::build::BuildEvent;
 use nixbox_nix::flakes::{FlakeDetails, FlakeHit, fetch_flake_details, search_flakes};
 use nixbox_nix::options::OptionSet;
@@ -71,6 +71,7 @@ pub struct NixboxApp {
     pub flake_results: Vec<FlakeHit>,
     pub flake_selected: Option<usize>,
     pub flake_details: Option<FlakeDetails>,
+    pub flake_picker_open: bool,
     pub flake_searching: bool,
     pub flake_detail_loading: bool,
     flake_epoch: u64,
@@ -139,6 +140,11 @@ impl NixboxApp {
                     this.stage_text(cx);
                 }
             }),
+            cx.observe_window_appearance(window, |this, window, cx| {
+                if this.session.engine.config.theme == "default" {
+                    theme::apply("default", Some(window), cx);
+                }
+            }),
         ];
 
         let build_events = cx.spawn_in(window, async move |this, cx| {
@@ -171,6 +177,7 @@ impl NixboxApp {
             flake_results: Vec::new(),
             flake_selected: None,
             flake_details: None,
+            flake_picker_open: false,
             flake_searching: false,
             flake_detail_loading: false,
             flake_epoch: 0,
@@ -387,6 +394,7 @@ impl NixboxApp {
         let epoch = self.flake_epoch;
         self.flake_detail_task = None;
         self.flake_detail_loading = false;
+        self.flake_picker_open = false;
         let query = self.flake_input.read(cx).value().trim().to_string();
         if query.is_empty() {
             self.flake_task = None;
@@ -435,6 +443,8 @@ impl NixboxApp {
     }
 
     pub fn select_flake(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.flake_epoch = self.flake_epoch.wrapping_add(1);
+        self.flake_picker_open = false;
         let Some(hit) = self.flake_results.get(index).cloned() else {
             self.flake_selected = None;
             return;
@@ -456,13 +466,25 @@ impl NixboxApp {
                 }
                 this.flake_detail_loading = false;
                 match result {
-                    Ok(details) => this.flake_details = Some(details),
+                    Ok(details) => {
+                        if this.flake_picker_open {
+                            this.flake_picker_open =
+                                flake_choices(&details, this.session.engine.config.target).len()
+                                    > 1;
+                        }
+                        this.flake_details = Some(details);
+                    }
                     Err(error) => this.status = format!("Flake details failed: {error}").into(),
                 }
                 cx.notify();
             });
         }));
         cx.notify();
+    }
+
+    pub fn open_flake(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.select_flake(index, cx);
+        self.flake_picker_open = self.flake_selected.is_some();
     }
 
     pub fn install_flake(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -472,17 +494,54 @@ impl NixboxApp {
         };
         let scope = self.session.engine.config.target;
         let repo = details.repo.clone();
-        let Some(op) = Op::install_flake(details, scope) else {
+        let choices = flake_choices(details, scope);
+        if choices.len() > 1 {
+            self.flake_picker_open = true;
+            cx.notify();
+            return;
+        }
+        let Some(choice) = choices.first() else {
             self.set_status(
                 format!(
-                    "{repo} has no installable package for this system or default {} module.",
+                    "{repo} has no installable package for this system or compatible {} module.",
                     scope.label()
                 ),
                 cx,
             );
             return;
         };
-        self.enqueue(op, format!("{repo} is already queued."), window, cx);
+        self.enqueue(
+            choice.operation(repo.clone(), scope),
+            format!("{repo}#{} is already queued.", choice.path),
+            window,
+            cx,
+        );
+    }
+
+    pub fn install_flake_choice(
+        &mut self,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(details) = self.flake_details.as_ref() else {
+            return;
+        };
+        let scope = self.session.engine.config.target;
+        let Some(choice) = flake_choices(details, scope)
+            .into_iter()
+            .find(|choice| choice.path == path)
+        else {
+            return;
+        };
+        let repo = details.repo.clone();
+        self.flake_picker_open = false;
+        self.enqueue(
+            choice.operation(repo.clone(), scope),
+            format!("{repo}#{path} is already queued."),
+            window,
+            cx,
+        );
     }
 
     // ── installed ───────────────────────────────────────────────────────
@@ -740,8 +799,9 @@ mod tests {
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{AppContext as _, TestAppContext, px, size};
     use nixbox_config::{Config, Target};
-    use nixbox_core::{Engine, Session};
+    use nixbox_core::{Engine, Op, Session};
     use nixbox_nix::build::BuildEvent;
+    use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
     use nixbox_nix::manifest::Manifest;
     use nixbox_nix::search::SearchHit;
 
@@ -814,6 +874,47 @@ mod tests {
         app.read_with(cx, |app, _| {
             assert_eq!(app.session.queue.len(), 1);
             assert!(app.status.contains("Queued behind the running rebuild"));
+        });
+
+        app.update(cx, |app, _| {
+            app.flake_details = Some(FlakeDetails {
+                repo: "owner/repo".into(),
+                repo_url: String::new(),
+                path: "flake.nix".into(),
+                description: None,
+                stars: 0,
+                topics: Vec::new(),
+                homepage: None,
+                default_branch: "main".into(),
+                pushed_at: None,
+                archived: false,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                output_entries: Vec::new(),
+                system: "x86_64-linux".into(),
+                packages: vec![FlakePackage {
+                    attr: "default".into(),
+                    name: "pkg".into(),
+                    version: String::new(),
+                }],
+                modules: vec!["nixosModules.server".into()],
+                nixos_module: None,
+                home_manager_module: None,
+            });
+            app.flake_picker_open = true;
+            app.page = Page::Flakes;
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            app.update(cx, |app, cx| {
+                app.install_flake_choice("nixosModules.server", window, cx)
+            });
+        })
+        .expect("window");
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.session.queue.len(), 2);
+            assert!(!app.flake_picker_open);
+            assert!(matches!(app.session.queue.back(), Some(Op::InstallFlake { module, .. }) if module == "nixosModules.server"));
         });
     }
 }

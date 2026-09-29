@@ -9,9 +9,10 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Subcommand;
 use nixbox_config::Target;
-use nixbox_core::Op;
+use nixbox_core::{Op, flake_choices};
 use nixbox_nix::flakes::{FlakeDetails, FlakeHit, fetch_flake_details, search_flakes};
 use nixbox_nix::manifest::FlakeOutput;
+use nixbox_nix::wiring::attr_name;
 use serde::Serialize;
 use serde_json::json;
 
@@ -47,6 +48,10 @@ pub enum Action {
         /// Repository, as `owner/repo`.
         repo: String,
 
+        /// Exact package or module path shown by `flake info`.
+        #[arg(long, value_name = "OUTPUT")]
+        output: Option<String>,
+
         #[command(flatten)]
         apply: ApplyOpts,
     },
@@ -81,7 +86,11 @@ pub async fn run(action: &Action, global: &GlobalArgs) -> Result<ExitCode> {
         Action::Search { query, limit } => search(&query.join(" "), *limit, global).await,
         Action::Info { repo } => info(repo, global).await,
         Action::List => list(global),
-        Action::Add { repo, apply } => add(repo, apply, global).await,
+        Action::Add {
+            repo,
+            output,
+            apply,
+        } => add(repo, output.as_deref(), apply, global).await,
         Action::Remove { repo, apply } => remove(repo, apply, global).await,
         Action::Migrate { output, all, apply } => {
             migrate(output.as_deref(), *all, apply, global).await
@@ -186,6 +195,17 @@ async fn search(query: &str, limit: usize, global: &GlobalArgs) -> Result<ExitCo
 
 async fn info(repo: &str, global: &GlobalArgs) -> Result<ExitCode> {
     let details = details_for(repo).await?;
+    let available_outputs: Vec<String> = details
+        .output_entries
+        .iter()
+        .map(|output| format!("{} ({})", output.path, output.category()))
+        .collect();
+    let installable_outputs: Vec<String> = details
+        .packages
+        .iter()
+        .map(|package| format!("packages.{}.{}", details.system, attr_name(&package.attr)))
+        .chain(details.modules.iter().cloned())
+        .collect();
 
     if global.json {
         println!(
@@ -205,6 +225,8 @@ async fn info(repo: &str, global: &GlobalArgs) -> Result<ExitCode> {
                 "nixos_module": details.nixos_module,
                 "home_manager_module": details.home_manager_module,
                 "packages": details.packages.iter().map(|p| &p.attr).collect::<Vec<_>>(),
+                "installable_outputs": installable_outputs,
+                "available_outputs": details.output_entries.iter().map(|output| json!({"path": output.path, "kind": output.category()})).collect::<Vec<_>>(),
             }))?
         );
         return Ok(ExitCode::SUCCESS);
@@ -233,6 +255,8 @@ async fn info(repo: &str, global: &GlobalArgs) -> Result<ExitCode> {
     }
     rows.push(("inputs", join_or_dash(&details.inputs)));
     rows.push(("outputs", join_or_dash(&details.outputs)));
+    rows.push(("installable outputs", join_or_dash(&installable_outputs)));
+    rows.push(("available outputs", join_or_dash(&available_outputs)));
     if let Some(module) = &details.nixos_module {
         rows.push(("nixos module", module.clone()));
     }
@@ -287,21 +311,51 @@ fn list(global: &GlobalArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn add(repo: &str, opts: &ApplyOpts, global: &GlobalArgs) -> Result<ExitCode> {
+async fn add(
+    repo: &str,
+    output: Option<&str>,
+    opts: &ApplyOpts,
+    global: &GlobalArgs,
+) -> Result<ExitCode> {
     let mut engine = global.engine()?;
     let scope = engine.config.target;
 
-    if engine
-        .managed_flakes(scope)?
-        .iter()
-        .any(|(managed, _)| managed == repo)
+    if output.is_none()
+        && engine
+            .managed_flakes(scope)?
+            .iter()
+            .any(|(managed, _)| managed == repo)
     {
         eprintln!("{repo} is already imported for {}.", target_name(scope));
         return Ok(ExitCode::SUCCESS);
     }
 
     let details = details_for(repo).await?;
-    let (summary, ops) = match installable_for(&details, scope)? {
+    let chosen = if let Some(path) = output {
+        let choices = flake_choices(&details, scope);
+        let choice = choices
+            .iter()
+            .find(|choice| choice.path == path)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{path} is not installable for {}. Available: {}",
+                    target_name(scope),
+                    join_or_dash(
+                        &choices
+                            .iter()
+                            .map(|choice| choice.path.clone())
+                            .collect::<Vec<_>>()
+                    )
+                )
+            })?;
+        match &choice.output {
+            FlakeOutput::Module(module) => Installable::Module(module.clone()),
+            FlakeOutput::Package(package) => Installable::Package(package.clone()),
+        }
+    } else {
+        installable_for(&details, scope)?
+    };
+    let (summary, ops) = match chosen {
         Installable::Module(module) => (
             vec![format!("import {}#{} [{}]", repo, module, scope.tag())],
             vec![Op::InstallFlake {
@@ -371,7 +425,7 @@ enum Installable {
 }
 
 /// Picks what to install. Home Manager gets the first package, since a module
-/// does nothing until its options are set; NixOS gets the default module.
+/// does nothing until its options are set; NixOS prefers the default module.
 /// Either falls back to the other kind when the flake lacks the preferred one.
 ///
 /// Both come from evaluating the flake rather than from the names of its
@@ -382,8 +436,22 @@ fn installable_for(details: &FlakeDetails, scope: Target) -> Result<Installable>
         .first()
         .map(|package| Installable::Package(package.attr.clone()));
     let module = match scope {
-        Target::HomeManager => details.home_manager_module.clone(),
-        Target::NixosSystem => details.nixos_module.clone(),
+        Target::HomeManager => details.home_manager_module.clone().or_else(|| {
+            details
+                .modules
+                .iter()
+                .find(|path| {
+                    path.starts_with("homeManagerModules.") || path.starts_with("homeModules.")
+                })
+                .cloned()
+        }),
+        Target::NixosSystem => details.nixos_module.clone().or_else(|| {
+            details
+                .modules
+                .iter()
+                .find(|path| path.starts_with("nixosModules."))
+                .cloned()
+        }),
     }
     .map(Installable::Module);
     let preferred = match scope {
@@ -394,7 +462,7 @@ fn installable_for(details: &FlakeDetails, scope: Target) -> Result<Installable>
         return Ok(installable);
     }
     bail!(
-        "{} has no installable package for this system and no default {} module (it publishes: \
+        "{} has no installable package for this system and no compatible {} module (it publishes: \
          {}).",
         details.repo,
         target_name(scope),
@@ -443,6 +511,7 @@ mod tests {
             archived: false,
             inputs: Vec::new(),
             outputs: vec!["packages".to_string()],
+            output_entries: Vec::new(),
             packages: packages
                 .iter()
                 .map(|attr| FlakePackage {
@@ -450,6 +519,12 @@ mod tests {
                     name: (*attr).to_string(),
                     version: "1.0".to_string(),
                 })
+                .collect(),
+            system: "x86_64-linux".into(),
+            modules: nixos_module
+                .into_iter()
+                .chain(home_manager_module)
+                .map(str::to_string)
                 .collect(),
             nixos_module: nixos_module.map(str::to_string),
             home_manager_module: home_manager_module.map(str::to_string),

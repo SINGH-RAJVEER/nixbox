@@ -2,7 +2,7 @@
 
 ## Purpose and requirements
 
-The Flakes tab finds GitHub repositories with a root `flake.nix`, shows repository and evaluated flake properties, and can wire a default NixOS or Home Manager module or a package output into the target configuration.
+The Flakes tab finds GitHub repositories with a root `flake.nix`, shows repository and evaluated flake properties, and can wire a NixOS or Home Manager module or a package output into the target configuration.
 
 NixBox delegates authentication and API access to the GitHub CLI. Install `gh` and authenticate before opening the tab:
 
@@ -21,7 +21,7 @@ Code search looks for the user's query in files named `flake.nix` at repository 
 
 Text fragments are also scanned for `github:<owner>/<repository>` references. This lets a consumer configuration point NixBox toward the upstream project flake. Branch or path suffixes after the first owner and repository segments are discarded for candidate identity.
 
-Candidates deduplicate by repository and receive an initial score. NixBox keeps the best 12 candidates, resolves each repository's `HEAD` commit through GitHub, and evaluates that locked revision with a pure `nix eval`. Normal candidates receive 15 seconds. Upstream references extracted from flake source receive 45 seconds because large canonical flakes can take longer on a cold Nix cache. Evaluation records top-level output names, derivation package attributes under `packages.<current-system>`, and conventional default NixOS and Home Manager modules. A candidate is dropped when evaluation fails, times out, or finds none of those outputs. Successful inspections are cached in memory for the rest of the process.
+Candidates deduplicate by repository and receive an initial score. NixBox keeps the best 12 candidates, resolves each repository's `HEAD` commit through GitHub, and evaluates that locked revision with a pure `nix eval`. Normal candidates receive 15 seconds. Upstream references extracted from flake source receive 45 seconds because large canonical flakes can take longer on a cold Nix cache. Evaluation records top-level output names, derivation package attributes under `packages.<current-system>`, and named NixOS and Home Manager module attributes. A candidate is dropped when evaluation fails, times out, or finds none of those outputs. Successful inspections are cached in memory for the rest of the process.
 
 Initial ranking favors an upstream reference extracted from code, then repository-search matches, then the repository that contained a code match. Within those groups, an exact normalized repository-name match ranks above a prefix or substring match. Repository search adds a small star-count contribution capped at 10,000 stars. After evaluation, a matching package attribute adds another score contribution. Package ordering favors the `default` attribute, then exact, prefix, and substring matches, then the attribute name. The final result list is capped at 20, although at most 12 inspected candidates can reach it in the current implementation.
 
@@ -29,7 +29,7 @@ Normalization removes non-alphanumeric characters and lowercases the remaining t
 
 ## Detail inspection
 
-Selecting a result fetches repository metadata and raw `flake.nix` concurrently. The detail panel shows description, stars, archived state, default branch, last push time, topics, homepage, repository URL, detected inputs, evaluated output categories, and up to four derivation package attributes.
+Selecting a result fetches repository metadata and raw `flake.nix` concurrently. The detail panel shows description, stars, archived state, default branch, last push time, topics, homepage, repository URL, detected inputs, and a shared inventory of every evaluated current-system package and named module. Other top-level output families appear by name. The terminal UI scrolls long inventories with `PageUp` and `PageDown`; the GUI detail pane scrolls normally.
 
 Input detection is textual: it reads identifier-like names from the first balanced block after `inputs`, so unusual input construction can be missed. Package and module detection comes from pure evaluation of the locked GitHub revision. Output labels combine those evaluated package and module results with top-level attribute names for `overlays`, `devShells`, `apps`, and `formatter`.
 
@@ -37,14 +37,16 @@ Search results and details remain in memory only. NixBox does not clone reposito
 
 ## Output installation
 
-Pressing `Enter` chooses one output for the active target:
+In the terminal UI, pressing `Enter` on a flake with multiple compatible outputs opens an output picker. Use the arrow keys or `j` and `k` to select a full output path, `Enter` to install it, or `Esc` to close the picker. A flake with one compatible output installs directly. In the GUI, clicking a flake with multiple outputs reveals its installable paths in the details panel; clicking a path installs that output. The CLI prints discovered paths with `nixbox flake info <owner/repo>` (`available_outputs` and `installable_outputs` with `--json`); install one with `nixbox flake add <owner/repo> --output '<path>'`. The path must be compatible with the active target: packages are available to both targets, `nixosModules` to NixOS, and `homeManagerModules` and `homeModules` to Home Manager. Package paths include the evaluated current system, such as `packages.x86_64-linux.default`.
+
+Without `--output`, the CLI retains its automatic choice:
 
 | Priority | Active target | Condition | Generated expression |
 | --- | --- | --- | --- |
 | 1 | Home Manager | The flake has packages for the current system. | The first ranked `inputs.<input>.packages.${pkgs.stdenv.hostPlatform.system}.<attribute>`, added to `home.packages`. |
-| 2 | Home Manager | No packages, but evaluation finds `homeManagerModules.default` or `homeModules.default`. | The exact detected module path under `inputs.<input>`. |
-| 1 | NixOS | Evaluation finds `nixosModules.default`. | `inputs.<input>.nixosModules.default`. |
-| 2 | NixOS | No default module, but the flake has packages for the current system. | The first ranked package, added to `environment.systemPackages`. |
+| 2 | Home Manager | No packages, but evaluation finds a compatible module. | The default module when present, otherwise the first named module. |
+| 1 | NixOS | Evaluation finds a compatible module. | The default module when present, otherwise the first named module. |
+| 2 | NixOS | No compatible module, but the flake has packages for the current system. | The first ranked package, added to `environment.systemPackages`. |
 
 Home Manager prefers packages because a Home Manager module installs nothing until its options are set, while a package in `home.packages` is usable after one rebuild. The first evaluated package is already sorted to favor the `default` attribute, then exact, prefix, and substring query matches.
 
@@ -91,7 +93,7 @@ The generated Home Manager flake module then has this shape when one module and 
 }
 ```
 
-The trailing comment records which repository each line belongs to, so the input can be found again when the flake is removed.
+The trailing comment records which repository each line belongs to, so the input can be found again when the flake is removed. Multiple packages and multiple modules from one repository can coexist in the generated file and can be removed individually from the Installed tab.
 
 ## Duplicate outputs
 
@@ -132,8 +134,8 @@ The installer reads the root attribute set of `flake.nix` with a small scanner t
 - Only flake packages are picked up from your own entry files. Module imports you wrote yourself, such as `inputs.zen-browser.homeModules.twilight`, are not listed, because removing one usually leaves options behind that no longer exist.
 - Only GitHub repositories are discoverable and installable in this tab.
 - Only root `flake.nix` files qualify.
-- Only default NixOS and Home Manager module outputs can be installed; named non-default modules cannot be selected. On Home Manager, a module is only chosen when the flake has no packages.
-- The UI automatically chooses the first ranked package when no target-compatible default module exists; it does not let the user select another package attribute.
+- Module inspection lists attributes under `nixosModules`, `homeManagerModules`, and `homeModules`; it does not evaluate each module's configuration options or guarantee it will work without further settings.
+- `apps`, `devShells`, overlays, and formatters are shown as output categories but cannot be added to `home.packages`, `environment.systemPackages`, or module imports through this picker.
 - Search and metadata use GitHub API quota from the authenticated `gh` account.
 - Package inspection evaluates only `packages.<current-system>` and rejects entries whose `type` is not `derivation`.
 - Search evaluates up to 12 remote flakes concurrently. Uncached searches can therefore take as long as the slowest successful evaluation, and failed candidates are omitted instead of reported individually.

@@ -76,4 +76,7 @@ pub(crate) fn draw(f: &mut Frame, app: &App) {
     if matches!(app.mode, Mode::SettingsSelect) {
         popups::draw_settings_popup(f, app);
     }
+    if app.flake_picker.is_some() {
+        flakes::draw_output_picker(f, app);
+    }
 }

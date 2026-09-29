@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event as CtEvent, KeyCode, KeyEventKind, KeyModifiers};
 use nixbox_config::InputMode;
-use nixbox_core::BuildEnded;
+use nixbox_core::{BuildEnded, flake_choices};
 use nixbox_nix::search::MAX_SEARCH_RESULTS;
 use tokio::sync::mpsc;
 
@@ -11,8 +11,9 @@ use crate::nav::{
     open_settings,
 };
 use crate::ops::{
-    cancel_build, install_selected, install_selected_flake, migrate_all, migrate_selected,
-    schedule_flake_details, schedule_flake_search, schedule_search, uninstall_selected,
+    cancel_build, confirm_flake_choice, install_selected, install_selected_flake, migrate_all,
+    migrate_selected, schedule_flake_details, schedule_flake_search, schedule_search,
+    uninstall_selected,
 };
 use crate::options::{
     handle_panel_key, on_build_ended, on_options_failed, on_options_loaded, open_options_panel,
@@ -38,6 +39,39 @@ pub(crate) async fn handle_terminal_event(
     if let Mode::SettingsSelect = app.mode {
         handle_settings_select(app, key.code, key.modifiers);
         return Ok(());
+    }
+
+    if let Some(index) = app.flake_picker {
+        let count = app.flake_details.as_ref().map_or(0, |details| {
+            flake_choices(details, app.session.engine.config.target).len()
+        });
+        match key.code {
+            KeyCode::Esc => app.flake_picker = None,
+            KeyCode::Down | KeyCode::Char('j') if count > 0 => {
+                app.flake_picker = Some((index + 1) % count)
+            }
+            KeyCode::Up | KeyCode::Char('k') if count > 0 => {
+                app.flake_picker = Some((index + count - 1) % count)
+            }
+            KeyCode::Enter => confirm_flake_choice(app),
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    if app.tab == Tab::Flakes {
+        match key.code {
+            KeyCode::PageDown => {
+                app.flake_details_scroll = app.flake_details_scroll.saturating_add(10)
+            }
+            KeyCode::PageUp => {
+                app.flake_details_scroll = app.flake_details_scroll.saturating_sub(10)
+            }
+            _ => {}
+        }
+        if matches!(key.code, KeyCode::PageDown | KeyCode::PageUp) {
+            return Ok(());
+        }
     }
 
     if app.options_panel_active() && handle_panel_key(app, tx, key) {
@@ -585,6 +619,7 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
                 app.flake_searching = false;
                 app.flake_results.clear();
                 app.flake_details = None;
+                app.flake_picker = None;
                 app.status = format!("flake search failed: {}", error);
             }
         }

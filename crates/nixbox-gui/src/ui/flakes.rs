@@ -10,6 +10,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 use nixbox_config::Target;
+use nixbox_core::flake_choices;
 use nixbox_nix::flakes::FlakeDetails;
 
 use super::{empty, muted, page_header, section};
@@ -58,7 +59,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
                     .cursor_pointer()
                     .when(selected, |row| row.bg(active))
                     .hover(move |row| row.bg(hover))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_flake(index, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_flake(index, cx)))
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -74,21 +75,36 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
                                         .child(format!("{packages} package(s)")),
                                 )
                             })
-                            .when(hit.nixos_module.is_some(), |tags| {
-                                tags.child(Tag::secondary().xsmall().child("NixOS module"))
-                            })
-                            .when(hit.home_manager_module.is_some(), |tags| {
-                                tags.child(Tag::secondary().xsmall().child("Home Manager module"))
-                            }),
+                            .when(
+                                hit.modules
+                                    .iter()
+                                    .any(|path| path.starts_with("nixosModules.")),
+                                |tags| tags.child(Tag::secondary().xsmall().child("NixOS module")),
+                            )
+                            .when(
+                                hit.modules.iter().any(|path| {
+                                    path.starts_with("homeManagerModules.")
+                                        || path.starts_with("homeModules.")
+                                }),
+                                |tags| {
+                                    tags.child(
+                                        Tag::secondary().xsmall().child("Home Manager module"),
+                                    )
+                                },
+                            ),
                     )
             }))
             .into_any_element()
     };
 
     let details = match (&app.flake_details, app.flake_detail_loading) {
-        (Some(details), _) => {
-            render_details(details, app.session.engine.config.target, cx).into_any_element()
-        }
+        (Some(details), _) => render_details(
+            details,
+            app.session.engine.config.target,
+            app.flake_picker_open,
+            cx,
+        )
+        .into_any_element(),
         (None, true) => v_flex()
             .size_full()
             .items_center()
@@ -124,8 +140,11 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 fn render_details(
     details: &FlakeDetails,
     target: Target,
+    picker_open: bool,
     cx: &mut Context<NixboxApp>,
 ) -> impl IntoElement {
+    let choices = flake_choices(details, target);
+    let choice_count = choices.len();
     v_flex()
         .id("flake-details")
         .size_full()
@@ -158,12 +177,30 @@ fn render_details(
                     Button::new("install-flake")
                         .primary()
                         .icon(IconName::Plus)
-                        .label(format!("Install into {}", target.label()))
+                        .label(if choice_count > 1 {
+                            "Choose output".to_string()
+                        } else {
+                            format!("Install into {}", target.label())
+                        })
                         .on_click(
                             cx.listener(|this, _, window, cx| this.install_flake(window, cx)),
                         ),
                 ),
         )
+        .when(picker_open && choice_count > 0, |panel| {
+            panel
+                .child(section("Installable outputs", choice_count, cx))
+                .children(choices.into_iter().enumerate().map(|(index, choice)| {
+                    let path = choice.path;
+                    h_flex().px_6().py_1().child(
+                        Button::new(format!("install-flake-output-{index}"))
+                            .label(path.clone())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.install_flake_choice(&path, window, cx);
+                            })),
+                    )
+                }))
+        })
         .child(
             h_flex()
                 .px_6()
@@ -185,8 +222,12 @@ fn render_details(
                         .map(|topic| Tag::secondary().outline().xsmall().child(topic.clone())),
                 ),
         )
-        .child(section("Packages", details.packages.len(), cx))
-        .children(details.packages.iter().map(|package| {
+        .child(section(
+            "Available outputs",
+            details.output_entries.len(),
+            cx,
+        ))
+        .children(details.output_entries.iter().map(|output| {
             h_flex()
                 .px_6()
                 .py_1()
@@ -194,16 +235,10 @@ fn render_details(
                 .child(
                     div()
                         .font_weight(FontWeight::MEDIUM)
-                        .child(package.attr.clone()),
+                        .child(output.path.clone()),
                 )
-                .child(muted(format!("{} {}", package.name, package.version), cx))
+                .child(muted(output.category(), cx))
         }))
-        .child(section("Modules", modules(details).len(), cx))
-        .children(
-            modules(details)
-                .into_iter()
-                .map(|module| h_flex().px_6().py_1().child(module)),
-        )
         .child(section("Inputs", details.inputs.len(), cx))
         .children(
             details
@@ -211,16 +246,4 @@ fn render_details(
                 .iter()
                 .map(|input| h_flex().px_6().py_1().child(muted(input.clone(), cx))),
         )
-}
-
-fn modules(details: &FlakeDetails) -> Vec<String> {
-    let nixos = details
-        .nixos_module
-        .as_ref()
-        .map(|module| format!("nixosModules.{module}"));
-    let home = details
-        .home_manager_module
-        .as_ref()
-        .map(|module| format!("homeManagerModules.{module}"));
-    nixos.into_iter().chain(home).collect()
 }

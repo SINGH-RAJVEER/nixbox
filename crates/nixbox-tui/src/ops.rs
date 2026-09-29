@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use nixbox_config::Target;
 use nixbox_core::{
-    Enqueued, InstalledFlake,
+    Enqueued, InstalledFlake, flake_choices,
     search::{catalog_cache_path, search_packages},
 };
 use nixbox_nix::{
@@ -84,9 +84,15 @@ pub(crate) async fn install_selected_flake(
         return Ok(());
     };
     let scope = app.session.engine.config.target;
-    let Some(op) = QueuedOp::install_flake(&details, scope) else {
+    let choices = flake_choices(&details, scope);
+    if choices.len() > 1 {
+        app.flake_picker = Some(0);
+        app.status = format!("Choose an output from {}.", details.repo);
+        return Ok(());
+    }
+    let Some(choice) = choices.first() else {
         app.status = format!(
-            "{} has no installable package for this system or default {} module.",
+            "{} has no installable package for this system or compatible {} module.",
             details.repo,
             scope.label()
         );
@@ -94,11 +100,30 @@ pub(crate) async fn install_selected_flake(
     };
     enqueue(
         app,
-        op,
-        format!("Queued flake install: {}.", details.repo),
-        format!("{} is already queued.", details.repo),
+        choice.operation(details.repo.clone(), scope),
+        format!("Queued {}#{}.", details.repo, choice.path),
+        format!("{}#{} is already queued.", details.repo, choice.path),
     );
     Ok(())
+}
+
+pub(crate) fn confirm_flake_choice(app: &mut App) {
+    let Some(index) = app.flake_picker.take() else {
+        return;
+    };
+    let Some(details) = app.flake_details.clone() else {
+        return;
+    };
+    let scope = app.session.engine.config.target;
+    let Some(choice) = flake_choices(&details, scope).get(index).cloned() else {
+        return;
+    };
+    enqueue(
+        app,
+        choice.operation(details.repo.clone(), scope),
+        format!("Queued {}#{}.", details.repo, choice.path),
+        format!("{}#{} is already queued.", details.repo, choice.path),
+    );
 }
 
 pub(crate) async fn uninstall_selected(app: &mut App, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
@@ -377,6 +402,8 @@ pub(crate) fn schedule_flake_search(app: &mut App, tx: mpsc::Sender<AppEvent>) {
 }
 
 pub(crate) fn schedule_flake_details(app: &mut App, tx: mpsc::Sender<AppEvent>) {
+    app.flake_picker = None;
+    app.flake_details_scroll = 0;
     let Some(hit) = app.flake_results.get(app.flake_selected).cloned() else {
         app.flake_details = None;
         app.flake_detail_loading = false;
@@ -418,7 +445,12 @@ mod tests {
     use crate::app::App;
     use crate::vim::VimInput;
     use nixbox_config::Config;
-    use nixbox_nix::{manifest::Manifest, search::SearchHit};
+    use nixbox_core::Op;
+    use nixbox_nix::{
+        flakes::{FlakeDetails, FlakePackage},
+        manifest::Manifest,
+        search::SearchHit,
+    };
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::timeout;
 
@@ -520,5 +552,47 @@ mod tests {
         assert_eq!(app.session.queue.len(), 1);
         assert_eq!(app.tab, Tab::Queue);
         assert_eq!(app.status, "ripgrep already tracked or queued.");
+    }
+
+    #[tokio::test]
+    async fn flake_picker_queues_only_the_confirmed_output() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut app = test_app();
+        let _cancel = app.session.fake_build(Target::NixosSystem, "build");
+        app.flake_details = Some(FlakeDetails {
+            repo: "owner/repo".into(),
+            repo_url: String::new(),
+            path: "flake.nix".into(),
+            description: None,
+            stars: 0,
+            topics: Vec::new(),
+            homepage: None,
+            default_branch: "main".into(),
+            pushed_at: None,
+            archived: false,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            output_entries: Vec::new(),
+            system: "x86_64-linux".into(),
+            packages: vec![FlakePackage {
+                attr: "default".into(),
+                name: "pkg".into(),
+                version: String::new(),
+            }],
+            modules: vec!["nixosModules.server".into()],
+            nixos_module: None,
+            home_manager_module: None,
+        });
+
+        install_selected_flake(&mut app, &tx).await.unwrap();
+        assert_eq!(app.flake_picker, Some(0));
+        assert!(app.session.queue.is_empty());
+        app.flake_picker = Some(1);
+        confirm_flake_choice(&mut app);
+        assert_eq!(app.flake_picker, None);
+        assert_eq!(app.session.queue.len(), 1);
+        assert!(
+            matches!(app.session.queue.front(), Some(Op::InstallFlake { module, .. }) if module == "nixosModules.server")
+        );
     }
 }

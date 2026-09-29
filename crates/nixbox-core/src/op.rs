@@ -4,9 +4,64 @@ use nixbox_config::Target;
 use nixbox_nix::flakes::FlakeDetails;
 use nixbox_nix::manifest::FlakeOutput;
 use nixbox_nix::search::SearchHit;
+use nixbox_nix::wiring::attr_name;
 use serde::{Deserialize, Serialize};
 
 use crate::options::OptionChange;
+
+/// One output the selected flake can install for the active target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlakeChoice {
+    pub path: String,
+    pub output: FlakeOutput,
+}
+
+impl FlakeChoice {
+    #[must_use]
+    pub fn operation(&self, repo: String, scope: Target) -> Op {
+        match &self.output {
+            FlakeOutput::Package(package) => Op::InstallFlakePackage {
+                repo,
+                package: package.clone(),
+                scope,
+            },
+            FlakeOutput::Module(module) => Op::InstallFlake {
+                repo,
+                module: module.clone(),
+                scope,
+            },
+        }
+    }
+}
+
+/// Complete list of package and module outputs suitable for `scope`.
+#[must_use]
+pub fn flake_choices(details: &FlakeDetails, scope: Target) -> Vec<FlakeChoice> {
+    let mut choices: Vec<FlakeChoice> = details
+        .packages
+        .iter()
+        .map(|package| FlakeChoice {
+            path: format!("packages.{}.{}", details.system, attr_name(&package.attr)),
+            output: FlakeOutput::Package(package.attr.clone()),
+        })
+        .collect();
+    choices.extend(
+        details
+            .modules
+            .iter()
+            .filter(|path| match scope {
+                Target::NixosSystem => path.starts_with("nixosModules."),
+                Target::HomeManager => {
+                    path.starts_with("homeManagerModules.") || path.starts_with("homeModules.")
+                }
+            })
+            .map(|path| FlakeChoice {
+                path: path.clone(),
+                output: FlakeOutput::Module(path.clone()),
+            }),
+    );
+    choices
+}
 
 /// A single pending change to the user's configuration.
 ///
@@ -91,10 +146,30 @@ impl Op {
         match (self, other) {
             (Op::Install { hit: a, .. }, Op::Install { hit: b, .. }) => a.attr == b.attr,
             (
-                Op::InstallFlake { repo: a, .. } | Op::InstallFlakePackage { repo: a, .. },
-                Op::InstallFlake { repo: b, .. } | Op::InstallFlakePackage { repo: b, .. },
-            )
-            | (Op::UninstallFlake { repo: a, .. }, Op::UninstallFlake { repo: b, .. })
+                Op::InstallFlake {
+                    repo: a,
+                    module: a_module,
+                    ..
+                },
+                Op::InstallFlake {
+                    repo: b,
+                    module: b_module,
+                    ..
+                },
+            ) => a == b && a_module == b_module,
+            (
+                Op::InstallFlakePackage {
+                    repo: a,
+                    package: a_package,
+                    ..
+                },
+                Op::InstallFlakePackage {
+                    repo: b,
+                    package: b_package,
+                    ..
+                },
+            ) => a == b && a_package == b_package,
+            (Op::UninstallFlake { repo: a, .. }, Op::UninstallFlake { repo: b, .. })
             | (Op::Uninstall { name: a, .. }, Op::Uninstall { name: b, .. }) => a == b,
             (
                 Op::UninstallFlakeOutput {
@@ -147,13 +222,27 @@ impl Op {
             module,
             scope,
         };
+        let home_module = details.home_manager_module.clone().or_else(|| {
+            details
+                .modules
+                .iter()
+                .find(|path| {
+                    path.starts_with("homeManagerModules.") || path.starts_with("homeModules.")
+                })
+                .cloned()
+        });
+        let nixos_module = details.nixos_module.clone().or_else(|| {
+            details
+                .modules
+                .iter()
+                .find(|path| path.starts_with("nixosModules."))
+                .cloned()
+        });
         match scope {
             Target::HomeManager => package
                 .map(as_package)
-                .or_else(|| details.home_manager_module.clone().map(as_module)),
-            Target::NixosSystem => details
-                .nixos_module
-                .clone()
+                .or_else(|| home_module.map(as_module)),
+            Target::NixosSystem => nixos_module
                 .map(as_module)
                 .or_else(|| package.map(as_package)),
         }
@@ -191,7 +280,7 @@ impl Op {
 
 #[cfg(test)]
 mod tests {
-    use super::Op;
+    use super::{Op, flake_choices};
     use nixbox_config::Target;
     use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
     use nixbox_nix::search::SearchHit;
@@ -312,6 +401,7 @@ mod tests {
             archived: false,
             inputs: Vec::new(),
             outputs: vec!["packages".into()],
+            output_entries: Vec::new(),
             packages: packages
                 .iter()
                 .map(|attr| FlakePackage {
@@ -320,6 +410,8 @@ mod tests {
                     version: "1.4.2".into(),
                 })
                 .collect(),
+            system: "x86_64-linux".into(),
+            modules: nixos_module.into_iter().map(str::to_string).collect(),
             nixos_module: nixos_module.map(Into::into),
             home_manager_module: None,
         }
@@ -334,6 +426,44 @@ mod tests {
             Some(Op::InstallFlakePackage { repo, package, scope: Target::NixosSystem })
                 if repo == "alleneubank/bun-overlay" && package == "default"
         ));
+    }
+
+    #[test]
+    fn choices_keep_exact_output_paths_and_filter_modules_by_target() {
+        let mut flake = details(&["default", "my.tool"], Some("nixosModules.default"));
+        flake.modules.push("nixosModules.server".into());
+        flake
+            .modules
+            .push("homeManagerModules.\"my-module\"".into());
+
+        let nixos = flake_choices(&flake, Target::NixosSystem);
+        assert_eq!(
+            nixos
+                .iter()
+                .map(|choice| choice.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "packages.x86_64-linux.default",
+                "packages.x86_64-linux.\"my.tool\"",
+                "nixosModules.default",
+                "nixosModules.server",
+            ]
+        );
+        assert!(
+            matches!(nixos[3].operation(flake.repo.clone(), Target::NixosSystem),
+            Op::InstallFlake { module, .. } if module == "nixosModules.server")
+        );
+
+        let home = flake_choices(&flake, Target::HomeManager);
+        assert_eq!(
+            home.last().map(|choice| choice.path.as_str()),
+            Some("homeManagerModules.\"my-module\"")
+        );
+        assert!(
+            !home
+                .iter()
+                .any(|choice| choice.path.starts_with("nixosModules."))
+        );
     }
 
     #[test]
@@ -375,7 +505,14 @@ mod tests {
             package: "default".into(),
             scope: Target::HomeManager,
         };
-        assert!(module.duplicates(&package));
+        assert!(!module.duplicates(&package));
+        assert!(module.duplicates(&module));
+        assert!(package.duplicates(&package));
+        assert!(!module.duplicates(&Op::InstallFlake {
+            repo: "a/b".into(),
+            module: "another".into(),
+            scope: Target::HomeManager,
+        }));
 
         let migrate = |names: &[&str]| Op::Migrate {
             names: names.iter().map(|name| (*name).to_string()).collect(),

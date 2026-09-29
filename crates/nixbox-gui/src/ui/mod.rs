@@ -74,7 +74,12 @@ impl NixboxApp {
             .header(
                 SidebarHeader::new().child(
                     v_flex()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child("NixBox"))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().link)
+                                .child("NixBox"),
+                        )
                         .child(
                             div()
                                 .text_xs()
@@ -147,6 +152,7 @@ fn page_header(
                     div()
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().link)
                         .child(title.into()),
                 )
                 .child(
