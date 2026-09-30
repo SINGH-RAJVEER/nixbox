@@ -9,6 +9,8 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use crate::wiring::attr_name;
+
 pub const MAX_FLAKE_RESULTS: usize = 20;
 const MAX_FLAKE_CANDIDATES: usize = 12;
 const FLAKE_EVALUATION_TIMEOUT: Duration = Duration::from_secs(15);
@@ -21,9 +23,12 @@ pub struct FlakeHit {
     pub path: String,
     pub match_fragment: Option<String>,
     pub packages: Vec<FlakePackage>,
+    pub system: String,
+    pub modules: Vec<String>,
     pub nixos_module: Option<String>,
     pub home_manager_module: Option<String>,
     outputs: Vec<String>,
+    output_entries: Vec<FlakeOutputEntry>,
     content_url: String,
 }
 
@@ -32,6 +37,35 @@ pub struct FlakePackage {
     pub attr: String,
     pub name: String,
     pub version: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlakeOutputKind {
+    Package,
+    NixosModule,
+    HomeManagerModule,
+    HomeModule,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlakeOutputEntry {
+    pub path: String,
+    pub kind: FlakeOutputKind,
+}
+
+impl FlakeOutputEntry {
+    #[must_use]
+    pub fn category(&self) -> &'static str {
+        match self.kind {
+            FlakeOutputKind::Package => "package",
+            FlakeOutputKind::NixosModule => "NixOS module",
+            FlakeOutputKind::HomeManagerModule | FlakeOutputKind::HomeModule => {
+                "Home Manager module"
+            }
+            FlakeOutputKind::Other => "other output",
+        }
+    }
 }
 
 impl FlakeHit {
@@ -65,15 +99,26 @@ impl FlakeHit {
         inspection: FlakeInspection,
     ) -> Self {
         let outputs = classify_output_names(&inspection);
-        let home_manager_module = if inspection.home_manager_module {
+        let output_entries = output_entries(&inspection);
+        let home_manager_module = if inspection
+            .modules
+            .iter()
+            .any(|path| path == "homeManagerModules.default")
+        {
             Some("homeManagerModules.default".into())
-        } else if inspection.home_module {
+        } else if inspection
+            .modules
+            .iter()
+            .any(|path| path == "homeModules.default")
+        {
             Some("homeModules.default".into())
         } else {
             None
         };
         let nixos_module = inspection
-            .nixos_module
+            .modules
+            .iter()
+            .any(|path| path == "nixosModules.default")
             .then(|| "nixosModules.default".into());
         Self {
             content_url: format!("repos/{repo}/contents/flake.nix"),
@@ -82,9 +127,12 @@ impl FlakeHit {
             path: "flake.nix".into(),
             match_fragment,
             packages: inspection.packages,
+            system: inspection.system,
+            modules: inspection.modules,
             nixos_module,
             home_manager_module,
             outputs,
+            output_entries,
         }
     }
 }
@@ -103,7 +151,10 @@ pub struct FlakeDetails {
     pub archived: bool,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    pub output_entries: Vec<FlakeOutputEntry>,
     pub packages: Vec<FlakePackage>,
+    pub system: String,
+    pub modules: Vec<String>,
     pub nixos_module: Option<String>,
     pub home_manager_module: Option<String>,
 }
@@ -159,18 +210,18 @@ struct Candidate {
 struct FlakeInspection {
     output_names: Vec<String>,
     packages: Vec<FlakePackage>,
-    nixos_module: bool,
-    home_manager_module: bool,
-    home_module: bool,
+    system: String,
+    modules: Vec<String>,
 }
 
 #[derive(Deserialize)]
 struct EvaluatedOutputs {
+    system: String,
     output_names: Vec<String>,
     package_attrs: Vec<String>,
-    nixos_module: bool,
-    home_manager_module: bool,
-    home_module: bool,
+    nixos_modules: Vec<String>,
+    home_manager_modules: Vec<String>,
+    home_modules: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -341,11 +392,7 @@ async fn inspect_candidate(query: &str, candidate: Candidate) -> Result<Option<R
         FLAKE_EVALUATION_TIMEOUT
     };
     let mut inspection = inspect_flake(&candidate.repo, evaluation_timeout).await?;
-    if inspection.packages.is_empty()
-        && !inspection.nixos_module
-        && !inspection.home_manager_module
-        && !inspection.home_module
-    {
+    if inspection.packages.is_empty() && inspection.modules.is_empty() {
         return Ok(None);
     }
     sort_packages(query, &mut inspection.packages);
@@ -418,12 +465,16 @@ let
 	is_derivation = attr:
 		let result = builtins.tryEval ((builtins.getAttr attr packages).type or null);
 		in result.success && result.value == "derivation";
+	module_attrs = name:
+		let result = builtins.tryEval (builtins.attrNames (builtins.getAttr name flake));
+		in if builtins.hasAttr name flake && result.success then result.value else [];
 in {{
+	system = "{system}";
 	output_names = builtins.attrNames flake;
 	package_attrs = builtins.filter is_derivation (builtins.attrNames packages);
-	nixos_module = flake ? nixosModules && builtins.hasAttr "default" flake.nixosModules;
-	home_manager_module = flake ? homeManagerModules && builtins.hasAttr "default" flake.homeManagerModules;
-	home_module = flake ? homeModules && builtins.hasAttr "default" flake.homeModules;
+	nixos_modules = module_attrs "nixosModules";
+	home_manager_modules = module_attrs "homeManagerModules";
+	home_modules = module_attrs "homeModules";
 }}
 "#
     );
@@ -475,7 +526,20 @@ fn nix_system() -> Option<&'static str> {
 }
 
 fn inspection_from_evaluation(evaluated: EvaluatedOutputs) -> FlakeInspection {
+    let modules = [
+        ("nixosModules", evaluated.nixos_modules),
+        ("homeManagerModules", evaluated.home_manager_modules),
+        ("homeModules", evaluated.home_modules),
+    ]
+    .into_iter()
+    .flat_map(|(family, names)| {
+        names
+            .into_iter()
+            .map(move |name| format!("{family}.{}", attr_name(&name)))
+    })
+    .collect();
     FlakeInspection {
+        system: evaluated.system,
         output_names: evaluated.output_names,
         packages: evaluated
             .package_attrs
@@ -486,9 +550,7 @@ fn inspection_from_evaluation(evaluated: EvaluatedOutputs) -> FlakeInspection {
                 version: String::new(),
             })
             .collect(),
-        nixos_module: evaluated.nixos_module,
-        home_manager_module: evaluated.home_manager_module,
-        home_module: evaluated.home_module,
+        modules,
     }
 }
 
@@ -545,6 +607,53 @@ fn classify_output_names(inspection: &FlakeInspection) -> Vec<String> {
         }
     }
     outputs
+}
+
+fn output_entries(inspection: &FlakeInspection) -> Vec<FlakeOutputEntry> {
+    let mut entries: Vec<_> = inspection
+        .packages
+        .iter()
+        .map(|package| FlakeOutputEntry {
+            path: format!(
+                "packages.{}.{}",
+                inspection.system,
+                attr_name(&package.attr)
+            ),
+            kind: FlakeOutputKind::Package,
+        })
+        .collect();
+    entries.extend(inspection.modules.iter().map(|path| FlakeOutputEntry {
+        path: path.clone(),
+        kind: if path.starts_with("nixosModules.") {
+            FlakeOutputKind::NixosModule
+        } else if path.starts_with("homeManagerModules.") {
+            FlakeOutputKind::HomeManagerModule
+        } else {
+            FlakeOutputKind::HomeModule
+        },
+    }));
+    for name in &inspection.output_names {
+        let has_entries = match name.as_str() {
+            "packages" => !inspection.packages.is_empty(),
+            "nixosModules" | "homeManagerModules" | "homeModules" => inspection
+                .modules
+                .iter()
+                .any(|path| path.starts_with(&format!("{name}."))),
+            _ => false,
+        };
+        if !has_entries
+            && !matches!(
+                name.as_str(),
+                "outPath" | "lastModified" | "lastModifiedDate" | "rev" | "shortRev" | "narHash"
+            )
+        {
+            entries.push(FlakeOutputEntry {
+                path: name.clone(),
+                kind: FlakeOutputKind::Other,
+            });
+        }
+    }
+    entries
 }
 
 fn github_references(fragment: &str) -> Vec<String> {
@@ -610,7 +719,10 @@ pub async fn fetch_flake_details(hit: &FlakeHit) -> Result<FlakeDetails> {
         archived: repository.archived,
         inputs: classify_inputs(&source),
         outputs: hit.outputs.clone(),
+        output_entries: hit.output_entries.clone(),
         packages: hit.packages.clone(),
+        system: hit.system.clone(),
+        modules: hit.modules.clone(),
         nixos_module: hit.nixos_module.clone(),
         home_manager_module: hit.home_manager_module.clone(),
     })
@@ -685,7 +797,7 @@ mod tests {
     use super::{
         Candidate, EvaluatedOutputs, FlakeInspection, FlakePackage, classify_inputs,
         classify_output_names, compact_fragment, github_references, insert_candidate,
-        inspection_from_evaluation, repository_name_score, repository_search_query,
+        inspection_from_evaluation, output_entries, repository_name_score, repository_search_query,
     };
     use std::collections::BTreeMap;
 
@@ -729,6 +841,7 @@ mod tests {
             ["nixpkgs", "home-manager"]
         );
         let inspection = FlakeInspection {
+            system: "x86_64-linux".into(),
             output_names: vec![
                 "packages".into(),
                 "nixosModules".into(),
@@ -740,9 +853,10 @@ mod tests {
                 name: "bun".into(),
                 version: "1.4.2".into(),
             }],
-            nixos_module: true,
-            home_manager_module: true,
-            home_module: false,
+            modules: vec![
+                "nixosModules.default".into(),
+                "homeManagerModules.default".into(),
+            ],
         };
 
         assert_eq!(
@@ -752,6 +866,18 @@ mod tests {
                 "NixOS modules",
                 "Home Manager modules",
                 "dev shells"
+            ]
+        );
+        assert_eq!(
+            output_entries(&inspection)
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "packages.x86_64-linux.default",
+                "nixosModules.default",
+                "homeManagerModules.default",
+                "devShells"
             ]
         );
     }
@@ -796,11 +922,12 @@ mod tests {
     #[test]
     fn converts_current_system_package_attributes_into_installable_outputs() {
         let inspection = inspection_from_evaluation(EvaluatedOutputs {
+            system: "x86_64-linux".into(),
             output_names: vec!["devShells".into(), "packages".into()],
             package_attrs: vec!["bun".into(), "default".into()],
-            nixos_module: false,
-            home_manager_module: false,
-            home_module: false,
+            nixos_modules: vec!["default".into(), "server".into()],
+            home_manager_modules: vec![],
+            home_modules: vec!["desktop".into()],
         });
 
         assert_eq!(inspection.packages.len(), 2);
@@ -810,8 +937,14 @@ mod tests {
                 .iter()
                 .all(|package| package.name == package.attr)
         );
-        assert!(!inspection.nixos_module);
-        assert!(!inspection.home_manager_module);
+        assert_eq!(
+            inspection.modules,
+            [
+                "nixosModules.default",
+                "nixosModules.server",
+                "homeModules.desktop"
+            ]
+        );
     }
 
     #[tokio::test]

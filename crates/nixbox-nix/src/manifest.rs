@@ -43,7 +43,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlakeManifest {
     /// Module path under the input, keyed by `owner/repo`.
-    pub modules: BTreeMap<String, String>,
+    pub modules: BTreeMap<String, BTreeSet<String>>,
     /// Package attributes under the input, keyed by `owner/repo`. One flake
     /// can contribute several packages.
     pub packages: BTreeMap<String, BTreeSet<String>>,
@@ -56,7 +56,7 @@ pub struct FlakeManifest {
 
 impl FlakeManifest {
     pub fn add(&mut self, repo: String, module: String) -> bool {
-        self.modules.insert(repo, module).is_none()
+        self.modules.entry(repo).or_default().insert(module)
     }
 
     pub fn add_package(&mut self, repo: String, package: String) -> bool {
@@ -74,12 +74,14 @@ impl FlakeManifest {
     pub fn remove_output(&mut self, repo: &str, output: &FlakeOutput) -> bool {
         let removed = match output {
             FlakeOutput::Module(module) => {
-                if self.modules.get(repo) == Some(module) {
+                let removed = self
+                    .modules
+                    .get_mut(repo)
+                    .is_some_and(|modules| modules.remove(module));
+                if self.modules.get(repo).is_some_and(BTreeSet::is_empty) {
                     self.modules.remove(repo);
-                    true
-                } else {
-                    false
                 }
+                removed
             }
             FlakeOutput::Package(package) => {
                 let removed = self
@@ -101,10 +103,11 @@ impl FlakeManifest {
     /// Every output as `(repo, output)`, modules first.
     #[must_use]
     pub fn outputs(&self) -> Vec<(String, FlakeOutput)> {
-        let modules = self
-            .modules
-            .iter()
-            .map(|(repo, module)| (repo.clone(), FlakeOutput::Module(module.clone())));
+        let modules = self.modules.iter().flat_map(|(repo, modules)| {
+            modules
+                .iter()
+                .map(|module| (repo.clone(), FlakeOutput::Module(module.clone())))
+        });
         let packages = self.packages.iter().flat_map(|(repo, packages)| {
             packages
                 .iter()
@@ -236,7 +239,11 @@ impl ManagedFlakeFile {
                 continue;
             };
             if in_module_block {
-                manifest.modules.insert(repo.clone(), output.to_string());
+                manifest
+                    .modules
+                    .entry(repo.clone())
+                    .or_default()
+                    .insert(output.to_string());
             } else if in_package_block
                 && let Some(package) = PACKAGE_PREFIXES
                     .iter()
@@ -269,9 +276,11 @@ impl ManagedFlakeFile {
         }
         let mut imports = String::new();
         imports.push_str("\t\t# nixbox:flakes:start\n");
-        for (repo, module) in &manifest.modules {
+        for (repo, modules) in &manifest.modules {
             let input = manifest.input_for(repo);
-            imports.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
+            for module in modules {
+                imports.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
+            }
         }
         imports.push_str("\t\t# nixbox:flakes:end\n");
         let mut packages = String::new();
@@ -722,6 +731,7 @@ mod tests {
         let managed = ManagedFlakeFile::new(&path);
         let mut manifest = FlakeManifest::default();
         manifest.add("owner/module".into(), "homeManagerModules.default".into());
+        manifest.add("owner/module".into(), "homeManagerModules.extra".into());
         manifest.add_package("owner/package".into(), "default".into());
         manifest.add_package("owner/package".into(), "extra".into());
         manifest
@@ -732,9 +742,18 @@ mod tests {
 
         let loaded = managed.load().unwrap();
         assert_eq!(loaded.modules, manifest.modules);
+        assert_eq!(loaded.modules["owner/module"].len(), 2);
         assert_eq!(loaded.packages, manifest.packages);
         assert_eq!(loaded.input_for("owner/package"), "package");
         assert_eq!(loaded.input_for("owner/module"), "\"owner/module\"");
+
+        let mut without_one_module = loaded.clone();
+        assert!(without_one_module.remove_output(
+            "owner/module",
+            &FlakeOutput::Module("homeManagerModules.extra".into())
+        ));
+        assert!(without_one_module.contains("owner/module"));
+        assert!(without_one_module.modules["owner/module"].contains("homeManagerModules.default"));
 
         let mut trimmed = loaded;
         assert!(trimmed.remove_output("owner/package", &FlakeOutput::Package("default".into())));

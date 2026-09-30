@@ -4,6 +4,13 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+## 0.2.9 - 2026-09-30
+
+- Applied each selected dark theme's full palette across the GUI instead of changing only its background and accent.
+- Made the default GUI theme follow desktop appearance changes while the app is open.
+- Listed complete evaluated flake package and named module paths in the CLI, terminal UI, and GUI detail views; the terminal UI can scroll long output inventories.
+- Listed installable flake package and named module paths in the CLI, and added exact output selection in the terminal and desktop UIs and with `nixbox flake add --output`. Multiple modules from one repository can now coexist.
+
 ## 0.2.8 - 2026-09-28
 
 - Added a NixBox desktop entry and icon to the Linux GUI flake package, so profile and declarative installs can show it in the application menu.

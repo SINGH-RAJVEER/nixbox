@@ -2,11 +2,49 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use super::{SPINNER, titled_panel};
 use crate::app::App;
-use nixbox_nix::flakes::FlakePackage;
+use nixbox_core::flake_choices;
+
+pub(super) fn draw_output_picker(f: &mut Frame, app: &App) {
+    let (Some(index), Some(details)) = (app.flake_picker, app.flake_details.as_ref()) else {
+        return;
+    };
+    let choices = flake_choices(details, app.session.engine.config.target);
+    let screen = f.area();
+    let width = screen.width.min(76);
+    let height = screen
+        .height
+        .saturating_sub(2)
+        .min(choices.len().saturating_add(2) as u16);
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    f.render_widget(Clear, area);
+    let theme = app.theme();
+    let items: Vec<ListItem> = choices
+        .into_iter()
+        .map(|choice| ListItem::new(choice.path))
+        .collect();
+    let list = List::new(items)
+        .block(titled_panel(
+            theme,
+            Span::styled(
+                " Choose output (Enter install, Esc close) ",
+                theme.title_style(),
+            ),
+        ))
+        .highlight_style(theme.selection_style())
+        .highlight_symbol("❯ ");
+    let mut state = ListState::default();
+    state.select(Some(index));
+    f.render_stateful_widget(list, area, &mut state);
+}
 
 pub(super) fn draw_flakes_body(f: &mut Frame, area: Rect, app: &App) {
     let split = Layout::default()
@@ -87,7 +125,7 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
                 Line::from(Span::styled("Results are not cloned or persisted.", dim)),
                 Line::raw(""),
                 Line::from(Span::styled(
-                    "i  search    j/k  select    Enter  install output",
+                    "i  search    j/k  select    PgUp/PgDn  details    Enter  install output",
                     dim,
                 )),
             ])
@@ -101,7 +139,6 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
     let description = details.description.as_deref().unwrap_or("(no description)");
     let inputs = list_or_none(&details.inputs);
     let outputs = list_or_none(&details.outputs);
-    let packages = package_list(&details.packages);
     let topics = list_or_none(&details.topics);
     let pushed = details.pushed_at.as_deref().unwrap_or("unknown");
     let homepage = details.homepage.as_deref().unwrap_or("none");
@@ -110,7 +147,7 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
     } else {
         "active"
     };
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(details.repo.clone(), t.name_style())),
         Line::from(Span::styled(
             format!(
@@ -131,10 +168,15 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("outputs  ", dim),
             Span::styled(outputs, t.name_style()),
         ]),
-        Line::from(vec![
-            Span::styled("packages ", dim),
-            Span::styled(packages, t.version_style()),
-        ]),
+        Line::from(Span::styled("AVAILABLE OUTPUTS", t.title_style())),
+    ];
+    for output in &details.output_entries {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}  ", output.category()), dim),
+            Span::styled(output.path.clone(), t.name_style()),
+        ]));
+    }
+    lines.extend([
         Line::from(vec![Span::styled("inputs   ", dim), Span::raw(inputs)]),
         Line::from(vec![Span::styled("topics   ", dim), Span::raw(topics)]),
         Line::raw(""),
@@ -146,33 +188,14 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
         Line::from(details.repo_url.clone()),
         Line::from(Span::styled(format!("updated  {pushed}"), dim)),
         Line::from(Span::styled(format!("homepage  {homepage}"), dim)),
-    ];
+    ]);
     f.render_widget(
         Paragraph::new(lines)
             .block(block)
+            .scroll((app.flake_details_scroll, 0))
             .wrap(Wrap { trim: false }),
         area,
     );
-}
-
-fn package_list(packages: &[FlakePackage]) -> String {
-    if packages.is_empty() {
-        return "(none for this system)".to_string();
-    }
-    packages
-        .iter()
-        .take(4)
-        .map(|package| {
-            if package.version.is_empty() && package.name == package.attr {
-                package.attr.clone()
-            } else if package.version.is_empty() {
-                format!("{} ({})", package.attr, package.name)
-            } else {
-                format!("{} ({} {})", package.attr, package.name, package.version)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("  ·  ")
 }
 
 fn list_or_none(values: &[String]) -> String {

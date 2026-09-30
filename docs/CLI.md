@@ -59,13 +59,13 @@ The TUI queues operations and applies them in a batch, and saves that queue to t
 | Command | Purpose |
 | --- | --- |
 | `nixbox flake search <query>` | Search GitHub for flakes. Requires `gh auth login`. |
-| `nixbox flake info <owner/repo>` | Show what a flake publishes, including the modules and packages it actually evaluates to. |
+| `nixbox flake info <owner/repo>` | List evaluated package and module paths plus other top-level output families; `--json` includes `available_outputs` and `installable_outputs`. |
 | `nixbox flake list` | List the flake modules and packages NixBox manages for the active target. `--json` prints `repo`, `kind` (`module` or `package`), and `output` for each. |
-| `nixbox flake add <owner/repo>` | Add the flake as an input and wire an output into your configuration. |
+| `nixbox flake add <owner/repo> [--output <path>]` | Add the flake as an input and wire an output into your configuration. `--output` selects an exact path from `flake info` and allows adding another output from the same repository. |
 | `nixbox flake remove <owner/repo>` | Drop every output NixBox manages for the flake, and its input once nothing else uses it. Alias: `rm`. |
 | `nixbox flake migrate <input>#<package>` | Move an existing hand-declared flake package into NixBox's generated module for the active target. `-a` migrates every eligible flake package in that target. |
 
-`flake add` installs the flake's first package on the Home Manager target, falling back to its default Home Manager module when it has no packages. On the NixOS target it installs the default NixOS module when the flake publishes one, and otherwise falls back to the first package. `flake remove` keeps the root input when other files in the configuration still reference it. Both come from evaluating the flake rather than from the names of its outputs, so a flake whose outputs cannot be imported is refused instead of producing a configuration that will not build.
+Without `--output`, `flake add` installs the flake's first package on the Home Manager target, falling back to a Home Manager module when it has no packages. On the NixOS target it installs a NixOS module when available and otherwise falls back to the first package. Default modules take priority over other named modules. Quote paths containing shell-special characters, for example `nixbox flake add owner/repo --output 'packages.x86_64-linux."my.tool"'`. Packages can be selected for either target; NixOS and Home Manager modules can only be selected for their respective targets. `flake remove` keeps the root input when other files in the configuration still reference it. Outputs are discovered by evaluating the flake.
 
 ## Settings and completions
 

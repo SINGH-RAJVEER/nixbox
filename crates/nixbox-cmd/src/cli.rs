@@ -251,6 +251,28 @@ mod tests {
     }
 
     #[test]
+    fn flake_add_accepts_an_exact_output_path() {
+        use super::Command;
+        use crate::commands::flake::Action;
+
+        let cli = Cli::try_parse_from([
+            "nixbox",
+            "flake",
+            "add",
+            "owner/repo",
+            "--output",
+            "packages.x86_64-linux.\"my.tool\"",
+            "--dry-run",
+        ])
+        .unwrap();
+        assert!(
+            matches!(cli.command, Some(Command::Flake { action: Action::Add {
+            output: Some(path), ..
+        } }) if path == "packages.x86_64-linux.\"my.tool\"")
+        );
+    }
+
+    #[test]
     fn a_bare_invocation_carries_no_subcommand() {
         let cli = Cli::parse_from(["nixbox"]);
         assert!(cli.command.is_none());

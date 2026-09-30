@@ -36,7 +36,7 @@ The sidebar lists the pages. The status line at the bottom reports the last thin
 | Page | What it does |
 | --- | --- |
 | nixpkgs | Searches the package catalog for your locked nixpkgs revision, falling back to live `nix search` while the catalog is built. Each hit shows where it is already installed and has an Install button. |
-| Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs; Install adds the package or module that suits the current target, as the TUI does. |
+| Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs. Clicking a hit with multiple installable outputs opens a list of exact package and compatible module paths; clicking a path installs that output. A single compatible output can be installed directly. |
 | Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
@@ -49,7 +49,7 @@ Installing, removing, migrating, and applying option changes all queue an op. Op
 
 ## Themes
 
-The GUI reads the same theme setting as the TUI. `default` follows your desktop's light or dark appearance. The other themes (`dracula`, `gruvbox`, `nord`, `catppuccin`, `monokai`) are dark, using the TUI palette's background and accent color.
+The GUI reads the same theme setting as the TUI. `default` follows your desktop's light or dark appearance, including changes while NixBox is open. The other themes (`dracula`, `gruvbox`, `nord`, `catppuccin`, `monokai`) use their own dark palettes throughout the window, including text, borders, lists, sidebar, inputs, buttons, and scrollbars. Changing the theme in Settings applies it immediately and saves it for the next launch.
 
 The TUI's input mode setting has no effect in the GUI.
 
