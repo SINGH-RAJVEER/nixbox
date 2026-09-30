@@ -306,6 +306,9 @@ impl NixboxApp {
 
     /// Queues every staged edit as one op.
     pub fn apply_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
         let Some(view) = self.options.as_mut() else {
             return;
         };

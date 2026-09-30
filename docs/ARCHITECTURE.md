@@ -50,6 +50,14 @@ The two binaries install under different names, so one profile can hold both. `n
 
 Every front-end goes through the same engine, so a change applied by `nixbox install`, in the TUI, or in the GUI takes the identical code path. The TUI and the GUI also share the `Session`, so queue batching, rebuild cancellation, the build log, and recovery behave the same in both. The engine is also what keeps `state.json` compatible between them: the queue holds `nixbox_core::Op` values verbatim, and the TUI's `QueuedOp` is a re-export of that type rather than a parallel definition.
 
+## Configuration version control
+
+`nixbox-core::vcs` owns synchronous Git/Jujutsu discovery, initialization, review, commit, origin inspection, explicit push, and optional GitHub repository creation through `gh`. All frontends share this backend. The TUI and GUI dispatch subprocess calls to workers rather than blocking rendering.
+
+`Engine::apply` takes a root-scoped journal lock before file mutation and records successful operations with changed paths before releasing it. Commit holds the same lock, revalidates the displayed review, then commits and clears the journal. Inspection does not depend on journal health. External programs do not honor this lock, so users should avoid editing config files concurrently with a commit.
+
+The nearest repository boundary owns the config; colocated JJ takes precedence over Git at the same root. Git ancestor repositories support path-scoped commits and refuse unrelated staged files. JJ commits in ancestor repositories are refused because the working-copy change can include unrelated files. See [Version control](VERSION_CONTROL.md).
+
 ## Startup and terminal lifecycle
 
 `crates/nixbox-cmd/src/lib.rs` parses the command tree, initializes tracing to stderr with a default `warn` filter, and dispatches on Tokio's multithreaded runtime, driven by a `main` in whichever binary crate was built. With no subcommand it calls `nixbox_tui::run()`; with one it runs that command and returns its exit code. It also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
