@@ -50,11 +50,11 @@ Press `Enter` to open a picker when the selected flake has multiple installable 
 
 The Installed tab combines packages from four sources: NixBox's Home Manager manifest, NixBox's NixOS manifest, packages scanned from the Home Manager entry file, and packages scanned from the NixOS entry file. The `[hm]` and `[nixos]` labels identify scope. External declarations also show the attribute where the scanner found them.
 
-Press `d` or `Delete` on a NixBox-managed package to queue removal. NixBox will not remove an external package directly. Press `m` to migrate one external package or `M` to queue every migratable external package. Declarations in same-line lists and complex expressions remain visible but cannot be migrated automatically.
+Press `Delete` in Vim Normal mode on a NixBox-managed package to queue removal. `d` belongs to the filter editor, where `dd` clears the filter. NixBox will not remove an external package directly. Press `m` to migrate one external package or `M` to queue every migratable external package. Declarations in same-line lists and complex expressions remain visible but cannot be migrated automatically.
 
 Between the managed and external packages, a Flakes section lists every flake package and module in the configuration. That covers outputs NixBox wired into `nixbox-home-flakes.nix` or `nixbox-system-flakes.nix`, and flake packages you declared yourself, such as `inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default` in `home.packages`. Each row shows `input#package` (or `input.<module path>` for a module), the scope, and the `github:` repository the input points at. Rows you declared yourself also name the list they sit in. A package that NixBox manages and you also declare yourself appears once.
 
-Press `m` on a hand-declared flake package to move it into NixBox's generated flake module. `M` includes eligible flake packages in its migrate-all queue. The GUI shows a Migrate button on eligible rows. The existing root flake input remains in place. Migration requires a dedicated line in `home.packages` or `environment.systemPackages`, a dynamic `pkgs.system` or `pkgs.stdenv.hostPlatform.system` selector, and a `github:` input that NixBox can identify. Other package options, literal-system selectors, inline declarations, non-GitHub inputs, and hand-declared module imports need manual changes. Press `d` on a flake row to remove it. NixBox deletes the line from whichever file declares it, NixBox's flake module or your own entry file, and then removes the flake's input from `flake.nix` only if nothing references it any more. Removing `llm-agents#chatgpt` while `llm-agents#claude-code` is still listed keeps the `llm-agents` input, and removing the last one drops it.
+Press `m` on a hand-declared flake package to move it into NixBox's generated flake module. `M` includes eligible flake packages in its migrate-all queue. The GUI shows a Migrate button on eligible rows. The existing root flake input remains in place. Migration requires a dedicated line in `home.packages` or `environment.systemPackages`, a dynamic `pkgs.system` or `pkgs.stdenv.hostPlatform.system` selector, and a `github:` input that NixBox can identify. Other package options, literal-system selectors, inline declarations, non-GitHub inputs, and hand-declared module imports need manual changes. Press `Delete` in Vim Normal mode on a flake row to remove it. NixBox deletes the line from whichever file declares it, NixBox's flake module or your own entry file, and then removes the flake's input from `flake.nix` only if nothing references it any more. Removing `llm-agents#chatgpt` while `llm-agents#claude-code` is still listed keeps the `llm-agents` input, and removing the last one drops it.
 
 The Installed tab's text field filters the combined list without changing configuration. It matches flake rows by name or repository.
 
@@ -88,7 +88,7 @@ Normal input mode keeps the search and filter fields ready for typing. Use the a
 
 ### Vim input mode
 
-The nixpkgs, Flakes, and Installed fields support Vim-like text editing. This is a focused input editor, not a full Vim command language.
+The nixpkgs, Flakes, and Installed fields share the same Vim-like text editor and key bindings. This is a focused input editor, not a full Vim command language.
 
 | Key | Mode | Action |
 | --- | --- | --- |
@@ -104,7 +104,7 @@ The nixpkgs, Flakes, and Installed fields support Vim-like text editing. This is
 | `0`, `$` | Normal or Visual | Move to the start or end. |
 | `x` | Normal | Delete the character under the cursor. |
 | `D` | Normal | Delete from the cursor through the end. |
-| `dd` | Normal | Clear the nixpkgs or Flakes search field. In the Installed tab, `d` means uninstall. |
+| `dd` | Normal | Clear the search or filter field in any of the three tabs. A different key cancels the pending first `d`. |
 | `d` or `x` | Visual | Delete the inclusive selection and return to Normal mode. |
 | `c` | Visual | Delete the inclusive selection and enter Insert mode. |
 | `Esc` | Insert or Visual | Return to Normal mode. |

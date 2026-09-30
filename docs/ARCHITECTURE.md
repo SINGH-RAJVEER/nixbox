@@ -154,7 +154,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `handlers.rs` translates key presses and `AppEvent` values into state changes.
 - `ops.rs` schedules searches, prepares the package catalog, turns the selected row into an `Op`, and reports what the `Session` did with it.
 - `state.rs` turns what `Session::restore` picked up into the starting tab and status line.
-- `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command.
+- `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command. Its shared event handler owns text editing for the nixpkgs, Flakes, and Installed fields; `handlers.rs` handles result navigation, tab actions, and refreshing results after edits.
 - `nav.rs` handles wrapped row selection, tab movement, and settings entry.
 - `theme.rs` defines the Ratatui styles for the six palettes named in `nixbox-config::THEMES`, with a test asserting the two lists match.
 - `ui/` renders the shared bars, package search, flake search and detail panel, installed list, build log, queue, and settings popup.
