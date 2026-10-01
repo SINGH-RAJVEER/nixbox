@@ -114,7 +114,7 @@ pub(super) fn draw_tab_strip(f: &mut Frame, area: Rect, app: &App) {
 		.constraints([Constraint::Min(10), Constraint::Length(context_width)])
 		.split(area);
 
-	let mut spans: Vec<Span> = vec![Span::raw(" ")];
+	let mut spans: Vec<Span> = Vec::new();
 	for tab in tabs.iter() {
 		let is_active = *tab == app.tab;
 
@@ -152,7 +152,7 @@ fn context_pills_width(app: &App) -> usize {
 pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 	let t = app.theme();
 	let status = app.status.as_str();
-	let keys = context_keys(app);
+	let keys = format!("{}  ctrl-r VCS", context_keys(app));
 
 	let inner_width = area.width as usize;
 	let keys_len = keys.chars().count();
@@ -204,6 +204,7 @@ fn context_keys(app: &App) -> &'static str {
 					"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 				}
 				Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
+				Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
 			}
 		}
 		Mode::Browsing => match app.tab {
@@ -244,6 +245,7 @@ fn context_keys(app: &App) -> &'static str {
 				"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 			}
 			Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
+			Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
 		},
 	}
 }

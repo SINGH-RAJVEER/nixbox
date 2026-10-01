@@ -41,11 +41,26 @@ The sidebar lists the pages. The status line at the bottom reports the last thin
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The sidebar shows a spinner while a rebuild runs, and a notification appears when it ends. |
-| Settings | Install target, channel, and theme, saved immediately to `~/.config/nixbox/settings.json`. |
+| Version control | Configuration repository status, full diff, editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
+| Settings | Install target, channel, and theme, saved immediately to `~/.config/nixbox/settings.json`, and the configuration directory path. |
 
 Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
 
 Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
+
+## Configuration repository
+
+Open **Version control** in the sidebar to review the configuration repository. This separate page uses the same flat layout as the other pages. Its content scrolls through the full review and all repository controls; long status, diff and reviewed-message lines can scroll horizontally. Git and JJ repositories are detected for the configuration directory. Colocated JJ takes priority over Git. If no repository exists, choose **Initialize Git** or **Initialize JJ with Git**. Initialization does not commit or push.
+
+**Refresh review** shows the complete status, diff and commit message, including manual edits and untracked files that are not ignored. The message is suggested from the journal of successful configuration operations. Option values are omitted from that suggestion. The diff shows the actual file contents. You can edit the multiline message. Refresh keeps your edits, including a deliberately cleared message; a blank message cannot be reviewed or committed. Untouched generated messages follow updated suggestions. Editing while a refresh runs keeps the newer draft and requires another refresh.
+
+Read the review, then click **Commit reviewed changes locally**. The backend validates that the files, repository revision and operation journal still match that review before committing. A failed or stale commit requires a new explicit refresh. Nothing pushes automatically. Repository actions are blocked while operations are queued or a rebuild runs, including a paused queue. Configuration mutations are blocked while a repository command runs. Finish the queued work, or drop it, before reviewing again.
+
+To push, enter an explicit local Git branch or JJ bookmark and click **Push named branch/bookmark to origin**. Only `origin` is used. For JJ, the optional **Create/advance nixbox bookmark** control creates or fast-forward advances only `nixbox` to the last nonempty committed change. Divergent history is refused. Pushes never force-update the remote.
+
+If there is no origin, you can optionally create a GitHub repository with authenticated `gh`. Enter both an explicit owner and repository name, choose Private or Public, and click **Create repository and add origin**. Private is the default. This creates the remote and adds origin without pushing. Use the separate push control to publish a named branch or bookmark.
+
+Git parent repositories are reviewed and committed only within the configuration directory; unrelated staged paths cause refusal. JJ parent repositories can be reviewed, but commit and push are refused because the working-copy commit is shared. GitHub repository creation requires a repository rooted at the configuration directory. Git, JJ and `gh` subprocesses run on background workers; results and errors appear on the Version control page. Opening this page refreshes the review when no writes are pending. Finishing a rebuild refreshes it while this page is open. Settings does not start repository commands. JJ must be on the GUI's `PATH`; the Nix package wrapper includes it.
 
 ## Themes
 

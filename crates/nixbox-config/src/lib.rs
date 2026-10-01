@@ -117,6 +117,11 @@ impl Config {
 }
 
 impl Config {
+    /// Root of the configuration managed by nixbox, independent of the target.
+    pub fn config_root(&self) -> PathBuf {
+		nixos_config_dir()
+    }
+
     /// Returns the path where nixbox writes its managed packages file for the
     /// current target.
     pub fn managed_file(&self) -> PathBuf {

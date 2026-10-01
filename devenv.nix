@@ -6,6 +6,9 @@
     pkgs.nixd
     pkgs.nil
     pkgs.just
+	pkgs.git
+	pkgs.jujutsu
+	pkgs.gh
     # Build inputs for nixbox-gui.
     pkgs.pkg-config
     pkgs.fontconfig

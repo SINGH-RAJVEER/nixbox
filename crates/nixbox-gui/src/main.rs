@@ -9,6 +9,8 @@ mod native;
 #[cfg(feature = "native")]
 mod options;
 #[cfg(feature = "native")]
+mod repository;
+#[cfg(feature = "native")]
 mod theme;
 #[cfg(feature = "native")]
 mod ui;

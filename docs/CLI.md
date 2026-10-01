@@ -1,6 +1,6 @@
 # Command line interface
 
-Running `nixbox` with no subcommand starts the terminal UI. Every operation the TUI performs is also available as a subcommand, so the same work can be scripted, run over SSH, or put in a shell alias.
+Running `nixbox` with no subcommand starts the terminal UI. Package operations are also available as subcommands, so they can be scripted, run over SSH, or put in a shell alias.
 
 Both front-ends go through `nixbox-core`. A package installed from the command line and the same package installed in the TUI take the identical code path, read the same catalog, and produce the identical files. They also share `state.json`, so a queue built in the TUI can be finished with `nixbox resume`, and a rebuild the CLI started and lost can be picked up by either.
 
@@ -47,6 +47,34 @@ Each of these accepts:
 Without a terminal on stdin, a change requires `--yes`. This is deliberate: a script that forgets it stops rather than rebuilding a machine unattended.
 
 Writing happens before the rebuild. If a rebuild fails, the files already reflect the intent, so recovering is `nixbox apply` rather than repeating the original command.
+
+## Committing configuration changes
+
+`nixbox commit` acts on the saved configuration root, including manual edits and untracked files that are not ignored. It loads settings directly without running Nix or loading package manifests. JJ takes priority when the configuration belongs to a colocated repository. Changing packages or settings never automatically commits or pushes.
+
+| Command | Purpose |
+| --- | --- |
+| `nixbox commit [--edit]` | Generate the message, print the exact status, full diff, and final message, then ask for approval. Commit that same review. |
+
+The default message is generated deterministically from the shared backend's journal of successful operations. Descriptions are sorted and omit option values. With no recorded operations, the message is `nixbox: update configuration`.
+
+`commit` accepts `--yes` / `-y` and `--dry-run`. It always shows the full review before confirmation, including with `--yes`. A non-terminal stdin requires `--yes`. A dry run skips confirmation and mutation even with `--yes`. JJ commit dry runs are refused before review because the shared backend's review API snapshots the working copy. Ordinary JJ commit reviews can update snapshot metadata.
+
+Every commit starts with the generated message; there is no `-m` or `--message` override. `--edit` writes the suggestion to a private temporary file and invokes `$EDITOR` directly with the file path as its only argument. Set `EDITOR` to one executable name or path, such as `vim` or `/usr/bin/nano`. Embedded arguments, quotes, shell operators, and variable expansion are not interpreted. Use an executable wrapper if your editor needs flags. Editor failure, invalid UTF-8, and blank messages stop the commit. The temporary file is removed on normal success or error. `--dry-run --edit` skips the editor and shows the unedited message for Git; JJ still refuses the dry run.
+
+The core rejects a commit if repository state, configuration files, or the operation journal changed after review. Git commits are limited to the configuration scope and refuse unrelated staged files. JJ commits require a repository rooted at the configuration directory. Commit output includes the revision and any journal-cleanup warning. Diffs contain the actual configuration contents; message redaction does not redact the diff.
+
+Use Git or JJ directly for repository setup, status, diffs, remotes, bookmarks, and pushing. For example, run `git init` or `jj git init --colocate` in the configuration directory before the first commit.
+
+```sh
+nixbox commit
+nixbox commit --dry-run  # Git only
+EDITOR=vim nixbox commit --edit
+nixbox commit --yes
+nixbox-cli commit --edit -y
+```
+
+`commit` prints text and rejects `--json`. `--target` and `--channel` do not narrow the repository scope.
 
 ## Resuming
 

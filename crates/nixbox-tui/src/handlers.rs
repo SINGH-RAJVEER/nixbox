@@ -30,12 +30,24 @@ pub(crate) async fn handle_terminal_event(
 	if key.kind != KeyEventKind::Press {
 		return Ok(());
 	}
+	if app.repository.busy {
+		crate::repository::handle_key(app, tx, key);
+		return Ok(());
+	}
 
 	if let Some(input) = active_input(app)
 		&& input.mode() == VimMode::Normal
 		&& key.code != KeyCode::Char('d')
 	{
 		input.clear_pending_d();
+	}
+
+	if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL) {
+		app.mode = Mode::Browsing;
+		app.flake_picker = None;
+		crate::nav::set_tab(app, Tab::Vcs);
+		crate::repository::ensure_loaded(app, tx);
+		return Ok(());
 	}
 
 	if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
@@ -45,6 +57,14 @@ pub(crate) async fn handle_terminal_event(
 
 	if let Mode::SettingsSelect = app.mode {
 		handle_settings_select(app, key.code, key.modifiers);
+		return Ok(());
+	}
+	if app.tab == Tab::Vcs {
+		match key.code {
+			KeyCode::Tab => cycle_tab(app),
+			KeyCode::BackTab => cycle_tab_back(app),
+			_ => crate::repository::handle_key(app, tx, key),
+		}
 		return Ok(());
 	}
 
@@ -97,10 +117,16 @@ pub(crate) async fn handle_terminal_event(
 	match key.code {
 		KeyCode::Tab => {
 			cycle_tab(app);
+			if app.tab == Tab::Vcs {
+				crate::repository::ensure_loaded(app, tx);
+			}
 			return Ok(());
 		}
 		KeyCode::BackTab => {
 			cycle_tab_back(app);
+			if app.tab == Tab::Vcs {
+				crate::repository::ensure_loaded(app, tx);
+			}
 			return Ok(());
 		}
 		KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -182,7 +208,7 @@ fn active_input(app: &mut App) -> Option<&mut VimInput> {
 		Tab::Search => Some(&mut app.input),
 		Tab::Flakes => Some(&mut app.flake_input),
 		Tab::Installed => Some(&mut app.installed_input),
-		Tab::Building | Tab::Queue => None,
+		Tab::Building | Tab::Queue | Tab::Vcs => None,
 	}
 }
 
@@ -305,6 +331,7 @@ fn settings_main_index(page: SettingsPage) -> usize {
 
 pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: AppEvent) {
 	match ev {
+		AppEvent::Repository(result) => crate::repository::on_result(app, result),
 		AppEvent::SearchDone { epoch, hits } => {
 			if epoch == app.search_epoch {
 				app.search_task = None;
@@ -473,9 +500,61 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn only_tab_and_backtab_switch_tabs() {
+	async fn repository_busy_intercepts_mutation_and_exit_keys() {
+		for tab in [Tab::Vcs, Tab::Search, Tab::Flakes, Tab::Installed] {
+			let mut app = test_app();
+			app.tab = tab;
+			app.repository.busy = true;
+			press(&mut app, KeyCode::Enter).await;
+			press(&mut app, KeyCode::Esc).await;
+			press(&mut app, KeyCode::Tab).await;
+			press(&mut app, KeyCode::BackTab).await;
+			press(&mut app, KeyCode::Char('d')).await;
+			press(&mut app, KeyCode::Delete).await;
+			for code in ['c', 'r', 's'] {
+				press_with_modifiers(&mut app, KeyCode::Char(code), KeyModifiers::CONTROL).await;
+			}
+			assert_eq!(app.tab, tab);
+			assert_eq!(app.mode, Mode::Browsing);
+			assert!(!app.should_quit);
+			assert!(app.session.queue.is_empty());
+		}
+	}
+
+	#[tokio::test]
+	async fn ctrl_r_clears_pending_delete_before_opening_vcs_across_search_tabs() {
+		for tab in [Tab::Search, Tab::Flakes, Tab::Installed] {
+			let mut app = test_app();
+			crate::repository::on_result(
+				&mut app,
+				Ok(crate::repository::Outcome::Detected(None, None)),
+			);
+			app.tab = tab;
+			*active_input(&mut app).unwrap() = VimInput::new("ripgrep".into());
+			press(&mut app, KeyCode::Char('d')).await;
+			app.mode = Mode::SettingsSelect;
+			app.flake_picker = Some(0);
+
+			press_with_modifiers(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL).await;
+			assert_eq!(app.tab, Tab::Vcs);
+			assert_eq!(app.mode, Mode::Browsing);
+			assert!(app.flake_picker.is_none());
+			assert!(active_input(&mut app).is_none());
+			app.tab = tab;
+			let input = active_input(&mut app).unwrap();
+			assert!(!input.has_pending_d(), "{tab:?}");
+			assert_eq!(input.value(), "ripgrep");
+		}
+	}
+
+	#[tokio::test]
+	async fn tab_and_backtab_switch_tabs_and_wrap_through_vcs() {
 		let mut app = test_app();
 		app.input = VimInput::new("abc".into());
+		crate::repository::on_result(
+			&mut app,
+			Ok(crate::repository::Outcome::Detected(None, None)),
+		);
 
 		press(&mut app, KeyCode::Left).await;
 		assert_eq!(app.tab, Tab::Search);
@@ -490,6 +569,19 @@ mod tests {
 
 		press(&mut app, KeyCode::BackTab).await;
 		assert_eq!(app.tab, Tab::Search);
+		press(&mut app, KeyCode::BackTab).await;
+		assert_eq!(app.tab, Tab::Vcs);
+		press(&mut app, KeyCode::BackTab).await;
+		assert_eq!(app.tab, Tab::Installed);
+		press(&mut app, KeyCode::Tab).await;
+		assert_eq!(app.tab, Tab::Vcs);
+		press(&mut app, KeyCode::Tab).await;
+		assert_eq!(app.tab, Tab::Search);
+		app.mode = Mode::SettingsSelect;
+		press_with_modifiers(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL).await;
+		assert_eq!(app.tab, Tab::Vcs);
+		assert_eq!(app.mode, Mode::Browsing);
+		assert!(!app.repository.busy);
 	}
 
 	#[tokio::test]
@@ -575,6 +667,10 @@ mod tests {
 				KeyCode::PageDown,
 			] {
 				let mut app = test_app();
+				crate::repository::on_result(
+					&mut app,
+					Ok(crate::repository::Outcome::Detected(None, None)),
+				);
 				app.tab = tab;
 				*active_input(&mut app).unwrap() = VimInput::new("ripgrep".into());
 				press(&mut app, KeyCode::Char('d')).await;

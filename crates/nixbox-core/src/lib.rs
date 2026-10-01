@@ -16,6 +16,7 @@ pub mod report;
 pub mod search;
 pub mod session;
 pub mod state;
+pub mod vcs;
 
 pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};
 pub use flakes::InstalledFlake;
@@ -25,6 +26,7 @@ pub use rebuild::{Escalation, HOME_FALLBACK_NOTE, RebuildCommand};
 pub use report::{LogReporter, Reporter, SilentReporter};
 pub use session::{BuildEnded, Enqueued, Restored, Session};
 pub use state::{InProgress, PersistedState, state_path};
+pub use vcs::{Backend, CommitOutcome, JournalEntry, Repository, Review, Vcs, Visibility};
 
 #[cfg(test)]
 pub(crate) mod tests {

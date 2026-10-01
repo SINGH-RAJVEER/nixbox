@@ -53,6 +53,12 @@ If `<root>/configuration.nix` does not exist and `nixos_main_file` is unset, Nix
 
 `NIXBOX_CONFIG_DIR` does not move `settings.json`, `state.json`, or the package catalog cache.
 
+## Version control journal
+
+Repository controls use the configuration root above, not the directory containing NixBox's own settings. Successful operations that change files are recorded in `$XDG_CONFIG_HOME/nixbox/vcs-journal/<root-hash>.json`. The hash is stable for a canonical root path, and each journal also stores that full path to verify its scope. The journal stores operation descriptions and changed paths, not option values.
+
+Commit-message suggestions sort the pending descriptions deterministically. A successful app commit clears the journal; pushing does not. External commits do not clear it, so review and edit the suggested message if you also commit outside NixBox. Keep main-file overrides inside the configuration root. A pending operation that touched an external file prevents committing rather than silently omitting that change. See [Version control](VERSION_CONTROL.md) for repository scope and safety rules.
+
 ## Package catalog cache
 
 The catalog lives at `$XDG_CACHE_HOME/nixbox/package-catalog.json`, normally `~/.cache/nixbox/package-catalog.json`. It contains a format version, the locked flake reference and revision, and all parsed package hits. NixBox accepts the cache only when its format and source match the current lock file.
