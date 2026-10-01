@@ -46,6 +46,8 @@ The sidebar lists the pages. The status line at the bottom reports the last thin
 
 Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
 
+The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
+
 Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
 
 ## Configuration repository

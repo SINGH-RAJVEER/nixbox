@@ -855,6 +855,66 @@ mod tests {
 	use super::{NixboxApp, Page};
 
 	#[gpui_kit::test]
+	async fn package_results_appear_replace_and_clear_in_the_window(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
+		let hit = |attr: &str| SearchHit {
+			attr: attr.into(),
+			pname: attr.into(),
+			version: "1.0".into(),
+			description: "Search result".into(),
+		};
+
+		// Exercise completion updates on the same page, without a page switch
+		// that could hide a missing repaint or a collapsed list viewport.
+		for hits in [
+			Vec::new(),
+			vec![hit("ripgrep"), hit("fd")],
+			vec![hit("git")],
+			Vec::new(),
+			vec![hit("ripgrep")],
+		] {
+			let count = hits.len();
+			cx.update_window(handle.into(), |_, window, cx| {
+				app.update(cx, |app, cx| {
+					app.results = hits;
+					app.searching = false;
+					cx.notify();
+				});
+				window.render_frame(cx);
+				for index in 0..count {
+					let button = window.find(("install", index));
+					assert!(button.visible(), "Search result {index} must be visible");
+					assert!(button.bounds().size.width > px(0.));
+					assert!(button.bounds().size.height > px(0.));
+				}
+				assert!(window.try_find(("install", count)).is_none());
+			})
+			.expect("window");
+		}
+	}
+
+	#[gpui_kit::test]
 	async fn every_page_renders_with_data_and_while_building(cx: &mut TestAppContext) {
 		cx.update(gpui_kit::init);
 		let runtime = tokio::runtime::Builder::new_current_thread()
@@ -929,6 +989,12 @@ mod tests {
 					}
 				});
 				window.render_frame(cx);
+				if page == Page::Packages {
+					assert!(
+						window.find(("install", 0_usize)).visible(),
+						"Computed search results must be visible in the package list"
+					);
+				}
 			})
 			.expect("window");
 		}
