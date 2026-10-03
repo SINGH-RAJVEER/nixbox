@@ -97,11 +97,10 @@ fn parse_flake_packages(raw: &str, target: ScanTarget) -> Vec<ExternalFlakePacka
 					(target, entry.source_attr.as_str()),
 					(ScanTarget::HomeManager, "home.packages")
 						| (ScanTarget::Nixos, "environment.systemPackages")
-				)
-				&& (entry
-					.token
-					.contains(".packages.${pkgs.stdenv.hostPlatform.system}.")
-					|| entry.token.contains(".packages.${pkgs.system}."));
+				) && (entry
+				.token
+				.contains(".packages.${pkgs.stdenv.hostPlatform.system}.")
+				|| entry.token.contains(".packages.${pkgs.system}."));
 			Some(ExternalFlakePackage {
 				input,
 				package,

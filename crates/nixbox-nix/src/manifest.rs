@@ -490,15 +490,14 @@ fn insert_into_imports_list(raw: &str, import_str: &str) -> Option<String> {
 	let rest = &raw[after_bracket..];
 
 	// Detect multi-line vs single-line list.
-	let multiline = rest
-		.chars()
-		.take_while(|c| c.is_whitespace() && *c != '\n')
-		.count()
-		< rest.len()
-		&& rest
-			.chars()
-			.take_while(|c| c.is_whitespace())
-			.any(|c| c == '\n');
+	let multiline =
+		rest.chars()
+			.take_while(|c| c.is_whitespace() && *c != '\n')
+			.count() < rest.len()
+			&& rest
+				.chars()
+				.take_while(|c| c.is_whitespace())
+				.any(|c| c == '\n');
 
 	let mut out = String::with_capacity(raw.len() + import_str.len() + 8);
 	out.push_str(&raw[..after_bracket]);

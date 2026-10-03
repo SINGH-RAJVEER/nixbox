@@ -41,7 +41,7 @@ in
 
 	languages.rust = {
 		enable = true;
-		channel = "nightly";
+		channel = "stable";
 		components = [
 			"rustc"
 			"cargo"

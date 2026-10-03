@@ -328,43 +328,42 @@ impl RawSet {
 		let root = format!("{}/", self.root.trim_end_matches('/'));
 		let ours =
 			|file: &str| file == settings_file || file.ends_with(&format!("/{settings_file}"));
-		let entries = self
-			.options
-			.into_iter()
-			.map(|raw| {
-				let (kind, type_description) = match raw.kind.ok() {
-					Some(raw_type) => (raw_type.kind(), raw_type.description),
-					None => (OptionKind::Other("unknown".into()), "unknown".into()),
-				};
-				let files = raw.files.ok().unwrap_or_default();
-				let local: Vec<String> = files
-					.iter()
-					.filter_map(|file| file.strip_prefix(&root).map(str::to_string))
-					.collect();
-				let set_by_nixbox = local.iter().any(|file| ours(file));
-				let mut defined_in: Vec<String> =
-					local.into_iter().filter(|file| !ours(file)).collect();
-				defined_in.sort();
-				defined_in.dedup();
-				let set_by_module = raw.priority.ok().is_some_and(|priority| priority <= 100)
-					&& defined_in.is_empty()
-					&& !set_by_nixbox
-					&& kind != OptionKind::StrList;
-				OptionEntry {
-					path: raw.path,
-					kind,
-					type_description,
-					description: raw.description.ok().flatten(),
-					default: raw.default.ok().flatten(),
-					example: raw.example.ok().flatten(),
-					value: raw.value.ok(),
-					defined_in,
-					set_by_nixbox,
-					set_by_module,
-					read_only: raw.read_only,
-				}
-			})
-			.collect();
+		let entries =
+			self.options
+				.into_iter()
+				.map(|raw| {
+					let (kind, type_description) = match raw.kind.ok() {
+						Some(raw_type) => (raw_type.kind(), raw_type.description),
+						None => (OptionKind::Other("unknown".into()), "unknown".into()),
+					};
+					let files = raw.files.ok().unwrap_or_default();
+					let local: Vec<String> = files
+						.iter()
+						.filter_map(|file| file.strip_prefix(&root).map(str::to_string))
+						.collect();
+					let set_by_nixbox = local.iter().any(|file| ours(file));
+					let mut defined_in: Vec<String> =
+						local.into_iter().filter(|file| !ours(file)).collect();
+					defined_in.sort();
+					defined_in.dedup();
+					let set_by_module = raw.priority.ok().is_some_and(|priority| priority <= 100)
+						&& defined_in.is_empty()
+						&& !set_by_nixbox && kind != OptionKind::StrList;
+					OptionEntry {
+						path: raw.path,
+						kind,
+						type_description,
+						description: raw.description.ok().flatten(),
+						default: raw.default.ok().flatten(),
+						example: raw.example.ok().flatten(),
+						value: raw.value.ok(),
+						defined_in,
+						set_by_nixbox,
+						set_by_module,
+						read_only: raw.read_only,
+					}
+				})
+				.collect();
 		OptionSet {
 			namespaces: self.namespaces,
 			entries,
