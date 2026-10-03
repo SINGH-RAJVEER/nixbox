@@ -24,108 +24,108 @@ pub const EXIT_REBUILD_FAILED: u8 = 3;
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct ApplyOpts {
-    /// Print what would change and exit without touching anything.
-    #[arg(long)]
-    pub dry_run: bool,
+	/// Print what would change and exit without touching anything.
+	#[arg(long)]
+	pub dry_run: bool,
 
-    /// Write the configuration changes but skip the rebuild.
-    #[arg(long)]
-    pub no_rebuild: bool,
+	/// Write the configuration changes but skip the rebuild.
+	#[arg(long)]
+	pub no_rebuild: bool,
 
-    /// Do not ask before changing the configuration.
-    #[arg(long, short = 'y')]
-    pub yes: bool,
+	/// Do not ask before changing the configuration.
+	#[arg(long, short = 'y')]
+	pub yes: bool,
 }
 
 /// What a command decided to do, ready to be confirmed and executed.
 pub struct Plan {
-    pub scope: Target,
-    pub ops: Vec<Op>,
-    /// One line per change, shown before the prompt.
-    pub summary: Vec<String>,
+	pub scope: Target,
+	pub ops: Vec<Op>,
+	/// One line per change, shown before the prompt.
+	pub summary: Vec<String>,
 }
 
 /// Sends engine notes straight to stderr, so a long rebuild shows its work.
 struct StderrReporter;
 
 impl Reporter for StderrReporter {
-    fn info(&mut self, msg: String) {
-        eprintln!("  {msg}");
-    }
+	fn info(&mut self, msg: String) {
+		eprintln!("  {msg}");
+	}
 
-    fn warn(&mut self, msg: String) {
-        eprintln!("  Warning: {msg}");
-    }
+	fn warn(&mut self, msg: String) {
+		eprintln!("  Warning: {msg}");
+	}
 }
 
 pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Result<ExitCode> {
-    for line in &plan.summary {
-        eprintln!("  {line}");
-    }
+	for line in &plan.summary {
+		eprintln!("  {line}");
+	}
 
-    if opts.dry_run {
-        eprintln!(
-            "Dry run: nothing written. Drop --dry-run to apply and rebuild {}.",
-            target_name(plan.scope)
-        );
-        return Ok(ExitCode::SUCCESS);
-    }
+	if opts.dry_run {
+		eprintln!(
+			"Dry run: nothing written. Drop --dry-run to apply and rebuild {}.",
+			target_name(plan.scope)
+		);
+		return Ok(ExitCode::SUCCESS);
+	}
 
-    if !confirm(opts, plan.scope)? {
-        eprintln!("Cancelled.");
-        return Ok(ExitCode::SUCCESS);
-    }
+	if !confirm(opts, plan.scope)? {
+		eprintln!("Cancelled.");
+		return Ok(ExitCode::SUCCESS);
+	}
 
-    let mut reporter = StderrReporter;
-    for op in &plan.ops {
-        engine.apply(op, &mut reporter)?;
-    }
-    if plan.ops.is_empty() {
-        // `nixbox apply` rewrites the managed file even with nothing queued,
-        // so a hand-edited or deleted file is restored before the rebuild.
-        let managed = engine.write_manifest(plan.scope)?;
-        reporter.info(format!("Wrote {}.", managed.path().display()));
-    }
+	let mut reporter = StderrReporter;
+	for op in &plan.ops {
+		engine.apply(op, &mut reporter)?;
+	}
+	if plan.ops.is_empty() {
+		// `nixbox apply` rewrites the managed file even with nothing queued,
+		// so a hand-edited or deleted file is restored before the rebuild.
+		let managed = engine.write_manifest(plan.scope)?;
+		reporter.info(format!("Wrote {}.", managed.path().display()));
+	}
 
-    if opts.no_rebuild {
-        eprintln!(
-            "Wrote the configuration. Run `{} apply` to rebuild.",
-            crate::program()
-        );
-        return Ok(ExitCode::SUCCESS);
-    }
+	if opts.no_rebuild {
+		eprintln!(
+			"Wrote the configuration. Run `{} apply` to rebuild.",
+			crate::program()
+		);
+		return Ok(ExitCode::SUCCESS);
+	}
 
-    let label = match plan.summary.as_slice() {
-        [only] => only.clone(),
-        rest => format!("{} change(s)", rest.len()),
-    };
-    run_rebuild(engine, plan.scope, &label).await
+	let label = match plan.summary.as_slice() {
+		[only] => only.clone(),
+		rest => format!("{} change(s)", rest.len()),
+	};
+	run_rebuild(engine, plan.scope, &label).await
 }
 
 /// Asks before changing anything. A non-interactive stdin has to pass
 /// `--yes`, so a script can never silently trigger `sudo nixos-rebuild`.
 fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
-    if opts.yes {
-        return Ok(true);
-    }
-    if !std::io::stdin().is_terminal() {
-        bail!(
-            "refusing to change your {} configuration without a terminal to ask at; pass --yes",
-            target_name(scope)
-        );
-    }
+	if opts.yes {
+		return Ok(true);
+	}
+	if !std::io::stdin().is_terminal() {
+		bail!(
+			"refusing to change your {} configuration without a terminal to ask at; pass --yes",
+			target_name(scope)
+		);
+	}
 
-    let action = if opts.no_rebuild {
-        "Write these changes?"
-    } else {
-        "Write these changes and rebuild?"
-    };
-    eprint!("{action} [y/N] ");
-    std::io::stderr().flush()?;
+	let action = if opts.no_rebuild {
+		"Write these changes?"
+	} else {
+		"Write these changes and rebuild?"
+	};
+	eprint!("{action} [y/N] ");
+	std::io::stderr().flush()?;
 
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
+	let mut answer = String::new();
+	std::io::stdin().read_line(&mut answer)?;
+	Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
 /// Runs the rebuild, recording it as in progress first.
@@ -135,70 +135,70 @@ fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
 /// not been switched. Recording it is what lets `nixbox resume` — or the TUI —
 /// pick that up instead of leaving it to be noticed by accident.
 pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> Result<ExitCode> {
-    mark_in_progress(scope, label);
-    let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
-    let (cancel_tx, cancel_rx) = oneshot::channel();
-    let task = tokio::spawn(rebuild::run(
-        engine.config.home_manager_dir(),
-        scope,
-        Escalation::Terminal,
-        build_tx,
-        cancel_rx,
-    ));
+	mark_in_progress(scope, label);
+	let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
+	let (cancel_tx, cancel_rx) = oneshot::channel();
+	let task = tokio::spawn(rebuild::run(
+		engine.config.home_manager_dir(),
+		scope,
+		Escalation::Terminal,
+		build_tx,
+		cancel_rx,
+	));
 
-    let mut cancel = Some(cancel_tx);
-    let mut outcome = Outcome::Succeeded;
-    loop {
-        tokio::select! {
-            event = build_rx.recv() => {
-                match event {
-                    Some(BuildEvent::Line(line)) => eprintln!("{line}"),
-                    Some(BuildEvent::Finished(Ok(()))) => break,
-                    Some(BuildEvent::Finished(Err(error))) => {
-                        outcome = Outcome::Failed(error);
-                        break;
-                    }
-                    Some(BuildEvent::Cancelled) => {
-                        outcome = Outcome::Cancelled;
-                        break;
-                    }
-                    // The sender went away without a verdict; nothing said it
-                    // failed, so take the silence as success.
-                    None => break,
-                }
-            }
-            _ = tokio::signal::ctrl_c(), if cancel.is_some() => {
-                eprintln!("Cancelling; waiting for nix to stop.");
-                if let Some(tx) = cancel.take() {
-                    let _ = tx.send(());
-                }
-            }
-        }
-    }
-    let _ = task.await;
+	let mut cancel = Some(cancel_tx);
+	let mut outcome = Outcome::Succeeded;
+	loop {
+		tokio::select! {
+			event = build_rx.recv() => {
+				match event {
+					Some(BuildEvent::Line(line)) => eprintln!("{line}"),
+					Some(BuildEvent::Finished(Ok(()))) => break,
+					Some(BuildEvent::Finished(Err(error))) => {
+						outcome = Outcome::Failed(error);
+						break;
+					}
+					Some(BuildEvent::Cancelled) => {
+						outcome = Outcome::Cancelled;
+						break;
+					}
+					// The sender went away without a verdict; nothing said it
+					// failed, so take the silence as success.
+					None => break,
+				}
+			}
+			_ = tokio::signal::ctrl_c(), if cancel.is_some() => {
+				eprintln!("Cancelling; waiting for nix to stop.");
+				if let Some(tx) = cancel.take() {
+					let _ = tx.send(());
+				}
+			}
+		}
+	}
+	let _ = task.await;
 
-    match &outcome {
-        Outcome::Succeeded => {
-            finish_in_progress(None);
-            eprintln!("Done.");
-        }
-        Outcome::Cancelled => {
-            finish_in_progress(None);
-            eprintln!(
-                "Cancelled. Your configuration is already written — run `{} apply` to finish.",
-                crate::program()
-            );
-        }
-        Outcome::Failed(error) => {
-            finish_in_progress(Some(error.clone()));
-            eprintln!("Rebuild failed: {error}");
-            eprintln!(
-                "Your configuration is written; fix the error and run `{} apply`.",
-                crate::program()
-            );
-        }
-    }
-    Ok(ExitCode::from(exit_code_for(&outcome)))
+	match &outcome {
+		Outcome::Succeeded => {
+			finish_in_progress(None);
+			eprintln!("Done.");
+		}
+		Outcome::Cancelled => {
+			finish_in_progress(None);
+			eprintln!(
+				"Cancelled. Your configuration is already written — run `{} apply` to finish.",
+				crate::program()
+			);
+		}
+		Outcome::Failed(error) => {
+			finish_in_progress(Some(error.clone()));
+			eprintln!("Rebuild failed: {error}");
+			eprintln!(
+				"Your configuration is written; fix the error and run `{} apply`.",
+				crate::program()
+			);
+		}
+	}
+	Ok(ExitCode::from(exit_code_for(&outcome)))
 }
 
 /// Records the rebuild about to start, leaving any queue the TUI saved alone.
@@ -206,75 +206,75 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 /// Failing to write the file is not worth stopping a rebuild over; it only
 /// costs the ability to resume one that gets killed.
 fn mark_in_progress(scope: Target, label: &str) {
-    let mut state = PersistedState::load().unwrap_or_default();
-    state.in_progress = Some(InProgress {
-        scope,
-        label: label.to_string(),
-    });
-    state.last_error = None;
-    let _ = state.save();
+	let mut state = PersistedState::load().unwrap_or_default();
+	state.in_progress = Some(InProgress {
+		scope,
+		label: label.to_string(),
+	});
+	state.last_error = None;
+	let _ = state.save();
 }
 
 /// Clears the record once the rebuild has reached a verdict, keeping the error
 /// so the next run can explain what happened.
 fn finish_in_progress(error: Option<String>) {
-    let mut state = PersistedState::load().unwrap_or_default();
-    state.in_progress = None;
-    state.last_error = error;
-    let _ = state.save();
+	let mut state = PersistedState::load().unwrap_or_default();
+	state.in_progress = None;
+	state.last_error = error;
+	let _ = state.save();
 }
 
 /// How a rebuild ended.
 #[derive(Debug)]
 enum Outcome {
-    Succeeded,
-    Cancelled,
-    Failed(String),
+	Succeeded,
+	Cancelled,
+	Failed(String),
 }
 
 /// A failed rebuild is worth its own exit code: it means nixbox did its part
 /// and nix refused, which a script may well want to retry rather than treat
 /// as a usage error.
 fn exit_code_for(outcome: &Outcome) -> u8 {
-    match outcome {
-        Outcome::Succeeded => 0,
-        Outcome::Cancelled => EXIT_FAILURE,
-        Outcome::Failed(_) => EXIT_REBUILD_FAILED,
-    }
+	match outcome {
+		Outcome::Succeeded => 0,
+		Outcome::Cancelled => EXIT_FAILURE,
+		Outcome::Failed(_) => EXIT_REBUILD_FAILED,
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ApplyOpts, EXIT_REBUILD_FAILED, Outcome, confirm, exit_code_for};
-    use nixbox_config::Target;
+	use super::{ApplyOpts, EXIT_REBUILD_FAILED, Outcome, confirm, exit_code_for};
+	use nixbox_config::Target;
 
-    #[test]
-    fn each_ending_maps_to_its_own_exit_code() {
-        assert_eq!(exit_code_for(&Outcome::Succeeded), 0);
-        assert_eq!(exit_code_for(&Outcome::Cancelled), 1);
-        assert_eq!(
-            exit_code_for(&Outcome::Failed("boom".into())),
-            EXIT_REBUILD_FAILED
-        );
-    }
+	#[test]
+	fn each_ending_maps_to_its_own_exit_code() {
+		assert_eq!(exit_code_for(&Outcome::Succeeded), 0);
+		assert_eq!(exit_code_for(&Outcome::Cancelled), 1);
+		assert_eq!(
+			exit_code_for(&Outcome::Failed("boom".into())),
+			EXIT_REBUILD_FAILED
+		);
+	}
 
-    #[test]
-    fn yes_skips_the_prompt_entirely() {
-        let opts = ApplyOpts {
-            yes: true,
-            ..ApplyOpts::default()
-        };
+	#[test]
+	fn yes_skips_the_prompt_entirely() {
+		let opts = ApplyOpts {
+			yes: true,
+			..ApplyOpts::default()
+		};
 
-        assert!(confirm(&opts, Target::NixosSystem).expect("no prompt needed"));
-    }
+		assert!(confirm(&opts, Target::NixosSystem).expect("no prompt needed"));
+	}
 
-    #[test]
-    fn a_non_interactive_run_without_yes_is_refused() {
-        // The test harness runs without a terminal on stdin, which is exactly
-        // the case this guard exists for.
-        let error = confirm(&ApplyOpts::default(), Target::NixosSystem)
-            .expect_err("should refuse without a terminal");
+	#[test]
+	fn a_non_interactive_run_without_yes_is_refused() {
+		// The test harness runs without a terminal on stdin, which is exactly
+		// the case this guard exists for.
+		let error = confirm(&ApplyOpts::default(), Target::NixosSystem)
+			.expect_err("should refuse without a terminal");
 
-        assert!(error.to_string().contains("--yes"), "{error}");
-    }
+		assert!(error.to_string().contains("--yes"), "{error}");
+	}
 }

@@ -10,7 +10,7 @@ let
 	];
 in
 {
-    dotenv.disableHint = true;
+	dotenv.disableHint = true;
 
 	packages = [
 		# Build, lint, and test commands.

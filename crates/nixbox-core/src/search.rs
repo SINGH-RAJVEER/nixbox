@@ -12,20 +12,20 @@ use nixbox_nix::search::{PackageCatalog, SearchHit};
 /// Where the package catalog is cached between runs.
 #[must_use]
 pub fn catalog_cache_path() -> Option<PathBuf> {
-    BaseDirs::new().map(|base| base.cache_dir().join("nixbox").join("package-catalog.json"))
+	BaseDirs::new().map(|base| base.cache_dir().join("nixbox").join("package-catalog.json"))
 }
 
 /// Searches `catalog` when there is one, off the async threads because the
 /// catalog is large, and falls back to a live `nix search` otherwise.
 pub async fn search_packages(
-    catalog: Option<Arc<PackageCatalog>>,
-    channel: &str,
-    query: String,
+	catalog: Option<Arc<PackageCatalog>>,
+	channel: &str,
+	query: String,
 ) -> Result<Vec<SearchHit>> {
-    match catalog {
-        Some(catalog) => tokio::task::spawn_blocking(move || catalog.search(&query))
-            .await
-            .map_err(|error| anyhow!("joining package catalog search: {error}")),
-        None => nixbox_nix::search::search(channel, &query).await,
-    }
+	match catalog {
+		Some(catalog) => tokio::task::spawn_blocking(move || catalog.search(&query))
+			.await
+			.map_err(|error| anyhow!("joining package catalog search: {error}")),
+		None => nixbox_nix::search::search(channel, &query).await,
+	}
 }

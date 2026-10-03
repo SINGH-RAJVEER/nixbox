@@ -26,18 +26,18 @@ static PROGRAM: OnceLock<&'static str> = OnceLock::new();
 /// The name the running binary was installed as, defaulting to `nixbox` for
 /// tests and any caller that does not go through [`run`].
 pub(crate) fn program() -> &'static str {
-    PROGRAM.get().copied().unwrap_or("nixbox")
+	PROGRAM.get().copied().unwrap_or("nixbox")
 }
 
 /// Restores the default `SIGPIPE` disposition, which Rust otherwise ignores.
 /// Without this, `nixbox list | head` panics on a broken pipe instead of
 /// exiting quietly the way every other command-line tool does.
 fn restore_sigpipe() {
-    // SAFETY: the only signal handler this program installs, set once at the
-    // top of `run` before any command has had a chance to spawn work.
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
+	// SAFETY: the only signal handler this program installs, set once at the
+	// top of `run` before any command has had a chance to spawn work.
+	unsafe {
+		libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+	}
 }
 
 /// Parses the command line, starts tracing, and runs the requested command.
@@ -50,27 +50,27 @@ fn restore_sigpipe() {
 /// choice; an error is printed here because the message is the same for both
 /// binaries.
 pub async fn run(program: &'static str) -> ExitCode {
-    restore_sigpipe();
-    let _ = PROGRAM.set(program);
+	restore_sigpipe();
+	let _ = PROGRAM.set(program);
 
-    let matches = Cli::command().name(program).bin_name(program).get_matches();
-    let cli = match Cli::from_arg_matches(&matches) {
-        Ok(cli) => cli,
-        Err(error) => error.exit(),
-    };
+	let matches = Cli::command().name(program).bin_name(program).get_matches();
+	let cli = match Cli::from_arg_matches(&matches) {
+		Ok(cli) => cli,
+		Err(error) => error.exit(),
+	};
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+	tracing_subscriber::fmt()
+		.with_env_filter(
+			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+		)
+		.with_writer(std::io::stderr)
+		.init();
 
-    match cli.run().await {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("{program}: {error:#}");
-            ExitCode::from(EXIT_FAILURE)
-        }
-    }
+	match cli.run().await {
+		Ok(code) => code,
+		Err(error) => {
+			eprintln!("{program}: {error:#}");
+			ExitCode::from(EXIT_FAILURE)
+		}
+	}
 }

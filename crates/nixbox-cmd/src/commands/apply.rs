@@ -14,21 +14,21 @@ use crate::commands::target_name;
 
 #[derive(Args, Debug)]
 pub struct ApplyArgs {
-    #[command(flatten)]
-    pub apply: ApplyOpts,
+	#[command(flatten)]
+	pub apply: ApplyOpts,
 }
 
 pub async fn run(args: &ApplyArgs, global: &GlobalArgs) -> Result<ExitCode> {
-    let mut engine = global.engine()?;
-    let scope = engine.config.target;
-    let plan = Plan {
-        scope,
-        ops: Vec::new(),
-        summary: vec![format!(
-            "rewrite {} and rebuild {}",
-            engine.config.managed_file_for(scope).display(),
-            target_name(scope),
-        )],
-    };
-    execute(&mut engine, plan, &args.apply).await
+	let mut engine = global.engine()?;
+	let scope = engine.config.target;
+	let plan = Plan {
+		scope,
+		ops: Vec::new(),
+		summary: vec![format!(
+			"rewrite {} and rebuild {}",
+			engine.config.managed_file_for(scope).display(),
+			target_name(scope),
+		)],
+	};
+	execute(&mut engine, plan, &args.apply).await
 }
