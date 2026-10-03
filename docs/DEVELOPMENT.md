@@ -85,7 +85,9 @@ The supported development path is the pinned devenv shell:
 devenv shell
 ```
 
-`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, `just`, `cargo-nextest`, and the libraries `nixbox-gui` builds against, and puts the ones gpui loads at runtime on `LD_LIBRARY_PATH`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
+`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It supplies Bash, `just`, and `cargo-nextest` for build and test recipes; Nix, `nixd`, and `nil` for Nix development; `nixos-rebuild` and `home-manager` for rebuild commands and the VM recipes; and Git, Jujutsu, GitHub CLI, and OpenSSH for configuration repositories and remotes. The native GUI has pkg-config, fontconfig, freetype, Vulkan, Wayland, xkbcommon, X11, and xcb, with runtime libraries on `LD_LIBRARY_PATH`. `desktop-file-validate` checks the packaged desktop entry. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
+
+Privileged rebuilds use the host's configured sudo wrapper. The VM launcher and NixOS test driver obtain QEMU and their Python environment from the Nix derivations, so they do not require separate shell packages. Running the native GUI requires a desktop session and a working host Vulkan driver.
 
 Using the shell matters on NixOS because a Rustup toolchain can retain linker wrappers that point at garbage-collected Nix store paths. If plain Cargo fails inside a Rust linker wrapper while the devenv build succeeds, treat that as a host toolchain problem rather than changing NixBox source.
 
