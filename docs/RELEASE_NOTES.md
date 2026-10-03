@@ -4,6 +4,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added old and new line numbers and within-line word highlighting to the GUI repository diff, using Delta's token alignment. Unpaired lines and changes beyond the alignment limits keep their line colors without word highlighting.
 - Added configuration version control pages to the TUI and GUI, with Git and colocated Jujutsu detection, repository initialization, full status and diff review, and editable commit messages.
 - Added `nixbox commit` to the CLI, with optional message editing, explicit approval, and a Git dry run. Suggested messages describe successful configuration operations and omit option values.
 - Reject stale or empty commit reviews and block repository actions while configuration operations are queued or rebuilding. Configuration mutations wait while a repository command runs.

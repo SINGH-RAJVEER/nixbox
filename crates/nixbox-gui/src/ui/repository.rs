@@ -12,9 +12,9 @@ use gpui_kit::component::{
 	ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::{
-	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement,
+	AnyElement, App, Context, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement,
 	ListHorizontalSizingBehavior, ParentElement as _, SharedString,
-	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+	StatefulInteractiveElement as _, Styled as _, StyledText, div, prelude::FluentBuilder as _, px,
 	uniform_list,
 };
 use nixbox_core::vcs::Backend;
@@ -22,7 +22,7 @@ use nixbox_core::vcs::Backend;
 use super::logo::{backend_name, vcs_logo};
 use super::{empty, muted, section};
 use crate::app::NixboxApp;
-use crate::repository::{Change, Line, RepositoryAction};
+use crate::repository::{Change, DiffLine, Line, RepositoryAction};
 
 pub fn render(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let controls = &app.repository;
@@ -277,7 +277,7 @@ fn changes(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				let diff = this.repository.diff.clone();
 				visible
 					.filter_map(|index| diff.lines.get(start + index))
-					.map(|(kind, line)| diff_line(*kind, line.clone(), cx))
+					.map(|line| diff_line(line, diff.number_width, cx))
 					.collect::<Vec<_>>()
 			}),
 		)
@@ -369,25 +369,64 @@ fn changes(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.into_any_element()
 }
 
-fn diff_line(kind: Line, line: SharedString, cx: &App) -> gpui_kit::Div {
+/// One prepared line: delta-style old and new line numbers, then the text
+/// with its changed words emphasized. A single styled text run per line keeps
+/// painting cheap however many lines scroll by.
+fn diff_line(line: &DiffLine, number_width: usize, cx: &App) -> gpui_kit::Div {
 	let theme = cx.theme();
-	let (color, background) = match kind {
-		Line::File => (theme.foreground, Some(theme.muted)),
-		Line::Header => (theme.muted_foreground, None),
-		Line::Hunk => (theme.info, None),
-		Line::Added => (theme.success, Some(theme.success.opacity(0.12))),
-		Line::Removed => (theme.danger, Some(theme.danger.opacity(0.12))),
-		Line::Context => (theme.foreground, None),
+	let (color, background, emphasis) = match line.kind {
+		Line::File => (theme.foreground, Some(theme.muted), None),
+		Line::Header => (theme.muted_foreground, None, None),
+		Line::Hunk => (theme.info, None, None),
+		Line::Added => (
+			theme.success,
+			Some(theme.success.opacity(0.12)),
+			Some(theme.success.opacity(0.35)),
+		),
+		Line::Removed => (
+			theme.danger,
+			Some(theme.danger.opacity(0.12)),
+			Some(theme.danger.opacity(0.35)),
+		),
+		Line::Context => (theme.foreground, None, None),
 	};
-	div()
+	let number = |number: Option<u32>| {
+		number.map_or_else(
+			|| " ".repeat(number_width),
+			|number| format!("{number:>number_width$}"),
+		)
+	};
+	let text = StyledText::new(line.text.clone()).with_highlights(emphasis.into_iter().flat_map(
+		|emphasis| {
+			line.emphasis.iter().map(move |range| {
+				(
+					range.clone(),
+					HighlightStyle {
+						background_color: Some(emphasis),
+						..HighlightStyle::default()
+					},
+				)
+			})
+		},
+	));
+	h_flex()
+		// Full-width backgrounds, like delta; long lines still scroll.
+		.min_w_full()
 		.px_4()
+		.gap_3()
 		.whitespace_nowrap()
 		.text_color(color)
-		.when(kind == Line::File, |line| {
+		.when(line.kind == Line::File, |line| {
 			line.font_weight(FontWeight::SEMIBOLD)
 		})
 		.when_some(background, |line, background| line.bg(background))
-		.child(line)
+		.child(
+			div()
+				.flex_shrink_0()
+				.text_color(theme.muted_foreground)
+				.child(format!("{} {}", number(line.old), number(line.new))),
+		)
+		.child(text)
 }
 
 /// Commit, push and remote controls. A disabled control says why.

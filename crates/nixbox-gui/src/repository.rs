@@ -141,19 +141,45 @@ pub enum Line {
 	Context,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLine {
+	pub kind: Line,
+	pub text: SharedString,
+	/// The line's number in the old and in the new file, as delta shows them.
+	pub old: Option<u32>,
+	pub new: Option<u32>,
+	/// Byte ranges of `text` that changed within a paired removed and added line.
+	pub emphasis: Vec<Range<usize>>,
+}
+
 /// A Git-format diff split into lines and per-file sections.
 #[derive(Debug, Default)]
 pub struct Diff {
-	pub lines: Vec<(Line, SharedString)>,
+	pub lines: Vec<DiffLine>,
 	pub files: Vec<FileDiff>,
 	pub widest: usize,
+	/// Digits in the largest line number, for an aligned gutter.
+	pub number_width: usize,
+}
+
+/// The old and new start lines of a `@@ -a,b +c,d @@` hunk header.
+fn hunk_start(header: &str) -> Option<(u32, u32)> {
+	let mut ranges = header.strip_prefix("@@ ")?.split_whitespace();
+	let start = |range: &str, sign: char| -> Option<u32> {
+		range.strip_prefix(sign)?.split(',').next()?.parse().ok()
+	};
+	Some((start(ranges.next()?, '-')?, start(ranges.next()?, '+')?))
 }
 
 impl Diff {
+	/// Parsing, numbering, and within-line emphasis all happen here, on the
+	/// repository worker, so rendering only paints prepared lines.
 	pub fn parse(text: &str) -> Self {
-		let mut lines = Vec::new();
+		let mut lines: Vec<DiffLine> = Vec::new();
 		let mut files: Vec<FileDiff> = Vec::new();
 		let mut in_hunk = false;
+		let (mut old, mut new) = (0, 0);
+		let mut largest = 0;
 		for (index, raw) in text.lines().enumerate() {
 			let kind = if let Some(header) = raw.strip_prefix("diff --git ") {
 				in_hunk = false;
@@ -171,6 +197,7 @@ impl Diff {
 				Line::File
 			} else if raw.starts_with("@@") {
 				in_hunk = true;
+				(old, new) = hunk_start(raw).unwrap_or((0, 0));
 				Line::Hunk
 			} else if !in_hunk {
 				Line::Header
@@ -194,12 +221,32 @@ impl Diff {
 					_ => {}
 				}
 			}
-			lines.push((kind, SharedString::from(raw.replace('\t', "    "))));
+			// "\ No newline at end of file" belongs to neither side.
+			let numbered = !raw.starts_with('\\');
+			let (line_old, line_new) = match kind {
+				Line::Context if numbered => (Some(old), Some(new)),
+				Line::Removed => (Some(old), None),
+				Line::Added => (None, Some(new)),
+				_ => (None, None),
+			};
+			old = old.saturating_add(u32::from(line_old.is_some()));
+			new = new.saturating_add(u32::from(line_new.is_some()));
+			largest = largest
+				.max(line_old.unwrap_or(0))
+				.max(line_new.unwrap_or(0));
+			lines.push(DiffLine {
+				kind,
+				text: raw.replace('\t', "    ").into(),
+				old: line_old,
+				new: line_new,
+				emphasis: Vec::new(),
+			});
 		}
+		emphasize(&mut lines);
 		let widest_in = |range: Range<usize>| {
 			let start = range.start;
 			range
-				.max_by_key(|index| lines[*index].1.len())
+				.max_by_key(|index| lines[*index].text.len())
 				.unwrap_or(start)
 		};
 		for file in &mut files {
@@ -210,7 +257,54 @@ impl Diff {
 			lines,
 			files,
 			widest,
+			number_width: largest.to_string().len(),
 		}
+	}
+}
+
+/// Runs delta's within-line comparison over every change block: removed
+/// lines directly followed by added lines.
+fn emphasize(lines: &mut [DiffLine]) {
+	let mut start = 0;
+	while start < lines.len() {
+		let run = |from: usize, kind: Line| {
+			from + lines[from..]
+				.iter()
+				.take_while(|line| line.kind == kind || line.text.starts_with('\\'))
+				.count()
+		};
+		let removed_end = run(start, Line::Removed);
+		let added_end = run(removed_end, Line::Added);
+		if removed_end == start || added_end == removed_end {
+			start = added_end.max(start + 1);
+			continue;
+		}
+		// Compare contents without the `-` or `+` prefix, then shift back.
+		let content = |line: &DiffLine| line.text.get(1..).unwrap_or_default().to_owned();
+		let minus: Vec<String> = lines[start..removed_end]
+			.iter()
+			.filter(|line| line.kind == Line::Removed)
+			.map(content)
+			.collect();
+		let plus: Vec<String> = lines[removed_end..added_end]
+			.iter()
+			.filter(|line| line.kind == Line::Added)
+			.map(content)
+			.collect();
+		let minus: Vec<&str> = minus.iter().map(String::as_str).collect();
+		let plus: Vec<&str> = plus.iter().map(String::as_str).collect();
+		let (removed, added) = crate::delta::emphasis(&minus, &plus);
+		for (line, ranges) in lines[start..added_end]
+			.iter_mut()
+			.filter(|line| matches!(line.kind, Line::Removed | Line::Added))
+			.zip(removed.into_iter().chain(added))
+		{
+			line.emphasis = ranges
+				.into_iter()
+				.map(|range| range.start + 1..range.end + 1)
+				.collect();
+		}
+		start = added_end;
 	}
 }
 
@@ -523,8 +617,8 @@ mod tests {
 		assert_eq!((home.added, home.removed), (2, 1));
 		assert_eq!(home.lines, 0..8);
 		assert_eq!(home.widest, 7);
-		assert_eq!(diff.lines[7].1, "+    added with a much longer line");
-		let kinds: Vec<Line> = diff.lines.iter().map(|(kind, _)| *kind).collect();
+		assert_eq!(diff.lines[7].text, "+    added with a much longer line");
+		let kinds: Vec<Line> = diff.lines.iter().map(|line| line.kind).collect();
 		assert_eq!(
 			kinds[..8],
 			[
@@ -544,6 +638,73 @@ mod tests {
 		assert_eq!((packages.added, packages.removed), (1, 0));
 		assert_eq!(packages.lines, 8..14);
 		assert!(Diff::parse("").files.is_empty());
+	}
+
+	#[test]
+	fn hunks_number_lines_and_emphasize_changed_words_like_delta() {
+		let diff = Diff::parse(
+			"diff --git a/home.nix b/home.nix\n\
+			 @@ -9,3 +9,3 @@ {\n\
+			  context\n\
+			 -  enable = false;\n\
+			 +  enable = true;\n\
+			  tail\n\
+			 \\ No newline at end of file\n",
+		);
+		let numbers: Vec<_> = diff.lines.iter().map(|line| (line.old, line.new)).collect();
+		assert_eq!(
+			numbers,
+			[
+				(None, None),
+				(None, None),
+				(Some(9), Some(9)),
+				(Some(10), None),
+				(None, Some(10)),
+				(Some(11), Some(11)),
+				(None, None),
+			]
+		);
+		assert_eq!(diff.number_width, 2);
+		let emphasized = |index: usize| -> Vec<&str> {
+			let line = &diff.lines[index];
+			line.emphasis
+				.iter()
+				.map(|range| &line.text[range.clone()])
+				.collect()
+		};
+		assert_eq!(emphasized(3), ["false"]);
+		assert_eq!(emphasized(4), ["true"]);
+		assert!(diff.lines[2].emphasis.is_empty());
+	}
+
+	#[test]
+	fn no_newline_markers_preserve_pairing_and_hunks_restart_numbering() {
+		let diff = Diff::parse(
+			"diff --git a/home.nix b/home.nix\n\
+			 @@ -1 +1 @@\n\
+			 -enable = false;\n\
+			 \\ No newline at end of file\n\
+			 +enable = true;\n\
+			 \\ No newline at end of file\n\
+			 @@ -100,0 +101 @@\n\
+			 +new line\n",
+		);
+		for (index, expected) in [(2, "false"), (4, "true")] {
+			let line = &diff.lines[index];
+			let changed: Vec<_> = line
+				.emphasis
+				.iter()
+				.map(|range| &line.text[range.clone()])
+				.collect();
+			assert_eq!(changed, [expected]);
+		}
+		assert_eq!((diff.lines[7].old, diff.lines[7].new), (None, Some(101)));
+		assert!(diff.lines[7].emphasis.is_empty());
+		for index in [3, 5] {
+			assert_eq!((diff.lines[index].old, diff.lines[index].new), (None, None));
+			assert!(diff.lines[index].emphasis.is_empty());
+		}
+		assert_eq!(diff.number_width, 3);
 	}
 
 	#[test]
