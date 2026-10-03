@@ -2,7 +2,7 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
-## Unreleased
+## 0.3.0 - 2026-10-04
 
 - Added old and new line numbers and within-line word highlighting to the GUI repository diff, using Delta's token alignment. Unpaired lines and changes beyond the alignment limits keep their line colors without word highlighting.
 - Added configuration version control pages to the TUI and GUI, with Git and colocated Jujutsu detection, repository initialization, full status and diff review, and editable commit messages.
