@@ -5,6 +5,7 @@
 //! rebuilds go through the shared [`Session`], exactly as in the TUI.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,12 +13,14 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Root, WindowExt as _};
 use gpui_kit::{
-	App, AppContext as _, Context, Entity, KeyBinding, SharedString, Subscription, Task,
-	UniformListScrollHandle, Window, actions,
+	App, AppContext as _, Context, Entity, KeyBinding, PathPromptOptions, SharedString,
+	Subscription, Task, UniformListScrollHandle, Window, actions,
 };
-use nixbox_config::Target;
+use nixbox_config::{TabLabels, Target, config_dir_from_env};
 use nixbox_core::search::{catalog_cache_path, search_packages};
-use nixbox_core::{BuildEnded, Enqueued, InstalledFlake, Op, Restored, Session, flake_choices};
+use nixbox_core::{
+	BuildEnded, Engine, Enqueued, InstalledFlake, Op, Restored, Session, flake_choices,
+};
 use nixbox_nix::build::BuildEvent;
 use nixbox_nix::flakes::{FlakeDetails, FlakeHit, fetch_flake_details, search_flakes};
 use nixbox_nix::options::OptionSet;
@@ -31,6 +34,18 @@ use crate::options::OptionsView;
 use crate::theme;
 
 actions!(nixbox, [Quit, FocusSearch]);
+
+/// Expands a leading `~` the way a shell would, for typed paths.
+fn expand_home(path: &str) -> PathBuf {
+	let home = || std::env::var_os("HOME").map(PathBuf::from);
+	match path.strip_prefix('~') {
+		Some("") => home().unwrap_or_else(|| PathBuf::from(path)),
+		Some(rest) if rest.starts_with('/') => home()
+			.map(|home| home.join(rest.trim_start_matches('/')))
+			.unwrap_or_else(|| PathBuf::from(path)),
+		_ => PathBuf::from(path),
+	}
+}
 
 pub fn bind_keys(cx: &mut App) {
 	cx.bind_keys([
@@ -90,6 +105,8 @@ pub struct NixboxApp {
 	pub options_filter: Entity<InputState>,
 	/// The value field for the selected option's text editor.
 	pub option_input: Entity<InputState>,
+	/// The configuration directory field on the Settings page.
+	pub config_dir_input: Entity<InputState>,
 
 	_build_events: Task<()>,
 	_subscriptions: Vec<Subscription>,
@@ -114,7 +131,14 @@ impl NixboxApp {
 			cx.new(|cx| InputState::new(window, cx).placeholder("Filter installed packages"));
 		let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
 		let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
-		let repository = crate::repository::RepositoryControls::new(window, cx);
+		let config_dir_input = cx.new(|cx| {
+			let mut input =
+				InputState::new(window, cx).placeholder("Path to your configuration flake");
+			input.set_value(session.config_dir().display().to_string(), window, cx);
+			input
+		});
+		let mut repository = crate::repository::RepositoryControls::new(window, cx);
+		repository.backend = crate::repository::nearest_backend(&session.config_dir());
 		search_input.update(cx, |input, cx| input.focus(window, cx));
 
 		let subscriptions = vec![
@@ -127,13 +151,11 @@ impl NixboxApp {
 			cx.subscribe_in(&repository.name, window, |_, _, _: &InputEvent, _, cx| {
 				cx.notify()
 			}),
-			cx.subscribe_in(&repository.message, window, |this, _, event, _, cx| {
+			// The review stays on screen while the message is edited; the commit
+			// control, `commit_repository`, and the backend all refuse a message
+			// that differs from the reviewed one.
+			cx.subscribe_in(&repository.message, window, |_, _, event, _, cx| {
 				if let InputEvent::Change = event {
-					if this.repository.review.as_ref().is_some_and(|review| {
-						review.message() != this.repository.message.read(cx).value().as_str()
-					}) {
-						this.repository.review = None;
-					}
 					cx.notify();
 				}
 			}),
@@ -162,6 +184,15 @@ impl NixboxApp {
 					this.stage_text(cx);
 				}
 			}),
+			cx.subscribe_in(
+				&config_dir_input,
+				window,
+				|this, _, event, window, cx| match event {
+					InputEvent::PressEnter { .. } => this.apply_config_dir_input(window, cx),
+					InputEvent::Change => cx.notify(),
+					_ => {}
+				},
+			),
 			cx.observe_window_appearance(window, |this, window, cx| {
 				if this.session.engine.config.theme == "default" {
 					theme::apply("default", Some(window), cx);
@@ -214,6 +245,7 @@ impl NixboxApp {
 			options_task: None,
 			options_filter,
 			option_input,
+			config_dir_input,
 			_build_events: build_events,
 			_subscriptions: subscriptions,
 		};
@@ -816,6 +848,119 @@ impl NixboxApp {
 		self.save_config(format!("Theme set to {name}."), cx);
 	}
 
+	/// Display only, and settings live outside the reviewed configuration, so
+	/// this neither waits for nor discards a repository review.
+	pub fn set_tab_labels(&mut self, labels: TabLabels, cx: &mut Context<Self>) {
+		self.session.engine.config.tab_labels = labels;
+		self.save_config(format!("Tabs show {}.", labels.label().to_lowercase()), cx);
+	}
+
+	/// Uses the typed directory; an empty field returns to the default.
+	pub fn apply_config_dir_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		let typed = self.config_dir_input.read(cx).value().trim().to_owned();
+		let path = (!typed.is_empty()).then(|| expand_home(&typed));
+		self.set_config_dir(path, window, cx);
+	}
+
+	pub fn browse_config_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		let paths = cx.prompt_for_paths(PathPromptOptions {
+			files: false,
+			directories: true,
+			multiple: false,
+			prompt: Some("Use as configuration".into()),
+		});
+		cx.spawn_in(window, async move |this, cx| {
+			let Ok(Ok(Some(paths))) = paths.await else {
+				return;
+			};
+			if let Some(path) = paths.into_iter().next() {
+				let _ = this.update_in(cx, |this, window, cx| {
+					this.set_config_dir(Some(path), window, cx)
+				});
+			}
+		})
+		.detach();
+	}
+
+	/// Moves nixbox to another configuration directory, or back to the
+	/// default with `None`, and reloads everything read from the old one.
+	/// Refused while writes are queued, since they target the old directory.
+	pub fn set_config_dir(
+		&mut self,
+		path: Option<PathBuf>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let current = self.session.config_dir().display().to_string();
+		let refuse =
+			|this: &mut Self, status: String, window: &mut Window, cx: &mut Context<Self>| {
+				this.config_dir_input
+					.update(cx, |input, cx| input.set_value(current.clone(), window, cx));
+				this.set_status(status, cx);
+			};
+		if config_dir_from_env().is_some() {
+			return refuse(
+				self,
+				"NIXBOX_CONFIG_DIR is set, and it overrides the saved location.".into(),
+				window,
+				cx,
+			);
+		}
+		if self.repository_pending_writes() {
+			return refuse(
+				self,
+				"Finish or drop queued changes before changing the configuration.".into(),
+				window,
+				cx,
+			);
+		}
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		let path = match path.map(std::path::absolute).transpose() {
+			Ok(path) => path,
+			Err(error) => return refuse(self, format!("Invalid path: {error}"), window, cx),
+		};
+		if let Some(path) = path.as_ref().filter(|path| !path.is_dir()) {
+			return refuse(
+				self,
+				format!("{} is not a directory.", path.display()),
+				window,
+				cx,
+			);
+		}
+		let mut config = self.session.engine.config.clone();
+		config.config_dir = path;
+		let engine = match Engine::with_config(config) {
+			Ok(engine) => engine,
+			Err(error) => {
+				return refuse(
+					self,
+					format!("Could not load that configuration: {error:#}"),
+					window,
+					cx,
+				);
+			}
+		};
+		self.session.engine = engine;
+		let root = self.session.config_dir();
+		self.config_dir_input.update(cx, |input, cx| {
+			input.set_value(root.display().to_string(), window, cx)
+		});
+		self.options_cache.clear();
+		self.options = None;
+		self.options_task = None;
+		if self.page == Page::Options {
+			self.page = Page::Installed;
+		}
+		self.repository.forget(&root);
+		let mut done = format!("Configuration set to {}.", root.display());
+		if !root.join("flake.nix").is_file() {
+			done.push_str(" It has no flake.nix, so rebuilds fail until it does.");
+		}
+		self.save_config(done, cx);
+	}
+
 	fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
 		let status = match self.session.engine.config.save() {
 			Ok(()) => done,
@@ -845,14 +990,27 @@ mod tests {
 	use gpui_kit::component::Root;
 	use gpui_kit::test::TestWindowExt as _;
 	use gpui_kit::{AppContext as _, TestAppContext, px, size};
-	use nixbox_config::{Config, Target};
+	use nixbox_config::{Config, TabLabels, Target};
+	use nixbox_core::vcs::{Backend, Repository};
 	use nixbox_core::{Engine, Op, Session};
 	use nixbox_nix::build::BuildEvent;
 	use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
 	use nixbox_nix::manifest::Manifest;
 	use nixbox_nix::search::SearchHit;
 
-	use super::{NixboxApp, Page};
+	use super::{NixboxApp, Page, expand_home};
+
+	#[test]
+	fn typed_paths_expand_a_leading_tilde() {
+		let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+		assert_eq!(expand_home("~"), home);
+		assert_eq!(expand_home("~/nixos"), home.join("nixos"));
+		assert_eq!(
+			expand_home("/etc/nixos"),
+			std::path::PathBuf::from("/etc/nixos")
+		);
+		assert_eq!(expand_home("~other"), std::path::PathBuf::from("~other"));
+	}
 
 	#[gpui_kit::test]
 	async fn package_results_appear_replace_and_clear_in_the_window(cx: &mut TestAppContext) {
@@ -979,9 +1137,30 @@ mod tests {
 			Page::Settings,
 		] {
 			cx.update_window(handle.into(), |_, window, cx| {
+				window.render_frame(cx);
+				let first = window.within("page-tabs").find(0_usize).bounds();
+				let last = window.within("page-tabs").find(6_usize).bounds();
+				assert_eq!(first.top(), last.top(), "Tabs must share a horizontal row");
+				assert!(last.left() > first.right());
+				assert!(first.bottom() < px(120.), "Navigation must stay at the top");
+				let index = match page {
+					Page::Packages => Some(0),
+					Page::Flakes => Some(1),
+					Page::Installed => Some(2),
+					Page::Options => None,
+					Page::Queue => Some(3),
+					Page::Build => Some(4),
+					Page::VersionControl => Some(5),
+					Page::Settings => Some(6),
+				};
+				if let Some(index) = index {
+					window.within("page-tabs").click(index, cx);
+				}
 				app.update(cx, |app, cx| {
 					let notice = app.repository.notice.clone();
-					app.set_page(page, window, cx);
+					if page == Page::Options {
+						app.set_page(page, window, cx);
+					}
 					assert_eq!(app.page, page);
 					if page == Page::VersionControl {
 						assert!(!app.repository.busy, "Rebuilds must block automatic review");
@@ -1078,6 +1257,102 @@ mod tests {
 				assert!(!app.repository.busy);
 				assert!(app.repository.notice.contains("queued operations"));
 			});
+		})
+		.expect("window");
+	}
+
+	#[gpui_kit::test]
+	async fn tab_labels_and_the_repository_panes_render(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
+
+		let mut widths = Vec::new();
+		for labels in TabLabels::ALL {
+			cx.update_window(handle.into(), |_, window, cx| {
+				// Assigned directly: `set_tab_labels` would save the host's settings.
+				app.update(cx, |app, cx| {
+					app.session.engine.config.tab_labels = labels;
+					cx.notify();
+				});
+				window.render_frame(cx);
+				let first = window.within("page-tabs").find(0_usize).bounds();
+				let last = window.within("page-tabs").find(6_usize).bounds();
+				assert_eq!(first.top(), last.top(), "{labels:?} tabs share a row");
+				widths.push(first.size.width);
+			})
+			.expect("window");
+		}
+		let [icons, both, names] = widths[..] else {
+			unreachable!()
+		};
+		assert!(icons < names && names < both, "{widths:?}");
+
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.render_frame(cx);
+			let first = window.within("page-tabs").find(0_usize).bounds();
+			let last = window.within("page-tabs").find(6_usize).bounds();
+			let center = (first.left() + last.right()) / 2.;
+			assert!(
+				(center - px(590.)).abs() < px(8.),
+				"Tabs center in the window: {center:?}"
+			);
+			assert!(first.top() < px(8.), "Tabs sit at the top: {first:?}");
+
+			// A missing directory is refused before anything is saved or reloaded.
+			app.update(cx, |app, cx| {
+				let before = app.session.config_dir();
+				let missing = std::env::temp_dir().join("nixbox-missing-config-dir");
+				app.set_config_dir(Some(missing), window, cx);
+				assert!(app.status.contains("is not a directory"), "{}", app.status);
+				assert_eq!(app.session.config_dir(), before);
+				assert_eq!(
+					app.config_dir_input.read(cx).value().as_str(),
+					before.display().to_string()
+				);
+			});
+		})
+		.expect("window");
+
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				let root = std::env::temp_dir();
+				app.repository.backend = Some(Backend::Git);
+				app.repository.detected = Some(Repository {
+					backend: Backend::Git,
+					root: root.clone(),
+					config_root: root,
+				});
+				app.repository.loaded = true;
+				app.page = Page::VersionControl;
+				cx.notify();
+			});
+			window.render_frame(cx);
+			// The commit and push controls sit beside the diff, not below it.
+			for id in ["repository-commit", "repository-push"] {
+				assert!(window.find(id).visible(), "{id} must be visible");
+			}
+			// The remote section can sit below the fold of the scrolling panel.
+			assert!(window.try_find("repository-create-remote").is_some());
 		})
 		.expect("window");
 	}

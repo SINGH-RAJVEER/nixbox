@@ -25,13 +25,13 @@ cargo install nixbox-gui
 nixbox-gui
 ```
 
-To compile the native GUI from a checkout, use `devenv shell -- cargo run -p nixbox-gui --features native`. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
+To compile and run the native GUI from a checkout, use `just gui`. This command enters the pinned devenv shell automatically, including when invoked from an older shell. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
 
 To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";` and include `nixbox.packages.${pkgs.stdenv.hostPlatform.system}.nixbox-gui` in `environment.systemPackages` or `home.packages`. Here `nixbox` is the input available in the enclosing `outputs` function. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
 
 ## Pages
 
-The sidebar lists the pages. The status line at the bottom reports the last thing that happened, and shows the last failed rebuild until you dismiss it.
+The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inputs, and other controls. Tabs centered along the top of the window list the pages, with an underline marking the active tab. NixBox sits at the left of the same row and the current install target at the right. In smaller windows, the tabs scroll horizontally. The tabs show icons and names by default; Settings switches them to icons only, which name themselves on hover, or names only. The Version control tab shows the Git or Jujutsu logo for the repository holding your configuration, or a branch icon when there is none. Queue shows the number of waiting operations, and Installed stays selected while a package's Options page is open. The status line at the bottom reports the last thing that happened, and shows the last failed rebuild until you dismiss it.
 
 | Page | What it does |
 | --- | --- |
@@ -40,9 +40,9 @@ The sidebar lists the pages. The status line at the bottom reports the last thin
 | Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
-| Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The sidebar shows a spinner while a rebuild runs, and a notification appears when it ends. |
-| Version control | Configuration repository status, full diff, editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
-| Settings | Install target, channel, and theme, saved immediately to `~/.config/nixbox/settings.json`, and the configuration directory path. |
+| Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
+| Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
+| Settings | Install target, channel, theme, tab labels, and the configuration directory, saved immediately to `~/.config/nixbox/settings.json`. |
 
 Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
 
@@ -50,15 +50,19 @@ The nixpkgs results list fills the available space below the search box and scro
 
 Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
 
+## Configuration location
+
+Settings shows the configuration directory nixbox edits and rebuilds. Type a path, where a leading `~` means your home directory, and press Enter or **Apply**, or pick a directory with **Browse**. **Use default** returns to `~/.config/nixos`. The directory must exist; NixBox warns when it has no `flake.nix`. Changing it reloads installed packages, flakes, and options from the new directory and restarts repository detection. It is refused while operations are queued or a rebuild runs, since those write to the current directory. When `NIXBOX_CONFIG_DIR` is set, it overrides the saved location and the field is read-only.
+
 ## Configuration repository
 
-Open **Version control** in the sidebar to review the configuration repository. This separate page uses the same flat layout as the other pages. Its content scrolls through the full review and all repository controls; long status, diff and reviewed-message lines can scroll horizontally. Git and JJ repositories are detected for the configuration directory. Colocated JJ takes priority over Git. If no repository exists, choose **Initialize Git** or **Initialize JJ with Git**. Initialization does not commit or push.
+Open **Version control** in the top tabs to review the configuration repository. The header shows the repository's logo and root, the result of the last repository command, and anything currently blocking a commit, such as pending queued work. The left side lists the changed files with their change kind and added and removed line counts, above the diff. Click a file to narrow the diff to it, and **Show all files** to return; **Show status** adds the raw status output. Diff lines are colored by kind and scroll horizontally. The right side holds the commit, push, and GitHub remote controls, so they stay visible however long the diff is; a disabled control says why. Git and JJ repositories are detected for the configuration directory. Colocated JJ takes priority over Git. If no repository exists, choose **Initialize Git** or **Initialize Jujutsu with Git**. Initialization does not commit or push.
 
-**Refresh review** shows the complete status, diff and commit message, including manual edits and untracked files that are not ignored. The message is suggested from the journal of successful configuration operations. Option values are omitted from that suggestion. The diff shows the actual file contents. You can edit the multiline message. Refresh keeps your edits, including a deliberately cleared message; a blank message cannot be reviewed or committed. Untouched generated messages follow updated suggestions. Editing while a refresh runs keeps the newer draft and requires another refresh.
+**Refresh review** shows the complete status, diff and commit message, including manual edits and untracked files that are not ignored. The message is suggested from the journal of successful configuration operations. Option values are omitted from that suggestion. The diff shows the actual file contents. You can edit the multiline message. Refresh keeps your edits, including a deliberately cleared message; a blank message cannot be reviewed or committed. Untouched generated messages follow updated suggestions. Editing while a refresh runs keeps the newer draft and requires another refresh. Editing the message after a review disables the commit until you refresh, so the committed message is always the reviewed one.
 
-Read the review, then click **Commit reviewed changes locally**. The backend validates that the files, repository revision and operation journal still match that review before committing. A failed or stale commit requires a new explicit refresh. Nothing pushes automatically. Repository actions are blocked while operations are queued or a rebuild runs, including a paused queue. Configuration mutations are blocked while a repository command runs. Finish the queued work, or drop it, before reviewing again.
+Read the review, then click **Commit locally**, which names the number of files. The backend validates that the files, repository revision and operation journal still match that review before committing. A failed or stale commit requires a new explicit refresh. Nothing pushes automatically. Repository actions are blocked while operations are queued or a rebuild runs, including a paused queue. Configuration mutations are blocked while a repository command runs. Finish the queued work, or drop it, before reviewing again.
 
-To push, enter an explicit local Git branch or JJ bookmark and click **Push named branch/bookmark to origin**. Only `origin` is used. For JJ, the optional **Create/advance nixbox bookmark** control creates or fast-forward advances only `nixbox` to the last nonempty committed change. Divergent history is refused. Pushes never force-update the remote.
+To push, enter an explicit local Git branch or JJ bookmark and click **Push branch to origin** or **Push bookmark to origin**. Only `origin` is used. For JJ, the optional **Create or advance the nixbox bookmark** checkbox fills in `nixbox` as the bookmark and creates or fast-forward advances only `nixbox` to the last nonempty committed change. Divergent history is refused. Pushes never force-update the remote.
 
 If there is no origin, you can optionally create a GitHub repository with authenticated `gh`. Enter both an explicit owner and repository name, choose Private or Public, and click **Create repository and add origin**. Private is the default. This creates the remote and adds origin without pushing. Use the separate push control to publish a named branch or bookmark.
 
@@ -66,7 +70,7 @@ Git parent repositories are reviewed and committed only within the configuration
 
 ## Themes
 
-The GUI reads the same theme setting as the TUI. `default` follows your desktop's light or dark appearance, including changes while NixBox is open. The other themes (`dracula`, `gruvbox`, `nord`, `catppuccin`, `monokai`) use their own dark palettes throughout the window, including text, borders, lists, sidebar, inputs, buttons, and scrollbars. Changing the theme in Settings applies it immediately and saves it for the next launch.
+The GUI reads the same theme setting as the TUI. `default` follows your desktop's light or dark appearance, including changes while NixBox is open. The other themes (`dracula`, `gruvbox`, `nord`, `catppuccin`, `monokai`) use their own dark palettes throughout the window, including text, borders, lists, tabs, inputs, buttons, and scrollbars. Changing the theme in Settings applies it immediately and saves it for the next launch.
 
 The TUI's input mode setting has no effect in the GUI.
 

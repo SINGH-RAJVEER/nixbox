@@ -1,8 +1,9 @@
-//! Rendering. The window is a sidebar, one page, and a status line; pages
+//! Rendering. The window has top tabs, one page, and a status line; pages
 //! are flat lists separated by rules rather than nested panels.
 
 mod flakes;
 mod installed;
+mod logo;
 mod options;
 mod packages;
 mod queue;
@@ -10,14 +11,18 @@ mod repository;
 mod settings;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-	Render, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _,
+	Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+	prelude::FluentBuilder as _, px,
 };
+
+use nixbox_core::vcs::Backend;
 
 use crate::app::{NixboxApp, Page};
 
@@ -33,76 +38,113 @@ impl Render for NixboxApp {
 			Page::VersionControl => repository::render(self, cx),
 			Page::Settings => settings::render(self, cx),
 		};
-		h_flex()
+		v_flex()
 			.id("nixbox")
 			.key_context("Nixbox")
 			.on_action(cx.listener(NixboxApp::focus_search))
 			.size_full()
-			.child(self.sidebar(cx))
-			.child(
-				v_flex()
-					.flex_1()
-					.h_full()
-					.min_w_0()
-					.child(div().flex_1().min_h_0().child(page))
-					.child(self.status_bar(cx)),
-			)
+			.child(self.navigation(cx))
+			.child(div().flex_1().min_h_0().min_w_0().child(page))
+			.child(self.status_bar(cx))
 			.children(NixboxApp::overlays(window, cx))
 	}
 }
 
 impl NixboxApp {
-	fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+	fn navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
 		let queued = self.session.queue.len();
 		let building = self.session.is_building();
-		let item = |label: &'static str, icon: IconName, page: Page| {
-			SidebarMenuItem::new(label)
-				.icon(icon)
-				.active(
-					self.page == page || (page == Page::Installed && self.page == Page::Options),
-				)
-				.on_click(cx.listener(move |this, _, window, cx| this.set_page(page, window, cx)))
+		let labels = self.session.engine.config.tab_labels;
+		let backend = self.repository.backend;
+		let pages = [
+			("nixpkgs", Page::Packages),
+			("Flakes", Page::Flakes),
+			("Installed", Page::Installed),
+			("Queue", Page::Queue),
+			("Build", Page::Build),
+			("Version control", Page::VersionControl),
+			("Settings", Page::Settings),
+		];
+		let active_page = if self.page == Page::Options {
+			Page::Installed
+		} else {
+			self.page
 		};
-		let queue = item("Queue", IconName::GalleryVerticalEnd, Page::Queue)
-			.when(queued > 0, |item| {
-				item.suffix(move |_, _| Tag::secondary().small().child(queued.to_string()))
-			});
-		let build = item("Build", IconName::SquareTerminal, Page::Build)
-			.when(building, |item| item.suffix(|_, _| Spinner::new().small()));
+		let selected = pages
+			.iter()
+			.position(|(_, page)| *page == active_page)
+			.unwrap_or_default();
 		let target = self.session.engine.config.target.label();
+		let destinations = pages.each_ref().map(|(_, page)| *page);
 
-		Sidebar::new("sidebar")
-			.collapsible(false)
-			.header(
-				SidebarHeader::new().child(
-					v_flex()
-						.child(
-							div()
-								.font_weight(FontWeight::SEMIBOLD)
-								.text_color(cx.theme().link)
-								.child("NixBox"),
-						)
-						.child(
-							div()
-								.text_xs()
-								.text_color(cx.theme().muted_foreground)
-								.child(format!("Installing into {target}")),
-						),
-				),
+		// Equal flexible sides keep the tabs centered in the window. The rule is
+		// drawn inside the row, like the tab bar's own, so the two coincide.
+		h_flex()
+			.relative()
+			.w_full()
+			.flex_shrink_0()
+			.px_6()
+			.gap_4()
+			.items_center()
+			.child(
+				div()
+					.absolute()
+					.left_0()
+					.bottom_0()
+					.size_full()
+					.border_b_1()
+					.border_color(cx.theme().border),
 			)
 			.child(
-				SidebarMenu::new()
-					.child(item("nixpkgs", IconName::Search, Page::Packages))
-					.child(item("Flakes", IconName::Github, Page::Flakes))
-					.child(item("Installed", IconName::HardDrive, Page::Installed))
-					.child(queue)
-					.child(build)
-					.child(item(
-						"Version control",
-						IconName::Github,
-						Page::VersionControl,
-					))
-					.child(item("Settings", IconName::Settings, Page::Settings)),
+				div()
+					.flex_1()
+					.min_w_0()
+					.truncate()
+					.font_weight(FontWeight::SEMIBOLD)
+					.text_color(cx.theme().link)
+					.child("NixBox"),
+			)
+			.child(
+				TabBar::new("page-tabs")
+					.underline()
+					.min_w_0()
+					.selected_index(selected)
+					.on_click(cx.listener(move |this, index: &usize, window, cx| {
+						if let Some(page) = destinations.get(*index) {
+							this.set_page(*page, window, cx);
+						}
+					}))
+					.children(pages.map(|(label, page)| {
+						Tab::new()
+							.aria_label(label)
+							.child(
+								h_flex()
+									.gap_1p5()
+									.items_center()
+									.when(labels.shows_icons(), |tab| {
+										tab.child(page_icon(page, backend))
+									})
+									.when(labels.shows_names(), |tab| tab.child(label)),
+							)
+							.when(!labels.shows_names(), |tab| {
+								tab.tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+							})
+							.when(page == Page::Queue && queued > 0, |tab| {
+								tab.suffix(Tag::secondary().small().child(queued.to_string()))
+							})
+							.when(page == Page::Build && building, |tab| {
+								tab.suffix(Spinner::new().small())
+							})
+					})),
+			)
+			.child(
+				h_flex().flex_1().min_w_0().justify_end().child(
+					div()
+						.truncate()
+						.text_xs()
+						.text_color(cx.theme().muted_foreground)
+						.child(format!("Installing into {target}")),
+				),
 			)
 	}
 
@@ -212,4 +254,18 @@ fn section(title: impl Into<SharedString>, count: usize, cx: &App) -> gpui_kit::
 		.text_color(cx.theme().muted_foreground)
 		.child(title.into().to_uppercase())
 		.child(count.to_string())
+}
+
+/// The navigation icon for `page`; version control shows the repository's logo.
+fn page_icon(page: Page, backend: Option<Backend>) -> AnyElement {
+	let icon = match page {
+		Page::Packages => IconName::Search,
+		Page::Flakes => IconName::Github,
+		Page::Installed | Page::Options => IconName::HardDrive,
+		Page::Queue => IconName::GalleryVerticalEnd,
+		Page::Build => IconName::SquareTerminal,
+		Page::Settings => IconName::Settings,
+		Page::VersionControl => return logo::vcs_logo(backend, px(16.)),
+	};
+	Icon::new(icon).size_4().into_any_element()
 }

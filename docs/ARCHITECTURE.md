@@ -175,7 +175,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `options.rs` holds the Options page's state (`OptionsView`): the package and scope, the evaluated options, the selected option, and staged edits, plus the actions that load, stage, unset, discard, and apply them. Evaluations run on the tokio runtime and are cached per scope and package until a rebuild ends, as in the TUI.
 - `model.rs` computes the Installed page's filtered sections and a search hit's installed scopes without gpui, so they are unit tested.
 - `theme.rs` maps the theme names in `nixbox-config::THEMES` onto gpui-component: `default` follows the desktop appearance, the others are dark with the TUI palette's background and accent.
-- `ui/` renders the sidebar, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, and Settings pages with gpui-component, as flat lists separated by rules.
+- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules.
 
 ## Design constraints
 

@@ -11,6 +11,11 @@ This file tracks the user-facing changes in each NixBox version published to cra
 - Shared Vim search editing across the nixpkgs, Flakes, and Installed TUI fields, including word and WORD motions, selection, and deletion.
 - Fixed computed GUI package search results staying invisible because the virtualized list had no usable viewport height. Added window tests for visible results, replacement, clearing, and subsequent results.
 - Switched workspace, CLI, and native GUI tests to Cargo Nextest in local recipes and CI, added it to the development shell, and enabled it for Nix flake package checks. Updated the development documentation to match.
+- Moved GUI navigation to top tabs and removed the overflow menu that repeated them. A new tab labels setting shows icons and names, icons only, or names only, in GUI Settings and as `nixbox config set tab-labels`.
+- Showed the Git or Jujutsu logo on the GUI Version control tab for the repository holding the configuration.
+- Centered the GUI tabs in the top row, with NixBox on the left and the install target on the right.
+- Made the configuration directory a saved setting, editable in GUI Settings with a folder picker and with `nixbox config set config-dir`. `NIXBOX_CONFIG_DIR` still overrides it.
+- Redesigned the GUI Version control page: changed files with change kinds and line counts beside the commit, push, and remote controls, a colored diff that can be narrowed to one file, and a reason under each disabled control. Editing the commit message no longer hides the review.
 
 ## 0.2.9 - 2026-09-30
 

@@ -1,18 +1,34 @@
 //! Repository commands run on the runtime's blocking pool, never during render.
 
+use std::ops::Range;
+use std::path::Path;
+use std::sync::Arc;
+
 use anyhow::Result;
 use gpui_kit::component::input::{InputState, TextareaState};
-use gpui_kit::{AppContext as _, Context, Entity, Task, Window};
+use gpui_kit::{
+	AppContext as _, Context, Entity, ScrollStrategy, SharedString, Task, UniformListScrollHandle,
+	Window,
+};
 use nixbox_core::vcs::{Backend, Repository, Review, Vcs, Visibility};
 
 use crate::app::NixboxApp;
 
 pub struct RepositoryControls {
+	/// Known before the first refresh, so navigation can show the right logo.
+	pub backend: Option<Backend>,
 	pub detected: Option<Repository>,
 	pub origin: Option<String>,
 	pub loaded: bool,
 	pub busy: bool,
 	pub review: Option<Review>,
+	/// The review's diff split for display; only meaningful while `review` is set.
+	pub diff: Arc<Diff>,
+	/// The file the diff view is narrowed to.
+	pub focused: Option<usize>,
+	pub diff_scroll: UniformListScrollHandle,
+	/// Whether the raw status output is shown under the file list.
+	pub show_status: bool,
 	pub message: Entity<TextareaState>,
 	pub branch: Entity<InputState>,
 	pub owner: Entity<InputState>,
@@ -27,11 +43,16 @@ pub struct RepositoryControls {
 impl RepositoryControls {
 	pub fn new(window: &mut Window, cx: &mut Context<NixboxApp>) -> Self {
 		Self {
+			backend: None,
 			detected: None,
 			origin: None,
 			loaded: false,
 			busy: false,
 			review: None,
+			diff: Arc::default(),
+			focused: None,
+			diff_scroll: UniformListScrollHandle::new(),
+			show_status: false,
 			message: cx.new(|cx| {
 				TextareaState::new(window, cx)
 					.rows(5)
@@ -45,6 +66,150 @@ impl RepositoryControls {
 			notice: "Refresh to detect Git or JJ and review configuration changes.".into(),
 			generated: String::new(),
 			task: None,
+		}
+	}
+
+	/// Drops everything learned about the previous configuration's
+	/// repository, after nixbox moves to `config_dir`.
+	pub fn forget(&mut self, config_dir: &Path) {
+		self.backend = nearest_backend(config_dir);
+		self.detected = None;
+		self.origin = None;
+		self.loaded = false;
+		self.review = None;
+		self.diff = Arc::default();
+		self.focused = None;
+		self.notice = "Refresh to detect Git or JJ and review configuration changes.".into();
+	}
+}
+
+/// Mirrors `Vcs::detect` with filesystem checks only, so it is cheap enough
+/// for startup. The first refresh replaces it with the real answer.
+pub fn nearest_backend(config_dir: &Path) -> Option<Backend> {
+	config_dir.ancestors().find_map(|dir| {
+		if dir.join(".jj").is_dir() {
+			Some(Backend::Jj)
+		} else if dir.join(".git").exists() {
+			Some(Backend::Git)
+		} else {
+			None
+		}
+	})
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+	Added,
+	Deleted,
+	Renamed,
+	Modified,
+}
+
+impl Change {
+	pub fn letter(self) -> &'static str {
+		match self {
+			Change::Added => "A",
+			Change::Deleted => "D",
+			Change::Renamed => "R",
+			Change::Modified => "M",
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiff {
+	pub path: String,
+	pub change: Change,
+	pub added: usize,
+	pub removed: usize,
+	/// This file's lines within `Diff::lines`.
+	pub lines: Range<usize>,
+	/// The longest line in `lines`, which sets the scrollable width.
+	pub widest: usize,
+}
+
+/// How a diff line is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Line {
+	/// `diff --git`, which starts a file.
+	File,
+	/// Metadata between a file header and its first hunk.
+	Header,
+	Hunk,
+	Added,
+	Removed,
+	Context,
+}
+
+/// A Git-format diff split into lines and per-file sections.
+#[derive(Debug, Default)]
+pub struct Diff {
+	pub lines: Vec<(Line, SharedString)>,
+	pub files: Vec<FileDiff>,
+	pub widest: usize,
+}
+
+impl Diff {
+	pub fn parse(text: &str) -> Self {
+		let mut lines = Vec::new();
+		let mut files: Vec<FileDiff> = Vec::new();
+		let mut in_hunk = false;
+		for (index, raw) in text.lines().enumerate() {
+			let kind = if let Some(header) = raw.strip_prefix("diff --git ") {
+				in_hunk = false;
+				files.push(FileDiff {
+					path: header
+						.split_once(" b/")
+						.map_or(header, |(_, path)| path)
+						.to_owned(),
+					change: Change::Modified,
+					added: 0,
+					removed: 0,
+					lines: index..index,
+					widest: index,
+				});
+				Line::File
+			} else if raw.starts_with("@@") {
+				in_hunk = true;
+				Line::Hunk
+			} else if !in_hunk {
+				Line::Header
+			} else if raw.starts_with('+') {
+				Line::Added
+			} else if raw.starts_with('-') {
+				Line::Removed
+			} else {
+				Line::Context
+			};
+			if let Some(file) = files.last_mut() {
+				file.lines.end = index + 1;
+				match kind {
+					Line::Added => file.added += 1,
+					Line::Removed => file.removed += 1,
+					Line::Header if raw.starts_with("new file mode") => file.change = Change::Added,
+					Line::Header if raw.starts_with("deleted file mode") => {
+						file.change = Change::Deleted
+					}
+					Line::Header if raw.starts_with("rename from") => file.change = Change::Renamed,
+					_ => {}
+				}
+			}
+			lines.push((kind, SharedString::from(raw.replace('\t', "    "))));
+		}
+		let widest_in = |range: Range<usize>| {
+			let start = range.start;
+			range
+				.max_by_key(|index| lines[*index].1.len())
+				.unwrap_or(start)
+		};
+		for file in &mut files {
+			file.widest = widest_in(file.lines.clone());
+		}
+		let widest = widest_in(0..lines.len());
+		Self {
+			lines,
+			files,
+			widest,
 		}
 	}
 }
@@ -68,6 +233,7 @@ struct Snapshot {
 	origin: Option<String>,
 	suggestion: String,
 	review: std::result::Result<Option<Review>, String>,
+	diff: Arc<Diff>,
 }
 
 fn snapshot(vcs: &Vcs, message: Option<&str>) -> Result<Snapshot> {
@@ -83,11 +249,16 @@ fn snapshot(vcs: &Vcs, message: Option<&str>) -> Result<Snapshot> {
 	} else {
 		(None, Ok(None))
 	};
+	let diff = match &review {
+		Ok(Some(review)) => Arc::new(Diff::parse(review.diff())),
+		_ => Arc::default(),
+	};
 	Ok(Snapshot {
 		repository,
 		origin,
 		suggestion,
 		review,
+		diff,
 	})
 }
 
@@ -137,6 +308,27 @@ impl NixboxApp {
 			window,
 			cx,
 		);
+	}
+
+	/// Narrows the diff to one file, or shows every file again.
+	pub fn focus_file(&mut self, file: Option<usize>, cx: &mut Context<Self>) {
+		self.repository.focused = file;
+		self.repository
+			.diff_scroll
+			.scroll_to_item(0, ScrollStrategy::Top);
+		cx.notify();
+	}
+
+	/// Turning the bookmark on also names it, since that is the only bookmark
+	/// it may push.
+	pub fn toggle_bookmark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		self.repository.create_bookmark = !self.repository.create_bookmark;
+		if self.repository.create_bookmark {
+			self.repository
+				.branch
+				.update(cx, |input, cx| input.set_value("nixbox", window, cx));
+		}
+		cx.notify();
 	}
 
 	pub fn create_repository_remote(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -242,6 +434,8 @@ impl NixboxApp {
 						match snapshot {
 							Ok(snapshot) => {
 								this.repository.loaded = true;
+								this.repository.backend =
+									snapshot.repository.as_ref().map(|repo| repo.backend);
 								this.repository.detected = snapshot.repository;
 								this.repository.origin = snapshot.origin;
 								// An edit made while refreshing wins over the worker's result.
@@ -253,7 +447,26 @@ impl NixboxApp {
 									}
 									match snapshot.review {
 										// A failed commit requires another explicit review.
-										Ok(review) if succeeded => this.repository.review = review,
+										Ok(review) if succeeded => {
+											// Stay on the focused file while it still has changes.
+											let focused =
+												this.repository.focused.and_then(|index| {
+													let path = &this
+														.repository
+														.diff
+														.files
+														.get(index)?
+														.path;
+													snapshot
+														.diff
+														.files
+														.iter()
+														.position(|file| &file.path == path)
+												});
+											this.repository.review = review;
+											this.repository.diff = snapshot.diff;
+											this.repository.focused = focused;
+										}
 										Ok(_) => {}
 										Err(error) => this
 											.repository
@@ -281,7 +494,69 @@ impl NixboxApp {
 
 #[cfg(test)]
 mod tests {
-	use super::follows_suggestion;
+	use nixbox_core::vcs::Backend;
+
+	use super::{Change, Diff, Line, follows_suggestion, nearest_backend};
+
+	#[test]
+	fn diffs_split_into_files_with_counts_and_kinds() {
+		let diff = Diff::parse(
+			"diff --git a/home.nix b/home.nix\n\
+			 index 1..2 100644\n\
+			 --- a/home.nix\n\
+			 +++ b/home.nix\n\
+			 @@ -1,2 +1,2 @@\n\
+			 -  old\n\
+			 +  new\n\
+			 +\tadded with a much longer line\n\
+			 diff --git a/nixbox/packages.nix b/nixbox/packages.nix\n\
+			 new file mode 100644\n\
+			 --- /dev/null\n\
+			 +++ b/nixbox/packages.nix\n\
+			 @@ -0,0 +1 @@\n\
+			 +[ ]\n",
+		);
+		assert_eq!(diff.files.len(), 2);
+		let home = &diff.files[0];
+		assert_eq!(home.path, "home.nix");
+		assert_eq!(home.change, Change::Modified);
+		assert_eq!((home.added, home.removed), (2, 1));
+		assert_eq!(home.lines, 0..8);
+		assert_eq!(home.widest, 7);
+		assert_eq!(diff.lines[7].1, "+    added with a much longer line");
+		let kinds: Vec<Line> = diff.lines.iter().map(|(kind, _)| *kind).collect();
+		assert_eq!(
+			kinds[..8],
+			[
+				Line::File,
+				Line::Header,
+				Line::Header,
+				Line::Header,
+				Line::Hunk,
+				Line::Removed,
+				Line::Added,
+				Line::Added,
+			]
+		);
+		let packages = &diff.files[1];
+		assert_eq!(packages.path, "nixbox/packages.nix");
+		assert_eq!(packages.change, Change::Added);
+		assert_eq!((packages.added, packages.removed), (1, 0));
+		assert_eq!(packages.lines, 8..14);
+		assert!(Diff::parse("").files.is_empty());
+	}
+
+	#[test]
+	fn the_nearest_repository_marker_names_the_backend() {
+		let root = std::env::temp_dir().join(format!("nixbox-backend-{}", std::process::id()));
+		let config = root.join("config");
+		std::fs::create_dir_all(config.join(".jj")).expect("jj marker");
+		std::fs::create_dir_all(root.join(".git")).expect("git marker");
+		assert_eq!(nearest_backend(&config), Some(Backend::Jj));
+		std::fs::remove_dir_all(config.join(".jj")).expect("remove jj marker");
+		assert_eq!(nearest_backend(&config), Some(Backend::Git));
+		std::fs::remove_dir_all(&root).expect("cleanup");
+	}
 
 	#[test]
 	fn refresh_follows_generated_text_but_preserves_edits_and_cleared_drafts() {
