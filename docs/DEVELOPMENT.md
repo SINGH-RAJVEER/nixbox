@@ -130,6 +130,8 @@ devenv shell -- just ci
 
 ## Tests
 
+Core mutation fixtures isolate both `NIXBOX_CONFIG_DIR` and `XDG_CONFIG_HOME` in temporary directories. Configuration files and VCS journals stay in separate roots, and the fixture restores the caller's environment when it is dropped. This lets the same tests run in a Nix sandbox with an unwritable user settings directory. The flake supplies Git and Jujutsu as test dependencies so repository integration tests run inside the sandbox. Check the packaged build with `nix build --no-link .#nixbox`; evaluating the flake alone does not run its tests.
+
 Tests run under [cargo-nextest](https://nexte.st), which runs each test in its own process. Use `cargo nextest run` rather than `cargo test`; the `just` recipes, CI, and the flake's check phase all do. Nextest does not run doctests, and the crates have none, so add a regular test instead of a doc example when something needs coverage.
 
 The workspace has unit and asynchronous tests in every functional module. The tests cover settings defaults and serialization, package and flake manifest rendering, import insertion, package scanning and removal, search parsing and ranking, lock-file catalog resolution, bounded process output, build cancellation, GitHub result parsing and flake mutation, application epochs and state transitions, keyboard handling, queue batching and deduplication in the `Session`, askpass escalation, recovery serialization, and Unicode-aware Vim motions.
