@@ -6,6 +6,7 @@
     pkgs.nixd
     pkgs.nil
     pkgs.just
+    pkgs.cargo-nextest
 	pkgs.git
 	pkgs.jujutsu
 	pkgs.gh

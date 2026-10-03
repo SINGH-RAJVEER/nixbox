@@ -64,6 +64,7 @@
             "--features"
             "native"
           ];
+          useNextest = true;
           # A workspace test run unifies features and always enables the UI,
           # so the CLI package is tested on its own to cover the other half.
           # The desktop front-end is excluded so the TUI build never needs the

@@ -21,20 +21,20 @@ check:
 
 # Run all tests
 test:
-    cargo test --workspace --exclude nixbox-gui
+    cargo nextest run --workspace --exclude nixbox-gui
 
 # Run the TUI (debug build)
 run:
     cargo run
 
 # `nixbox` turns on nixbox-cmd's `tui` feature and cargo unifies features
-# across a workspace build, so `cargo test --workspace` always compiles the
+# across a workspace build, so `cargo nextest run --workspace` always compiles the
 # UI in. The CLI configuration only gets covered if it is built on its own.
 
 # Lint and test the CLI packages on their own
 cli:
     cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets -- -D warnings
-    cargo test -p nixbox-cli -p nixbox-cmd
+    cargo nextest run -p nixbox-cli -p nixbox-cmd
 
 # Build the nixbox-cli release binary
 release-cli:
@@ -51,7 +51,7 @@ release-gui:
 # Lint and test the desktop GUI
 gui-ci:
     cargo clippy -p nixbox-gui --features native --all-targets -- -D warnings
-    cargo test -p nixbox-gui --features native
+    cargo nextest run -p nixbox-gui --features native
 
 # Format all crates
 fmt:

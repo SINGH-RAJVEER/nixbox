@@ -39,6 +39,11 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -49,7 +54,7 @@ jobs:
         run: cargo clippy --workspace --exclude nixbox-gui --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --exclude nixbox-gui --locked
+        run: cargo nextest run --workspace --exclude nixbox-gui --locked
 
       # A workspace build unifies features, so the above always compiles
       # nixbox-cmd with `tui` on and says nothing about the nixbox-cli
@@ -57,7 +62,7 @@ jobs:
       - name: Lint and test without the terminal UI
         run: |
           cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets --locked -- -D warnings
-          cargo test -p nixbox-cli -p nixbox-cmd --locked
+          cargo nextest run -p nixbox-cli -p nixbox-cmd --locked
 
       # The two packages are meant to produce two differently named binaries
       # that both work. A rename or a broken feature gate should fail here
@@ -146,10 +151,15 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Lint and test
         run: |
           cargo clippy -p nixbox-gui --features native --all-targets --locked -- -D warnings
-          cargo test -p nixbox-gui --features native --locked
+          cargo nextest run -p nixbox-gui --features native --locked
 
   publish:
     name: Publish workspace crates

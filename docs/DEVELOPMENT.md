@@ -53,7 +53,7 @@ With the UI off, `nixbox-tui` and its terminal dependencies are not built at all
 - `nixbox_config::THEMES` holds the theme names `nixbox config set theme` validates against. `theme::tests::the_palettes_match_the_names_the_settings_file_accepts` asserts the palettes and the names agree.
 - `nixbox_core::state` holds `PersistedState` and `InProgress`, the `state.json` format that `nixbox resume` reads. The UI crate re-exports them.
 
-Cargo unifies features across a workspace build, so `cargo test --workspace` always compiles `nixbox-cmd` with `tui` on and proves nothing about the other configuration. `just cli` builds the two CLI packages on their own to cover it, and `just ci` runs that. For the same reason, `cargo build --workspace` produces a `target/debug/nixbox-cli` that does contain the UI code; build it with `cargo build -p nixbox-cli` (or `just release-cli`) when the distinction matters.
+Cargo unifies features across a workspace build, so `cargo nextest run --workspace` always compiles `nixbox-cmd` with `tui` on and proves nothing about the other configuration. `just cli` builds the two CLI packages on their own to cover it, and `just ci` runs that. For the same reason, `cargo build --workspace` produces a `target/debug/nixbox-cli` that does contain the UI code; build it with `cargo build -p nixbox-cli` (or `just release-cli`) when the distinction matters.
 
 The Nix flake exposes both as `packages.nixbox` and `packages.nixbox-cli`.
 
@@ -63,7 +63,7 @@ The Nix flake exposes both as `packages.nixbox` and `packages.nixbox-cli`.
 
 Building the native feature needs pkg-config, fontconfig, freetype, Wayland, xkbcommon, X11/xcb, and the Vulkan loader, and running it needs the Vulkan loader and the windowing libraries on the library path. The devenv shell provides all of that. The crate stays out of the workspace-wide commands so they do not build the native feature through test dependency unification:
 
-- The root `Cargo.toml` lists every other crate in `default-members`, so a bare `cargo build` or `cargo test` skips it.
+- The root `Cargo.toml` lists every other crate in `default-members`, so a bare `cargo build` or `cargo nextest run` skips it.
 - `just build`, `just check`, `just test`, and `just lint` pass `--exclude nixbox-gui`. `just gui`, `just gui-ci`, and `just release-gui` enable `native` and build it on its own.
 - CI lints and tests the native feature in its own `gui` job, which installs the graphics libraries first.
 - The flake's `nixbox` package runs workspace tests with `--exclude nixbox-gui`, so building the TUI never needs the graphics stack.
@@ -85,7 +85,7 @@ The supported development path is the pinned devenv shell:
 devenv shell
 ```
 
-`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, `just`, and the libraries `nixbox-gui` builds against, and puts the ones gpui loads at runtime on `LD_LIBRARY_PATH`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
+`devenv.nix` enables nightly Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It also installs Nix, `nixd`, `nil`, `just`, `cargo-nextest`, and the libraries `nixbox-gui` builds against, and puts the ones gpui loads at runtime on `LD_LIBRARY_PATH`. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
 
 Using the shell matters on NixOS because a Rustup toolchain can retain linker wrappers that point at garbage-collected Nix store paths. If plain Cargo fails inside a Rust linker wrapper while the devenv build succeeds, treat that as a host toolchain problem rather than changing NixBox source.
 
@@ -128,6 +128,8 @@ devenv shell -- just ci
 
 ## Tests
 
+Tests run under [cargo-nextest](https://nexte.st), which runs each test in its own process. Use `cargo nextest run` rather than `cargo test`; the `just` recipes, CI, and the flake's check phase all do. Nextest does not run doctests, and the crates have none, so add a regular test instead of a doc example when something needs coverage.
+
 The workspace has unit and asynchronous tests in every functional module. The tests cover settings defaults and serialization, package and flake manifest rendering, import insertion, package scanning and removal, search parsing and ranking, lock-file catalog resolution, bounded process output, build cancellation, GitHub result parsing and flake mutation, application epochs and state transitions, keyboard handling, queue batching and deduplication in the `Session`, askpass escalation, recovery serialization, and Unicode-aware Vim motions.
 
 Five tests are ignored during a normal run because they depend on live machine or network state:
@@ -141,7 +143,7 @@ Five tests are ignored during a normal run because they depend on live machine o
 Run ignored tests deliberately and one at a time after reading their source:
 
 ```sh
-cargo test --workspace -- --ignored --nocapture
+cargo nextest run --workspace --exclude nixbox-gui --run-ignored only --no-capture
 ```
 
 The project does not contain end-to-end terminal snapshot tests. Unit tests cannot prove that an arbitrary user flake will rebuild successfully, especially where source-text mutation heuristics are involved, which is what the disposable NixOS VM below is for.
@@ -247,7 +249,7 @@ Published crates must use one version across the workspace. Before merging a rel
 
 `.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains three jobs.
 
-The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox-gui --all-targets --locked -- -D warnings`, and `cargo test --workspace --exclude nixbox-gui --locked`, followed by the same two checks `just cli` runs, a step that builds each terminal binary package separately and confirms `nixbox-cli` rejects `tui` with `unrecognized subcommand`, and a dependency-free build and argument-forwarding check for the GUI launcher. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox-gui` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
+The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox-gui --all-targets --locked -- -D warnings`, and `cargo nextest run --workspace --exclude nixbox-gui --locked`, followed by the same two checks `just cli` runs, a step that builds each terminal binary package separately and confirms `nixbox-cli` rejects `tui` with `unrecognized subcommand`, and a dependency-free build and argument-forwarding check for the GUI launcher. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox-gui` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
 
 The `publish` job declares `needs: [test, gui]` and is restricted to `push` events, so it never runs from a pull request and never starts unless both checks succeeded. It installs the graphics development libraries, checks the locked workspace including the GUI, creates the `v<version>` tag for the flake launcher, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, `nixbox-cli`, and `nixbox-gui` in dependency order. A later push at the same version does not move the tag or republish. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
 
