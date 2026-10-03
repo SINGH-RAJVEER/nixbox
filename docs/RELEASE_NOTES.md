@@ -4,6 +4,14 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added configuration version control pages to the TUI and GUI, with Git and colocated Jujutsu detection, repository initialization, full status and diff review, and editable commit messages.
+- Added `nixbox commit` to the CLI, with optional message editing, explicit approval, and a Git dry run. Suggested messages describe successful configuration operations and omit option values.
+- Reject stale or empty commit reviews and block repository actions while configuration operations are queued or rebuilding. Configuration mutations wait while a repository command runs.
+- Added explicit pushes to `origin` by Git branch or JJ bookmark, optional creation or advancement of the `nixbox` bookmark, and GitHub repository creation with private visibility by default. Repository creation, commits, and pushes remain separate actions.
+- Shared Vim search editing across the nixpkgs, Flakes, and Installed TUI fields, including word and WORD motions, selection, and deletion.
+- Fixed computed GUI package search results staying invisible because the virtualized list had no usable viewport height. Added window tests for visible results, replacement, clearing, and subsequent results.
+- Switched workspace, CLI, and native GUI tests to Cargo Nextest in local recipes and CI, added it to the development shell, and enabled it for Nix flake package checks. Updated the development documentation to match.
+
 ## 0.2.9 - 2026-09-30
 
 - Applied each selected dark theme's full palette across the GUI instead of changing only its background and accent.
