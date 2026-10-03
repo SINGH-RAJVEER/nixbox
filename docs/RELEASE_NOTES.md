@@ -2,6 +2,11 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## 0.3.1 - 2026-10-04
+
+- Published the sandbox build fix in the crate archives: core test fixtures isolate user settings and VCS journals, and restore the caller's environment when dropped. The Nix flake supplies Git and Jujutsu for repository integration tests.
+- Updated all workspace crates and internal dependencies to 0.3.1 so Cargo installs and the GUI launcher use the corrected release.
+
 ## 0.3.0 - 2026-10-04
 
 - Corrected the 0.3.0 flake tag to fix sandboxed Nix package builds by isolating core test settings and VCS journals from the build user's home, and supplying Git and Jujutsu for repository integration tests. The published crates.io archives are unchanged.
