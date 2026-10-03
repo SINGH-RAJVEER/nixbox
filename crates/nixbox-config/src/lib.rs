@@ -29,6 +29,49 @@ impl InputMode {
     }
 }
 
+/// What the desktop GUI's navigation tabs show.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabLabels {
+    Icons,
+    #[default]
+    IconsAndNames,
+    Names,
+}
+
+impl TabLabels {
+    pub const ALL: [TabLabels; 3] = [TabLabels::Icons, TabLabels::IconsAndNames, TabLabels::Names];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TabLabels::Icons => "Icons",
+            TabLabels::IconsAndNames => "Icons and names",
+            TabLabels::Names => "Names",
+        }
+    }
+
+    /// The stored, kebab-case spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            TabLabels::Icons => "icons",
+            TabLabels::IconsAndNames => "icons-and-names",
+            TabLabels::Names => "names",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|labels| labels.name() == name)
+    }
+
+    pub fn shows_icons(self) -> bool {
+        self != TabLabels::Names
+    }
+
+    pub fn shows_names(self) -> bool {
+        self != TabLabels::Icons
+    }
+}
+
 impl Target {
     pub fn label(self) -> &'static str {
         match self {
@@ -58,9 +101,15 @@ pub struct Config {
     #[serde(default)]
     pub input_mode: InputMode,
     #[serde(default)]
+    pub tab_labels: TabLabels,
+    #[serde(default)]
     pub recent_searches: Vec<String>,
+    /// The configuration directory nixbox edits and rebuilds. `None` uses
+    /// `~/.config/nixos`; `NIXBOX_CONFIG_DIR` overrides both.
+    #[serde(default)]
+    pub config_dir: Option<PathBuf>,
     /// Override for the user's main home-manager config (defaults to
-    /// `<nixos_config_dir>/home.nix`). Scanned for externally-declared packages.
+    /// `<config_root>/home.nix`). Scanned for externally-declared packages.
     #[serde(default)]
     pub home_manager_main_file: Option<PathBuf>,
     /// Override for the user's main NixOS config (defaults to a local
@@ -94,7 +143,9 @@ impl Default for Config {
             target: Target::NixosSystem,
             theme: default_theme(),
             input_mode: InputMode::default(),
+            tab_labels: TabLabels::default(),
             recent_searches: Vec::new(),
+            config_dir: None,
             home_manager_main_file: None,
             nixos_main_file: None,
         }
@@ -119,7 +170,9 @@ impl Config {
 impl Config {
     /// Root of the configuration managed by nixbox, independent of the target.
     pub fn config_root(&self) -> PathBuf {
-		nixos_config_dir()
+        config_dir_from_env()
+            .or_else(|| self.config_dir.clone())
+            .unwrap_or_else(default_config_dir)
     }
 
     /// Returns the path where nixbox writes its managed packages file for the
@@ -131,35 +184,35 @@ impl Config {
     /// Returns the managed packages file for an arbitrary target.
     pub fn managed_file_for(&self, target: Target) -> PathBuf {
         match target {
-            Target::HomeManager => nixos_config_dir().join("nixbox-home-packages.nix"),
-            Target::NixosSystem => nixos_config_dir().join("nixbox-system-packages.nix"),
+            Target::HomeManager => self.config_root().join("nixbox-home-packages.nix"),
+            Target::NixosSystem => self.config_root().join("nixbox-system-packages.nix"),
         }
     }
 
     /// Returns the generated module that imports flake modules for `target`.
     pub fn flake_manifest_for(&self, target: Target) -> PathBuf {
         match target {
-            Target::HomeManager => nixos_config_dir().join("nixbox-home-flakes.nix"),
-            Target::NixosSystem => nixos_config_dir().join("nixbox-system-flakes.nix"),
+            Target::HomeManager => self.config_root().join("nixbox-home-flakes.nix"),
+            Target::NixosSystem => self.config_root().join("nixbox-system-flakes.nix"),
         }
     }
 
     /// Returns the generated module that sets package options for `target`.
     pub fn settings_file_for(&self, target: Target) -> PathBuf {
         match target {
-            Target::HomeManager => nixos_config_dir().join("nixbox-home-settings.nix"),
-            Target::NixosSystem => nixos_config_dir().join("nixbox-system-settings.nix"),
+            Target::HomeManager => self.config_root().join("nixbox-home-settings.nix"),
+            Target::NixosSystem => self.config_root().join("nixbox-system-settings.nix"),
         }
     }
 
     /// Returns the root flake that owns the inputs used by nixbox modules.
     pub fn flake_file(&self) -> PathBuf {
-        nixos_config_dir().join("flake.nix")
+        self.config_root().join("flake.nix")
     }
 
     /// Returns the directory where nixbox keeps its generated nix files.
     pub fn home_manager_dir(&self) -> PathBuf {
-        nixos_config_dir()
+        self.config_root()
     }
 
     /// Returns the user's main config file for the current target.
@@ -173,11 +226,11 @@ impl Config {
             Target::HomeManager => self
                 .home_manager_main_file
                 .clone()
-                .unwrap_or_else(|| nixos_config_dir().join("home.nix")),
+                .unwrap_or_else(|| self.config_root().join("home.nix")),
             Target::NixosSystem => self.nixos_main_file.clone().unwrap_or_else(|| {
                 // Prefer the user-local config dir (common with flake setups),
                 // fall back to the traditional system path otherwise.
-                let local = nixos_config_dir().join("configuration.nix");
+                let local = self.config_root().join("configuration.nix");
                 if local.exists() {
                     local
                 } else {
@@ -215,10 +268,13 @@ pub fn settings_path() -> Result<PathBuf> {
     Ok(base.config_dir().join("nixbox").join("settings.json"))
 }
 
-fn nixos_config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("NIXBOX_CONFIG_DIR") {
-        return PathBuf::from(dir);
-    }
+/// The directory `NIXBOX_CONFIG_DIR` names, which wins over the saved setting.
+pub fn config_dir_from_env() -> Option<PathBuf> {
+    std::env::var_os("NIXBOX_CONFIG_DIR").map(PathBuf::from)
+}
+
+/// The configuration directory used when nothing names another one.
+pub fn default_config_dir() -> PathBuf {
     if let Some(base) = BaseDirs::new() {
         base.config_dir().join("nixos")
     } else {
@@ -287,6 +343,7 @@ mod tests {
         assert_eq!(cfg.target, Target::HomeManager);
         assert_eq!(cfg.theme, "default");
         assert_eq!(cfg.input_mode, InputMode::Vim);
+        assert_eq!(cfg.tab_labels, TabLabels::IconsAndNames);
         assert!(cfg.recent_searches.is_empty());
         assert!(cfg.home_manager_main_file.is_none());
         assert!(cfg.nixos_main_file.is_none());
@@ -301,6 +358,37 @@ mod tests {
         );
         assert_eq!(InputMode::Vim.label(), "Vim mode");
         assert_eq!(InputMode::Normal.label(), "Normal mode");
+    }
+
+    #[test]
+    fn tab_labels_store_their_kebab_case_names() {
+        for labels in TabLabels::ALL {
+            assert_eq!(
+                serde_json::to_string(&labels).unwrap(),
+                format!("\"{}\"", labels.name())
+            );
+            assert_eq!(TabLabels::from_name(labels.name()), Some(labels));
+        }
+        assert_eq!(TabLabels::from_name("emoji"), None);
+    }
+
+    #[test]
+    fn the_environment_then_the_setting_then_the_default_names_the_config_root() {
+        let cfg = Config {
+            config_dir: Some(PathBuf::from("/tmp/saved-config")),
+            ..Config::default()
+        };
+        // SAFETY: no other test in this crate reads or writes the environment.
+        unsafe { std::env::remove_var("NIXBOX_CONFIG_DIR") };
+        assert_eq!(cfg.config_root(), PathBuf::from("/tmp/saved-config"));
+        assert_eq!(
+            cfg.flake_file(),
+            PathBuf::from("/tmp/saved-config/flake.nix")
+        );
+        assert_eq!(Config::default().config_root(), default_config_dir());
+        unsafe { std::env::set_var("NIXBOX_CONFIG_DIR", "/tmp/env-config") };
+        assert_eq!(cfg.config_root(), PathBuf::from("/tmp/env-config"));
+        unsafe { std::env::remove_var("NIXBOX_CONFIG_DIR") };
     }
 
     #[test]

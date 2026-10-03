@@ -4,7 +4,7 @@ NixBox can manage a Git or Jujutsu repository for the whole configuration direct
 
 ## Choose the configuration directory
 
-Set `NIXBOX_CONFIG_DIR` to the configuration directory you want to version. By default it is `$XDG_CONFIG_HOME/nixos`, normally `~/.config/nixos`. Keep the main NixOS and Home Manager files inside it. The `/etc/nixos/configuration.nix` fallback and external main-file overrides are not included in a commit of another root. Pending journal entries for such files cause commit to refuse with an error.
+Choose the configuration directory you want to version in GUI Settings, with `nixbox config set config-dir <path>`, or with `NIXBOX_CONFIG_DIR`. By default it is `$XDG_CONFIG_HOME/nixos`, normally `~/.config/nixos`. Keep the main NixOS and Home Manager files inside it. The `/etc/nixos/configuration.nix` fallback and external main-file overrides are not included in a commit of another root. Pending journal entries for such files cause commit to refuse with an error.
 
 Detection finds the nearest repository. A colocated JJ repository uses JJ controls. Git repositories in parent directories support config-only commits, but unrelated staged files must be unstaged first. JJ commits and pushes in parent repositories are refused; use a dedicated config repository instead. Initialization refuses to nest a new repository inside a detected one.
 

@@ -127,7 +127,7 @@ fn config_dir_exists(config_dir: &Path) -> Check {
             name: "config dir",
             level: Level::Fail,
             detail: format!(
-                "{} does not exist; set NIXBOX_CONFIG_DIR or create it",
+                "{} does not exist; create it, run `nixbox config set config-dir <path>`, or set NIXBOX_CONFIG_DIR",
                 config_dir.display()
             ),
         }

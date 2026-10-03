@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
-use nixbox_config::{Config, InputMode, THEMES, Target, settings_path};
+use nixbox_config::{Config, InputMode, THEMES, TabLabels, Target, settings_path};
 use serde_json::json;
 
 use crate::cli::GlobalArgs;
@@ -16,11 +16,13 @@ use crate::commands::target_name;
 use crate::render;
 
 /// Every key `get`/`set` understands, in the order `show` prints them.
-const KEYS: [&str; 6] = [
+const KEYS: [&str; 8] = [
     "channel",
     "target",
     "theme",
     "input-mode",
+    "tab-labels",
+    "config-dir",
     "home-manager-main-file",
     "nixos-main-file",
 ];
@@ -70,6 +72,8 @@ fn show(global: &GlobalArgs) -> Result<ExitCode> {
                 "target": target_name(config.target),
                 "theme": config.theme,
                 "input-mode": input_mode_name(config.input_mode),
+                "tab-labels": config.tab_labels.name(),
+                "config-dir": config.config_dir,
                 "home-manager-main-file": config.home_manager_main_file,
                 "nixos-main-file": config.nixos_main_file,
             }))?
@@ -116,6 +120,8 @@ fn set(key: &str, value: &str) -> Result<ExitCode> {
             config.theme = value.to_string();
         }
         "input-mode" => config.input_mode = parse_input_mode(value)?,
+        "tab-labels" => config.tab_labels = parse_tab_labels(value)?,
+        "config-dir" => config.config_dir = parse_path(value),
         "home-manager-main-file" => config.home_manager_main_file = parse_path(value),
         "nixos-main-file" => config.nixos_main_file = parse_path(value),
         other => bail!(
@@ -134,6 +140,8 @@ fn read(config: &Config, key: &str) -> Option<String> {
         "target" => target_name(config.target).to_string(),
         "theme" => config.theme.clone(),
         "input-mode" => input_mode_name(config.input_mode).to_string(),
+        "tab-labels" => config.tab_labels.name().to_string(),
+        "config-dir" => path_value(config.config_dir.as_ref()),
         "home-manager-main-file" => path_value(config.home_manager_main_file.as_ref()),
         "nixos-main-file" => path_value(config.nixos_main_file.as_ref()),
         _ => return None,
@@ -167,6 +175,12 @@ fn parse_input_mode(value: &str) -> Result<InputMode> {
         "normal" => Ok(InputMode::Normal),
         other => bail!("unknown input mode `{other}`. Use `vim` or `normal`"),
     }
+}
+
+fn parse_tab_labels(value: &str) -> Result<TabLabels> {
+    TabLabels::from_name(value).ok_or_else(|| {
+        anyhow::anyhow!("unknown tab labels `{value}`. Use `icons`, `icons-and-names`, or `names`")
+    })
 }
 
 fn input_mode_name(mode: InputMode) -> &'static str {

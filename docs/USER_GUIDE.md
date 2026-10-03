@@ -2,7 +2,7 @@
 
 ## Before starting
 
-NixBox expects a flake-based configuration and a working `nix` command. By default it treats `~/.config/nixos` as the configuration root, reads `flake.nix` and `flake.lock` there, uses `home.nix` for Home Manager, and prefers a local `configuration.nix` for NixOS. Set `NIXBOX_CONFIG_DIR` before starting NixBox if the configuration root is elsewhere.
+NixBox expects a flake-based configuration and a working `nix` command. By default it treats `~/.config/nixos` as the configuration root, reads `flake.nix` and `flake.lock` there, uses `home.nix` for Home Manager, and prefers a local `configuration.nix` for NixOS. If the configuration root is elsewhere, choose it in GUI Settings, run `nixbox config set config-dir <path>`, or set `NIXBOX_CONFIG_DIR`, which overrides the saved location.
 
 The flake browser calls the GitHub API through `gh`. Run this once before using that tab:
 
