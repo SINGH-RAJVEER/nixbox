@@ -3,6 +3,7 @@ mod handlers;
 mod nav;
 mod ops;
 mod options;
+mod repository;
 mod state;
 mod theme;
 mod ui;

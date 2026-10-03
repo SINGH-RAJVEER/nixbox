@@ -50,6 +50,14 @@ The two binaries install under different names, so one profile can hold both. `n
 
 Every front-end goes through the same engine, so a change applied by `nixbox install`, in the TUI, or in the GUI takes the identical code path. The TUI and the GUI also share the `Session`, so queue batching, rebuild cancellation, the build log, and recovery behave the same in both. The engine is also what keeps `state.json` compatible between them: the queue holds `nixbox_core::Op` values verbatim, and the TUI's `QueuedOp` is a re-export of that type rather than a parallel definition.
 
+## Configuration version control
+
+`nixbox-core::vcs` owns synchronous Git/Jujutsu discovery, initialization, review, commit, origin inspection, explicit push, and optional GitHub repository creation through `gh`. All frontends share this backend. The TUI and GUI dispatch subprocess calls to workers rather than blocking rendering.
+
+`Engine::apply` takes a root-scoped journal lock before file mutation and records successful operations with changed paths before releasing it. Commit holds the same lock, revalidates the displayed review, then commits and clears the journal. Inspection does not depend on journal health. External programs do not honor this lock, so users should avoid editing config files concurrently with a commit.
+
+The nearest repository boundary owns the config; colocated JJ takes precedence over Git at the same root. Git ancestor repositories support path-scoped commits and refuse unrelated staged files. JJ commits in ancestor repositories are refused because the working-copy change can include unrelated files. See [Version control](VERSION_CONTROL.md).
+
 ## Startup and terminal lifecycle
 
 `crates/nixbox-cmd/src/lib.rs` parses the command tree, initializes tracing to stderr with a default `warn` filter, and dispatches on Tokio's multithreaded runtime, driven by a `main` in whichever binary crate was built. With no subcommand it calls `nixbox_tui::run()`; with one it runs that command and returns its exit code. It also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
@@ -154,7 +162,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `handlers.rs` translates key presses and `AppEvent` values into state changes.
 - `ops.rs` schedules searches, prepares the package catalog, turns the selected row into an `Op`, and reports what the `Session` did with it.
 - `state.rs` turns what `Session::restore` picked up into the starting tab and status line.
-- `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command.
+- `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command. Its shared event handler owns text editing for the nixpkgs, Flakes, and Installed fields; `handlers.rs` handles result navigation, tab actions, and refreshing results after edits.
 - `nav.rs` handles wrapped row selection, tab movement, and settings entry.
 - `theme.rs` defines the Ratatui styles for the six palettes named in `nixbox-config::THEMES`, with a test asserting the two lists match.
 - `ui/` renders the shared bars, package search, flake search and detail panel, installed list, build log, queue, and settings popup.
@@ -167,7 +175,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `options.rs` holds the Options page's state (`OptionsView`): the package and scope, the evaluated options, the selected option, and staged edits, plus the actions that load, stage, unset, discard, and apply them. Evaluations run on the tokio runtime and are cached per scope and package until a rebuild ends, as in the TUI.
 - `model.rs` computes the Installed page's filtered sections and a search hit's installed scopes without gpui, so they are unit tested.
 - `theme.rs` maps the theme names in `nixbox-config::THEMES` onto gpui-component: `default` follows the desktop appearance, the others are dark with the TUI palette's background and accent.
-- `ui/` renders the sidebar, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, and Settings pages with gpui-component, as flat lists separated by rules.
+- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules.
 
 ## Design constraints
 

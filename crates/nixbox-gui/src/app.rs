@@ -5,6 +5,7 @@
 //! rebuilds go through the shared [`Session`], exactly as in the TUI.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,12 +13,14 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Root, WindowExt as _};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, KeyBinding, SharedString, Subscription, Task,
-    UniformListScrollHandle, Window, actions,
+	App, AppContext as _, Context, Entity, KeyBinding, PathPromptOptions, SharedString,
+	Subscription, Task, UniformListScrollHandle, Window, actions,
 };
-use nixbox_config::Target;
+use nixbox_config::{TabLabels, Target, config_dir_from_env};
 use nixbox_core::search::{catalog_cache_path, search_packages};
-use nixbox_core::{BuildEnded, Enqueued, InstalledFlake, Op, Restored, Session, flake_choices};
+use nixbox_core::{
+	BuildEnded, Engine, Enqueued, InstalledFlake, Op, Restored, Session, flake_choices,
+};
 use nixbox_nix::build::BuildEvent;
 use nixbox_nix::flakes::{FlakeDetails, FlakeHit, fetch_flake_details, search_flakes};
 use nixbox_nix::options::OptionSet;
@@ -32,889 +35,1325 @@ use crate::theme;
 
 actions!(nixbox, [Quit, FocusSearch]);
 
+/// Expands a leading `~` the way a shell would, for typed paths.
+fn expand_home(path: &str) -> PathBuf {
+	let home = || std::env::var_os("HOME").map(PathBuf::from);
+	match path.strip_prefix('~') {
+		Some("") => home().unwrap_or_else(|| PathBuf::from(path)),
+		Some(rest) if rest.starts_with('/') => home()
+			.map(|home| home.join(rest.trim_start_matches('/')))
+			.unwrap_or_else(|| PathBuf::from(path)),
+		_ => PathBuf::from(path),
+	}
+}
+
 pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("ctrl-q", Quit, None),
-        KeyBinding::new("ctrl-f", FocusSearch, None),
-    ]);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+	cx.bind_keys([
+		KeyBinding::new("ctrl-q", Quit, None),
+		KeyBinding::new("ctrl-f", FocusSearch, None),
+	]);
+	cx.on_action(|_: &Quit, cx| cx.quit());
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
-    Packages,
-    Flakes,
-    Installed,
-    /// One installed package's options, opened from the Installed page.
-    Options,
-    Queue,
-    Build,
-    Settings,
+	Packages,
+	Flakes,
+	Installed,
+	/// One installed package's options, opened from the Installed page.
+	Options,
+	Queue,
+	Build,
+	VersionControl,
+	Settings,
 }
 
 pub struct NixboxApp {
-    pub session: Session,
-    pub page: Page,
-    pub status: SharedString,
-    pub(crate) runtime: Handle,
+	pub repository: crate::repository::RepositoryControls,
+	pub session: Session,
+	pub page: Page,
+	pub status: SharedString,
+	pub(crate) runtime: Handle,
 
-    pub search_input: Entity<InputState>,
-    pub results: Vec<SearchHit>,
-    pub searching: bool,
-    search_epoch: u64,
-    search_task: Option<Task<()>>,
-    catalog: Option<Arc<PackageCatalog>>,
-    pub catalog_loading: bool,
-    catalog_task: Option<Task<()>>,
+	pub search_input: Entity<InputState>,
+	pub results: Vec<SearchHit>,
+	pub searching: bool,
+	search_epoch: u64,
+	search_task: Option<Task<()>>,
+	catalog: Option<Arc<PackageCatalog>>,
+	pub catalog_loading: bool,
+	catalog_task: Option<Task<()>>,
 
-    pub flake_input: Entity<InputState>,
-    pub flake_results: Vec<FlakeHit>,
-    pub flake_selected: Option<usize>,
-    pub flake_details: Option<FlakeDetails>,
-    pub flake_picker_open: bool,
-    pub flake_searching: bool,
-    pub flake_detail_loading: bool,
-    flake_epoch: u64,
-    flake_task: Option<Task<()>>,
-    flake_detail_task: Option<Task<()>>,
+	pub flake_input: Entity<InputState>,
+	pub flake_results: Vec<FlakeHit>,
+	pub flake_selected: Option<usize>,
+	pub flake_details: Option<FlakeDetails>,
+	pub flake_picker_open: bool,
+	pub flake_searching: bool,
+	pub flake_detail_loading: bool,
+	flake_epoch: u64,
+	flake_task: Option<Task<()>>,
+	flake_detail_task: Option<Task<()>>,
 
-    pub installed_input: Entity<InputState>,
-    pub log_scroll: UniformListScrollHandle,
+	pub installed_input: Entity<InputState>,
+	pub log_scroll: UniformListScrollHandle,
 
-    pub options: Option<OptionsView>,
-    pub(crate) options_cache: HashMap<(Target, String), Arc<OptionSet>>,
-    pub(crate) options_epoch: u64,
-    pub(crate) options_task: Option<Task<()>>,
-    pub options_filter: Entity<InputState>,
-    /// The value field for the selected option's text editor.
-    pub option_input: Entity<InputState>,
+	pub options: Option<OptionsView>,
+	pub(crate) options_cache: HashMap<(Target, String), Arc<OptionSet>>,
+	pub(crate) options_epoch: u64,
+	pub(crate) options_task: Option<Task<()>>,
+	pub options_filter: Entity<InputState>,
+	/// The value field for the selected option's text editor.
+	pub option_input: Entity<InputState>,
+	/// The configuration directory field on the Settings page.
+	pub config_dir_input: Entity<InputState>,
 
-    _build_events: Task<()>,
-    _subscriptions: Vec<Subscription>,
+	_build_events: Task<()>,
+	_subscriptions: Vec<Subscription>,
 }
 
 impl NixboxApp {
-    pub fn new(
-        session: Session,
-        mut build_rx: UnboundedReceiver<BuildEvent>,
-        runtime: Handle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        theme::apply(&session.engine.config.theme, Some(window), cx);
+	pub fn new(
+		session: Session,
+		mut build_rx: UnboundedReceiver<BuildEvent>,
+		runtime: Handle,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) -> Self {
+		theme::apply(&session.engine.config.theme, Some(window), cx);
 
-        let search_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search nixpkgs, e.g. ripgrep"));
-        let flake_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search GitHub for flakes by name or content")
-        });
-        let installed_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter installed packages"));
-        let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
-        let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
-        search_input.update(cx, |input, cx| input.focus(window, cx));
+		let search_input =
+			cx.new(|cx| InputState::new(window, cx).placeholder("Search nixpkgs, e.g. ripgrep"));
+		let flake_input = cx.new(|cx| {
+			InputState::new(window, cx).placeholder("Search GitHub for flakes by name or content")
+		});
+		let installed_input =
+			cx.new(|cx| InputState::new(window, cx).placeholder("Filter installed packages"));
+		let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
+		let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
+		let config_dir_input = cx.new(|cx| {
+			let mut input =
+				InputState::new(window, cx).placeholder("Path to your configuration flake");
+			input.set_value(session.config_dir().display().to_string(), window, cx);
+			input
+		});
+		let mut repository = crate::repository::RepositoryControls::new(window, cx);
+		repository.backend = crate::repository::nearest_backend(&session.config_dir());
+		search_input.update(cx, |input, cx| input.focus(window, cx));
 
-        let subscriptions = vec![
-            cx.subscribe_in(&search_input, window, |this, _, event, _, cx| {
-                if let InputEvent::Change = event {
-                    this.schedule_search(cx);
-                }
-            }),
-            cx.subscribe_in(&flake_input, window, |this, _, event, _, cx| {
-                if let InputEvent::Change = event {
-                    this.schedule_flake_search(cx);
-                }
-            }),
-            cx.subscribe_in(&installed_input, window, |_, _, event, _, cx| {
-                if let InputEvent::Change = event {
-                    cx.notify();
-                }
-            }),
-            cx.subscribe_in(&options_filter, window, |_, _, event, _, cx| {
-                if let InputEvent::Change = event {
-                    cx.notify();
-                }
-            }),
-            cx.subscribe_in(&option_input, window, |this, _, event, _, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    this.stage_text(cx);
-                }
-            }),
-            cx.observe_window_appearance(window, |this, window, cx| {
-                if this.session.engine.config.theme == "default" {
-                    theme::apply("default", Some(window), cx);
-                }
-            }),
-        ];
+		let subscriptions = vec![
+			cx.subscribe_in(&repository.branch, window, |_, _, _: &InputEvent, _, cx| {
+				cx.notify()
+			}),
+			cx.subscribe_in(&repository.owner, window, |_, _, _: &InputEvent, _, cx| {
+				cx.notify()
+			}),
+			cx.subscribe_in(&repository.name, window, |_, _, _: &InputEvent, _, cx| {
+				cx.notify()
+			}),
+			// The review stays on screen while the message is edited; the commit
+			// control, `commit_repository`, and the backend all refuse a message
+			// that differs from the reviewed one.
+			cx.subscribe_in(&repository.message, window, |_, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					cx.notify();
+				}
+			}),
+			cx.subscribe_in(&search_input, window, |this, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					this.schedule_search(cx);
+				}
+			}),
+			cx.subscribe_in(&flake_input, window, |this, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					this.schedule_flake_search(cx);
+				}
+			}),
+			cx.subscribe_in(&installed_input, window, |_, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					cx.notify();
+				}
+			}),
+			cx.subscribe_in(&options_filter, window, |_, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					cx.notify();
+				}
+			}),
+			cx.subscribe_in(&option_input, window, |this, _, event, _, cx| {
+				if let InputEvent::PressEnter { .. } = event {
+					this.stage_text(cx);
+				}
+			}),
+			cx.subscribe_in(
+				&config_dir_input,
+				window,
+				|this, _, event, window, cx| match event {
+					InputEvent::PressEnter { .. } => this.apply_config_dir_input(window, cx),
+					InputEvent::Change => cx.notify(),
+					_ => {}
+				},
+			),
+			cx.observe_window_appearance(window, |this, window, cx| {
+				if this.session.engine.config.theme == "default" {
+					theme::apply("default", Some(window), cx);
+				}
+			}),
+		];
 
-        let build_events = cx.spawn_in(window, async move |this, cx| {
-            while let Some(event) = build_rx.recv().await {
-                let updated = this.update_in(cx, |this, window, cx| {
-                    this.on_build_event(event, window, cx);
-                });
-                if updated.is_err() {
-                    break;
-                }
-            }
-        });
+		let build_events = cx.spawn_in(window, async move |this, cx| {
+			while let Some(event) = build_rx.recv().await {
+				let updated = this.update_in(cx, |this, window, cx| {
+					this.on_build_event(event, window, cx);
+				});
+				if updated.is_err() {
+					break;
+				}
+			}
+		});
 
-        let managed = session.engine.managed_packages().len();
-        let external = session.engine.external_packages.len();
-        let mut app = Self {
-            session,
-            page: Page::Packages,
-            status: format!("{managed} managed, {external} external.").into(),
-            runtime,
-            search_input,
-            results: Vec::new(),
-            searching: false,
-            search_epoch: 0,
-            search_task: None,
-            catalog: None,
-            catalog_loading: false,
-            catalog_task: None,
-            flake_input,
-            flake_results: Vec::new(),
-            flake_selected: None,
-            flake_details: None,
-            flake_picker_open: false,
-            flake_searching: false,
-            flake_detail_loading: false,
-            flake_epoch: 0,
-            flake_task: None,
-            flake_detail_task: None,
-            installed_input,
-            log_scroll: UniformListScrollHandle::new(),
-            options: None,
-            options_cache: HashMap::new(),
-            options_epoch: 0,
-            options_task: None,
-            options_filter,
-            option_input,
-            _build_events: build_events,
-            _subscriptions: subscriptions,
-        };
-        app.restore();
-        app
-    }
+		let managed = session.engine.managed_packages().len();
+		let external = session.engine.external_packages.len();
+		let mut app = Self {
+			repository,
+			session,
+			page: Page::Packages,
+			status: format!("{managed} managed, {external} external.").into(),
+			runtime,
+			search_input,
+			results: Vec::new(),
+			searching: false,
+			search_epoch: 0,
+			search_task: None,
+			catalog: None,
+			catalog_loading: false,
+			catalog_task: None,
+			flake_input,
+			flake_results: Vec::new(),
+			flake_selected: None,
+			flake_details: None,
+			flake_picker_open: false,
+			flake_searching: false,
+			flake_detail_loading: false,
+			flake_epoch: 0,
+			flake_task: None,
+			flake_detail_task: None,
+			installed_input,
+			log_scroll: UniformListScrollHandle::new(),
+			options: None,
+			options_cache: HashMap::new(),
+			options_epoch: 0,
+			options_task: None,
+			options_filter,
+			option_input,
+			config_dir_input,
+			_build_events: build_events,
+			_subscriptions: subscriptions,
+		};
+		app.restore();
+		app
+	}
 
-    fn restore(&mut self) {
-        let restored = self.session.restore();
-        if let Some(error) = &self.session.last_error {
-            self.status = format!("Previous run failed: {error}").into();
-        }
-        match restored {
-            Restored::Nothing => {}
-            Restored::Rebuild(label) => {
-                self.page = Page::Build;
-                self.status = format!(
-                    "Resuming interrupted build: {}.",
-                    label.trim_start_matches("resume ")
-                )
-                .into();
-            }
-            Restored::Queue(count) => {
-                self.page = Page::Queue;
-                self.status = format!("Resuming {count} queued op(s).").into();
-            }
-        }
-    }
+	fn restore(&mut self) {
+		let restored = self.session.restore();
+		if let Some(error) = &self.session.last_error {
+			self.status = format!("Previous run failed: {error}").into();
+		}
+		match restored {
+			Restored::Nothing => {}
+			Restored::Rebuild(label) => {
+				self.page = Page::Build;
+				self.status = format!(
+					"Resuming interrupted build: {}.",
+					label.trim_start_matches("resume ")
+				)
+				.into();
+			}
+			Restored::Queue(count) => {
+				self.page = Page::Queue;
+				self.status = format!("Resuming {count} queued op(s).").into();
+			}
+		}
+	}
 
-    pub fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        self.page = page;
-        let input = match page {
-            Page::Packages => Some(&self.search_input),
-            Page::Flakes => Some(&self.flake_input),
-            Page::Installed => Some(&self.installed_input),
-            Page::Options => Some(&self.options_filter),
-            Page::Queue | Page::Build | Page::Settings => None,
-        };
-        if let Some(input) = input {
-            input.update(cx, |input, cx| input.focus(window, cx));
-        }
-        if page == Page::Build {
-            self.scroll_log_to_end();
-        }
-        cx.notify();
-    }
+	pub fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+		self.page = page;
+		let input = match page {
+			Page::Packages => Some(&self.search_input),
+			Page::Flakes => Some(&self.flake_input),
+			Page::Installed => Some(&self.installed_input),
+			Page::Options => Some(&self.options_filter),
+			Page::Queue | Page::Build | Page::VersionControl | Page::Settings => None,
+		};
+		if let Some(input) = input {
+			input.update(cx, |input, cx| input.focus(window, cx));
+		}
+		if page == Page::Build {
+			self.scroll_log_to_end();
+		}
+		if page == Page::VersionControl && !self.repository_pending_writes() {
+			self.refresh_repository(window, cx);
+		}
+		cx.notify();
+	}
 
-    pub fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
-        let page = match self.page {
-            Page::Flakes | Page::Installed => self.page,
-            _ => Page::Packages,
-        };
-        self.set_page(page, window, cx);
-    }
+	pub fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
+		let page = match self.page {
+			Page::Flakes | Page::Installed => self.page,
+			_ => Page::Packages,
+		};
+		self.set_page(page, window, cx);
+	}
 
-    fn set_status(&mut self, status: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.status = status.into();
-        cx.notify();
-    }
+	fn set_status(&mut self, status: impl Into<SharedString>, cx: &mut Context<Self>) {
+		self.status = status.into();
+		cx.notify();
+	}
 
-    // ── nixpkgs search ──────────────────────────────────────────────────
+	// ── nixpkgs search ──────────────────────────────────────────────────
 
-    /// Loads the package catalog for the locked nixpkgs, building it the
-    /// first time, so searches stop shelling out to `nix search`.
-    pub fn prepare_catalog(&mut self, cx: &mut Context<Self>) {
-        let Some(cache_path) = catalog_cache_path() else {
-            return;
-        };
-        let config_dir = self.session.config_dir();
-        self.catalog_loading = true;
-        let job = self
-            .runtime
-            .spawn(async move { PackageCatalog::load_or_build(&config_dir, &cache_path).await });
-        self.catalog_task = Some(cx.spawn(async move |this, cx| {
-            let result = match job.await {
-                Ok(result) => result.map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            };
-            let _ = this.update(cx, |this, cx| {
-                this.catalog_loading = false;
-                this.catalog_task = None;
-                match result {
-                    Ok(catalog) => {
-                        let revision: String = catalog.revision().chars().take(12).collect();
-                        this.catalog = Some(Arc::new(catalog));
-                        this.status = format!("Package catalog ready at {revision}.").into();
-                    }
-                    Err(error) => {
-                        this.catalog = None;
-                        this.status =
-                            format!("Package catalog unavailable; using live search: {error}")
-                                .into();
-                    }
-                }
-                if this.searching {
-                    this.schedule_search(cx);
-                }
-                cx.notify();
-            });
-        }));
-    }
+	/// Loads the package catalog for the locked nixpkgs, building it the
+	/// first time, so searches stop shelling out to `nix search`.
+	pub fn prepare_catalog(&mut self, cx: &mut Context<Self>) {
+		let Some(cache_path) = catalog_cache_path() else {
+			return;
+		};
+		let config_dir = self.session.config_dir();
+		self.catalog_loading = true;
+		let job = self
+			.runtime
+			.spawn(async move { PackageCatalog::load_or_build(&config_dir, &cache_path).await });
+		self.catalog_task = Some(cx.spawn(async move |this, cx| {
+			let result = match job.await {
+				Ok(result) => result.map_err(|error| error.to_string()),
+				Err(error) => Err(error.to_string()),
+			};
+			let _ = this.update(cx, |this, cx| {
+				this.catalog_loading = false;
+				this.catalog_task = None;
+				match result {
+					Ok(catalog) => {
+						let revision: String = catalog.revision().chars().take(12).collect();
+						this.catalog = Some(Arc::new(catalog));
+						this.status = format!("Package catalog ready at {revision}.").into();
+					}
+					Err(error) => {
+						this.catalog = None;
+						this.status =
+							format!("Package catalog unavailable; using live search: {error}")
+								.into();
+					}
+				}
+				if this.searching {
+					this.schedule_search(cx);
+				}
+				cx.notify();
+			});
+		}));
+	}
 
-    fn schedule_search(&mut self, cx: &mut Context<Self>) {
-        self.search_epoch = self.search_epoch.wrapping_add(1);
-        let epoch = self.search_epoch;
-        let query = self.search_input.read(cx).value().trim().to_string();
-        if query.is_empty() {
-            self.search_task = None;
-            self.searching = false;
-            self.results.clear();
-            self.set_status("Type to search packages.", cx);
-            return;
-        }
-        self.searching = true;
-        if self.catalog_loading {
-            self.set_status(
-                "Preparing the package catalog for your locked nixpkgs revision...",
-                cx,
-            );
-            return;
-        }
-        if self.catalog.as_ref().is_some_and(|catalog| {
-            !catalog
-                .is_current_for(&self.session.config_dir())
-                .unwrap_or(false)
-        }) {
-            self.catalog = None;
-            self.prepare_catalog(cx);
-            self.set_status(
-                "The nixpkgs lock changed; refreshing the package catalog...",
-                cx,
-            );
-            return;
-        }
+	fn schedule_search(&mut self, cx: &mut Context<Self>) {
+		self.search_epoch = self.search_epoch.wrapping_add(1);
+		let epoch = self.search_epoch;
+		let query = self.search_input.read(cx).value().trim().to_string();
+		if query.is_empty() {
+			self.search_task = None;
+			self.searching = false;
+			self.results.clear();
+			self.set_status("Type to search packages.", cx);
+			return;
+		}
+		self.searching = true;
+		if self.catalog_loading {
+			self.set_status(
+				"Preparing the package catalog for your locked nixpkgs revision...",
+				cx,
+			);
+			return;
+		}
+		if self.catalog.as_ref().is_some_and(|catalog| {
+			!catalog
+				.is_current_for(&self.session.config_dir())
+				.unwrap_or(false)
+		}) {
+			self.catalog = None;
+			self.prepare_catalog(cx);
+			self.set_status(
+				"The nixpkgs lock changed; refreshing the package catalog...",
+				cx,
+			);
+			return;
+		}
 
-        let catalog = self.catalog.clone();
-        let channel = self.session.engine.config.channel.clone();
-        let runtime = self.runtime.clone();
-        cx.notify();
-        self.search_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(180))
-                .await;
-            let label = query.clone();
-            let job =
-                runtime.spawn(async move { search_packages(catalog, &channel, query).await });
-            let result = match job.await {
-                Ok(result) => result.map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            };
-            let _ = this.update(cx, |this, cx| {
-                if epoch != this.search_epoch {
-                    return;
-                }
-                this.searching = false;
-                match result {
-                    Ok(hits) => {
-                        this.status = if hits.len() == MAX_SEARCH_RESULTS {
-                            format!(
-                                "Showing the first {} matches for `{label}`; refine the search for more.",
-                                hits.len()
-                            )
-                        } else {
-                            format!("{} matches for `{label}`.", hits.len())
-                        }
-                        .into();
-                        this.results = hits;
-                    }
-                    Err(error) => {
-                        this.results.clear();
-                        this.status = format!("Search failed: {error}").into();
-                    }
-                }
-                cx.notify();
-            });
-        }));
-    }
+		let catalog = self.catalog.clone();
+		let channel = self.session.engine.config.channel.clone();
+		let runtime = self.runtime.clone();
+		cx.notify();
+		self.search_task = Some(cx.spawn(async move |this, cx| {
+			cx.background_executor()
+				.timer(Duration::from_millis(180))
+				.await;
+			let label = query.clone();
+			let job = runtime.spawn(async move { search_packages(catalog, &channel, query).await });
+			let result = match job.await {
+				Ok(result) => result.map_err(|error| error.to_string()),
+				Err(error) => Err(error.to_string()),
+			};
+			let _ = this.update(cx, |this, cx| {
+				if epoch != this.search_epoch {
+					return;
+				}
+				this.searching = false;
+				match result {
+					Ok(hits) => {
+						this.status = if hits.len() == MAX_SEARCH_RESULTS {
+							format!(
+								"Showing the first {} matches for `{label}`; refine the search for more.",
+								hits.len()
+							)
+						} else {
+							format!("{} matches for `{label}`.", hits.len())
+						}
+						.into();
+						this.results = hits;
+					}
+					Err(error) => {
+						this.results.clear();
+						this.status = format!("Search failed: {error}").into();
+					}
+				}
+				cx.notify();
+			});
+		}));
+	}
 
-    pub fn install(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(hit) = self.results.get(index).cloned() else {
-            return;
-        };
-        let scope = self.session.engine.config.target;
-        if self.session.engine.is_tracked(&hit.attr, scope) {
-            self.set_status(format!("{} is already tracked.", hit.attr), cx);
-            return;
-        }
-        let attr = hit.attr.clone();
-        self.enqueue(
-            Op::Install { hit, scope },
-            format!("{attr} is already queued."),
-            window,
-            cx,
-        );
-    }
+	pub fn install(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+		let Some(hit) = self.results.get(index).cloned() else {
+			return;
+		};
+		let scope = self.session.engine.config.target;
+		if self.session.engine.is_tracked(&hit.attr, scope) {
+			self.set_status(format!("{} is already tracked.", hit.attr), cx);
+			return;
+		}
+		let attr = hit.attr.clone();
+		self.enqueue(
+			Op::Install { hit, scope },
+			format!("{attr} is already queued."),
+			window,
+			cx,
+		);
+	}
 
-    // ── flakes ──────────────────────────────────────────────────────────
+	// ── flakes ──────────────────────────────────────────────────────────
 
-    fn schedule_flake_search(&mut self, cx: &mut Context<Self>) {
-        self.flake_epoch = self.flake_epoch.wrapping_add(1);
-        let epoch = self.flake_epoch;
-        self.flake_detail_task = None;
-        self.flake_detail_loading = false;
-        self.flake_picker_open = false;
-        let query = self.flake_input.read(cx).value().trim().to_string();
-        if query.is_empty() {
-            self.flake_task = None;
-            self.flake_searching = false;
-            self.flake_results.clear();
-            self.flake_selected = None;
-            self.flake_details = None;
-            self.set_status("Search GitHub for flakes by content or project name.", cx);
-            return;
-        }
-        self.flake_searching = true;
-        let runtime = self.runtime.clone();
-        cx.notify();
-        self.flake_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(250))
-                .await;
-            let label = query.clone();
-            let job = runtime.spawn(async move { search_flakes(&query).await });
-            let result = match job.await {
-                Ok(result) => result.map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            };
-            let _ = this.update(cx, |this, cx| {
-                if epoch != this.flake_epoch {
-                    return;
-                }
-                this.flake_searching = false;
-                this.flake_details = None;
-                match result {
-                    Ok(hits) => {
-                        this.status =
-                            format!("{} GitHub flake matches for `{label}`.", hits.len()).into();
-                        this.flake_results = hits;
-                        this.select_flake(0, cx);
-                    }
-                    Err(error) => {
-                        this.flake_results.clear();
-                        this.flake_selected = None;
-                        this.status = format!("Flake search failed: {error}").into();
-                    }
-                }
-                cx.notify();
-            });
-        }));
-    }
+	fn schedule_flake_search(&mut self, cx: &mut Context<Self>) {
+		self.flake_epoch = self.flake_epoch.wrapping_add(1);
+		let epoch = self.flake_epoch;
+		self.flake_detail_task = None;
+		self.flake_detail_loading = false;
+		self.flake_picker_open = false;
+		let query = self.flake_input.read(cx).value().trim().to_string();
+		if query.is_empty() {
+			self.flake_task = None;
+			self.flake_searching = false;
+			self.flake_results.clear();
+			self.flake_selected = None;
+			self.flake_details = None;
+			self.set_status("Search GitHub for flakes by content or project name.", cx);
+			return;
+		}
+		self.flake_searching = true;
+		let runtime = self.runtime.clone();
+		cx.notify();
+		self.flake_task = Some(cx.spawn(async move |this, cx| {
+			cx.background_executor()
+				.timer(Duration::from_millis(250))
+				.await;
+			let label = query.clone();
+			let job = runtime.spawn(async move { search_flakes(&query).await });
+			let result = match job.await {
+				Ok(result) => result.map_err(|error| error.to_string()),
+				Err(error) => Err(error.to_string()),
+			};
+			let _ = this.update(cx, |this, cx| {
+				if epoch != this.flake_epoch {
+					return;
+				}
+				this.flake_searching = false;
+				this.flake_details = None;
+				match result {
+					Ok(hits) => {
+						this.status =
+							format!("{} GitHub flake matches for `{label}`.", hits.len()).into();
+						this.flake_results = hits;
+						this.select_flake(0, cx);
+					}
+					Err(error) => {
+						this.flake_results.clear();
+						this.flake_selected = None;
+						this.status = format!("Flake search failed: {error}").into();
+					}
+				}
+				cx.notify();
+			});
+		}));
+	}
 
-    pub fn select_flake(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.flake_epoch = self.flake_epoch.wrapping_add(1);
-        self.flake_picker_open = false;
-        let Some(hit) = self.flake_results.get(index).cloned() else {
-            self.flake_selected = None;
-            return;
-        };
-        self.flake_selected = Some(index);
-        self.flake_details = None;
-        self.flake_detail_loading = true;
-        let epoch = self.flake_epoch;
-        let runtime = self.runtime.clone();
-        self.flake_detail_task = Some(cx.spawn(async move |this, cx| {
-            let job = runtime.spawn(async move { fetch_flake_details(&hit).await });
-            let result = match job.await {
-                Ok(result) => result.map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            };
-            let _ = this.update(cx, |this, cx| {
-                if epoch != this.flake_epoch || this.flake_selected != Some(index) {
-                    return;
-                }
-                this.flake_detail_loading = false;
-                match result {
-                    Ok(details) => {
-                        if this.flake_picker_open {
-                            this.flake_picker_open =
-                                flake_choices(&details, this.session.engine.config.target).len()
-                                    > 1;
-                        }
-                        this.flake_details = Some(details);
-                    }
-                    Err(error) => this.status = format!("Flake details failed: {error}").into(),
-                }
-                cx.notify();
-            });
-        }));
-        cx.notify();
-    }
+	pub fn select_flake(&mut self, index: usize, cx: &mut Context<Self>) {
+		self.flake_epoch = self.flake_epoch.wrapping_add(1);
+		self.flake_picker_open = false;
+		let Some(hit) = self.flake_results.get(index).cloned() else {
+			self.flake_selected = None;
+			return;
+		};
+		self.flake_selected = Some(index);
+		self.flake_details = None;
+		self.flake_detail_loading = true;
+		let epoch = self.flake_epoch;
+		let runtime = self.runtime.clone();
+		self.flake_detail_task = Some(cx.spawn(async move |this, cx| {
+			let job = runtime.spawn(async move { fetch_flake_details(&hit).await });
+			let result = match job.await {
+				Ok(result) => result.map_err(|error| error.to_string()),
+				Err(error) => Err(error.to_string()),
+			};
+			let _ = this.update(cx, |this, cx| {
+				if epoch != this.flake_epoch || this.flake_selected != Some(index) {
+					return;
+				}
+				this.flake_detail_loading = false;
+				match result {
+					Ok(details) => {
+						if this.flake_picker_open {
+							this.flake_picker_open =
+								flake_choices(&details, this.session.engine.config.target).len()
+									> 1;
+						}
+						this.flake_details = Some(details);
+					}
+					Err(error) => this.status = format!("Flake details failed: {error}").into(),
+				}
+				cx.notify();
+			});
+		}));
+		cx.notify();
+	}
 
-    pub fn open_flake(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.select_flake(index, cx);
-        self.flake_picker_open = self.flake_selected.is_some();
-    }
+	pub fn open_flake(&mut self, index: usize, cx: &mut Context<Self>) {
+		self.select_flake(index, cx);
+		self.flake_picker_open = self.flake_selected.is_some();
+	}
 
-    pub fn install_flake(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(details) = self.flake_details.as_ref() else {
-            self.set_status("Wait for the flake details before installing.", cx);
-            return;
-        };
-        let scope = self.session.engine.config.target;
-        let repo = details.repo.clone();
-        let choices = flake_choices(details, scope);
-        if choices.len() > 1 {
-            self.flake_picker_open = true;
-            cx.notify();
-            return;
-        }
-        let Some(choice) = choices.first() else {
-            self.set_status(
-                format!(
-                    "{repo} has no installable package for this system or compatible {} module.",
-                    scope.label()
-                ),
-                cx,
-            );
-            return;
-        };
-        self.enqueue(
-            choice.operation(repo.clone(), scope),
-            format!("{repo}#{} is already queued.", choice.path),
-            window,
-            cx,
-        );
-    }
+	pub fn install_flake(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		let Some(details) = self.flake_details.as_ref() else {
+			self.set_status("Wait for the flake details before installing.", cx);
+			return;
+		};
+		let scope = self.session.engine.config.target;
+		let repo = details.repo.clone();
+		let choices = flake_choices(details, scope);
+		if choices.len() > 1 {
+			self.flake_picker_open = true;
+			cx.notify();
+			return;
+		}
+		let Some(choice) = choices.first() else {
+			self.set_status(
+				format!(
+					"{repo} has no installable package for this system or compatible {} module.",
+					scope.label()
+				),
+				cx,
+			);
+			return;
+		};
+		self.enqueue(
+			choice.operation(repo.clone(), scope),
+			format!("{repo}#{} is already queued.", choice.path),
+			window,
+			cx,
+		);
+	}
 
-    pub fn install_flake_choice(
-        &mut self,
-        path: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(details) = self.flake_details.as_ref() else {
-            return;
-        };
-        let scope = self.session.engine.config.target;
-        let Some(choice) = flake_choices(details, scope)
-            .into_iter()
-            .find(|choice| choice.path == path)
-        else {
-            return;
-        };
-        let repo = details.repo.clone();
-        self.flake_picker_open = false;
-        self.enqueue(
-            choice.operation(repo.clone(), scope),
-            format!("{repo}#{path} is already queued."),
-            window,
-            cx,
-        );
-    }
+	pub fn install_flake_choice(
+		&mut self,
+		path: &str,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let Some(details) = self.flake_details.as_ref() else {
+			return;
+		};
+		let scope = self.session.engine.config.target;
+		let Some(choice) = flake_choices(details, scope)
+			.into_iter()
+			.find(|choice| choice.path == path)
+		else {
+			return;
+		};
+		let repo = details.repo.clone();
+		self.flake_picker_open = false;
+		self.enqueue(
+			choice.operation(repo.clone(), scope),
+			format!("{repo}#{path} is already queued."),
+			window,
+			cx,
+		);
+	}
 
-    // ── installed ───────────────────────────────────────────────────────
+	// ── installed ───────────────────────────────────────────────────────
 
-    pub fn remove_managed(
-        &mut self,
-        name: String,
-        scope: Target,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let duplicate = format!("{name} is already queued for removal.");
-        self.enqueue(Op::Uninstall { name, scope }, duplicate, window, cx);
-    }
+	pub fn remove_managed(
+		&mut self,
+		name: String,
+		scope: Target,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let duplicate = format!("{name} is already queued for removal.");
+		self.enqueue(Op::Uninstall { name, scope }, duplicate, window, cx);
+	}
 
-    pub fn remove_flake(
-        &mut self,
-        flake: InstalledFlake,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let name = flake.name();
-        if !flake.removable {
-            self.set_status(
-                format!(
-                    "{name} shares a line in {} with other entries; remove it by hand.",
-                    flake.declared_in.as_deref().unwrap_or("your config")
-                ),
-                cx,
-            );
-            return;
-        }
-        self.enqueue(
-            Op::UninstallFlakeOutput {
-                input: flake.input,
-                output: flake.output,
-                scope: flake.scope,
-            },
-            format!("{name} is already queued for removal."),
-            window,
-            cx,
-        );
-    }
+	pub fn remove_flake(
+		&mut self,
+		flake: InstalledFlake,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let name = flake.name();
+		if !flake.removable {
+			self.set_status(
+				format!(
+					"{name} shares a line in {} with other entries; remove it by hand.",
+					flake.declared_in.as_deref().unwrap_or("your config")
+				),
+				cx,
+			);
+			return;
+		}
+		self.enqueue(
+			Op::UninstallFlakeOutput {
+				input: flake.input,
+				output: flake.output,
+				scope: flake.scope,
+			},
+			format!("{name} is already queued for removal."),
+			window,
+			cx,
+		);
+	}
 
-    pub fn migrate(
-        &mut self,
-        package: ExternalPackage,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !package.migratable {
-            self.set_status(
-                format!(
-                    "{} shares a line in {} with other entries; move it by hand.",
-                    package.name, package.source_attr
-                ),
-                cx,
-            );
-            return;
-        }
-        let name = package.name;
-        self.enqueue(
-            Op::Migrate {
-                names: vec![name.clone()],
-                scope: target_of(package.scope),
-            },
-            format!("{name} is already queued for migration."),
-            window,
-            cx,
-        );
-    }
+	pub fn migrate(
+		&mut self,
+		package: ExternalPackage,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		if !package.migratable {
+			self.set_status(
+				format!(
+					"{} shares a line in {} with other entries; move it by hand.",
+					package.name, package.source_attr
+				),
+				cx,
+			);
+			return;
+		}
+		let name = package.name;
+		self.enqueue(
+			Op::Migrate {
+				names: vec![name.clone()],
+				scope: target_of(package.scope),
+			},
+			format!("{name} is already queued for migration."),
+			window,
+			cx,
+		);
+	}
 
-    pub fn migrate_flake(
-        &mut self,
-        flake: InstalledFlake,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let name = flake.name();
-        if !flake.migratable() {
-            self.set_status(format!("{name} cannot be migrated automatically."), cx);
-            return;
-        }
-        if let nixbox_nix::manifest::FlakeOutput::Package(package) = flake.output {
-            self.enqueue(
-                Op::MigrateFlakePackage {
-                    input: flake.input,
-                    package,
-                    scope: flake.scope,
-                },
-                format!("{name} is already queued for migration."),
-                window,
-                cx,
-            );
-        }
-    }
+	pub fn migrate_flake(
+		&mut self,
+		flake: InstalledFlake,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let name = flake.name();
+		if !flake.migratable() {
+			self.set_status(format!("{name} cannot be migrated automatically."), cx);
+			return;
+		}
+		if let nixbox_nix::manifest::FlakeOutput::Package(package) = flake.output {
+			self.enqueue(
+				Op::MigrateFlakePackage {
+					input: flake.input,
+					package,
+					scope: flake.scope,
+				},
+				format!("{name} is already queued for migration."),
+				window,
+				cx,
+			);
+		}
+	}
 
-    pub fn migrate_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ops = self.session.migrate_all_ops();
-        if ops.is_empty() {
-            self.set_status("No external packages or flake outputs left to migrate.", cx);
-            return;
-        }
-        let outcome = self.session.enqueue_all(ops);
-        self.report_enqueued(outcome, "Nothing new to migrate.".into(), window, cx);
-    }
+	pub fn migrate_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		let ops = self.session.migrate_all_ops();
+		if ops.is_empty() {
+			self.set_status("No external packages or flake outputs left to migrate.", cx);
+			return;
+		}
+		let outcome = self.session.enqueue_all(ops);
+		self.report_enqueued(outcome, "Nothing new to migrate.".into(), window, cx);
+	}
 
-    // ── queue and rebuilds ──────────────────────────────────────────────
+	// ── queue and rebuilds ──────────────────────────────────────────────
 
-    pub(crate) fn enqueue(
-        &mut self,
-        op: Op,
-        duplicate: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let outcome = self.session.enqueue(op);
-        self.report_enqueued(outcome, duplicate, window, cx);
-    }
+	pub(crate) fn enqueue(
+		&mut self,
+		op: Op,
+		duplicate: String,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		let outcome = self.session.enqueue(op);
+		self.report_enqueued(outcome, duplicate, window, cx);
+	}
 
-    fn report_enqueued(
-        &mut self,
-        outcome: Enqueued,
-        duplicate: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let status = match outcome {
-            Enqueued::Duplicate => duplicate,
-            Enqueued::Queued => format!(
-                "Queued behind the running rebuild ({} waiting).",
-                self.session.queue.len()
-            ),
-            Enqueued::Started(label) => {
-                window.push_notification(Notification::info(format!("Started: {label}")), cx);
-                format!("{label}...")
-            }
-            Enqueued::NotWritten => {
-                "The queued changes could not be written; see the build log.".into()
-            }
-        };
-        self.set_status(status, cx);
-    }
+	fn report_enqueued(
+		&mut self,
+		outcome: Enqueued,
+		duplicate: String,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let status = match outcome {
+			Enqueued::Duplicate => duplicate,
+			Enqueued::Queued => format!(
+				"Queued behind the running rebuild ({} waiting).",
+				self.session.queue.len()
+			),
+			Enqueued::Started(label) => {
+				window.push_notification(Notification::info(format!("Started: {label}")), cx);
+				format!("{label}...")
+			}
+			Enqueued::NotWritten => {
+				"The queued changes could not be written; see the build log.".into()
+			}
+		};
+		self.set_status(status, cx);
+	}
 
-    pub fn dequeue(&mut self, index: usize, cx: &mut Context<Self>) {
-        if let Some(op) = self.session.dequeue(index) {
-            self.set_status(format!("Dropped {} from the queue.", op.label()), cx);
-        }
-    }
+	pub fn dequeue(&mut self, index: usize, cx: &mut Context<Self>) {
+		if let Some(op) = self.session.dequeue(index) {
+			self.set_status(format!("Dropped {} from the queue.", op.label()), cx);
+		}
+	}
 
-    pub fn apply_queue(&mut self, cx: &mut Context<Self>) {
-        match self.session.drain() {
-            Some(label) => self.set_status(format!("{label}..."), cx),
-            None => cx.notify(),
-        }
-    }
+	pub fn apply_queue(&mut self, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		match self.session.drain() {
+			Some(label) => self.set_status(format!("{label}..."), cx),
+			None => cx.notify(),
+		}
+	}
 
-    pub fn cancel_build(&mut self, cx: &mut Context<Self>) {
-        if self.session.cancel_build() {
-            self.set_status("Cancelling the rebuild...", cx);
-        }
-    }
+	pub fn cancel_build(&mut self, cx: &mut Context<Self>) {
+		if self.session.cancel_build() {
+			self.set_status("Cancelling the rebuild...", cx);
+		}
+	}
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
-        self.session.dismiss_error();
-        cx.notify();
-    }
+	pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
+		self.session.dismiss_error();
+		cx.notify();
+	}
 
-    fn on_build_event(&mut self, event: BuildEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ended) = self.session.on_build_event(event) else {
-            if self.page == Page::Build {
-                self.scroll_log_to_end();
-            }
-            cx.notify();
-            return;
-        };
-        let (status, note) = match ended {
-            BuildEnded::Succeeded { label, next } => (
-                next.map_or_else(|| format!("{label} done."), |next| format!("{next}...")),
-                Notification::success(format!("{label} done.")),
-            ),
-            BuildEnded::Failed { label, error, next } => (
-                next.map_or_else(
-                    || format!("{label} failed: {error}."),
-                    |next| format!("{next}..."),
-                ),
-                Notification::error(format!("{label} failed: {error}.")),
-            ),
-            BuildEnded::Cancelled { label, paused } => {
-                let status = if paused == 0 {
-                    format!("{label} cancelled.")
-                } else {
-                    format!("{label} cancelled; {paused} queued op(s) paused.")
-                };
-                (status.clone(), Notification::warning(status))
-            }
-        };
-        window.push_notification(note, cx);
-        self.set_status(status, cx);
-        self.options_after_build(cx);
-    }
+	fn on_build_event(&mut self, event: BuildEvent, window: &mut Window, cx: &mut Context<Self>) {
+		let Some(ended) = self.session.on_build_event(event) else {
+			if self.page == Page::Build {
+				self.scroll_log_to_end();
+			}
+			cx.notify();
+			return;
+		};
+		let (status, note) = match ended {
+			BuildEnded::Succeeded { label, next } => (
+				next.map_or_else(|| format!("{label} done."), |next| format!("{next}...")),
+				Notification::success(format!("{label} done.")),
+			),
+			BuildEnded::Failed { label, error, next } => (
+				next.map_or_else(
+					|| format!("{label} failed: {error}."),
+					|next| format!("{next}..."),
+				),
+				Notification::error(format!("{label} failed: {error}.")),
+			),
+			BuildEnded::Cancelled { label, paused } => {
+				let status = if paused == 0 {
+					format!("{label} cancelled.")
+				} else {
+					format!("{label} cancelled; {paused} queued op(s) paused.")
+				};
+				(status.clone(), Notification::warning(status))
+			}
+		};
+		window.push_notification(note, cx);
+		self.set_status(status, cx);
+		self.options_after_build(cx);
+		self.repository.review = None;
+		if self.page == Page::VersionControl && !self.repository_pending_writes() {
+			self.refresh_repository(window, cx);
+		}
+	}
 
-    fn scroll_log_to_end(&self) {
-        if let Some(last) = self.session.log.len().checked_sub(1) {
-            self.log_scroll
-                .scroll_to_item(last, gpui_kit::ScrollStrategy::Bottom);
-        }
-    }
+	fn scroll_log_to_end(&self) {
+		if let Some(last) = self.session.log.len().checked_sub(1) {
+			self.log_scroll
+				.scroll_to_item(last, gpui_kit::ScrollStrategy::Bottom);
+		}
+	}
 
-    // ── settings ────────────────────────────────────────────────────────
+	// ── settings ────────────────────────────────────────────────────────
 
-    pub fn set_target(&mut self, target: Target, cx: &mut Context<Self>) {
-        self.session.engine.config.target = target;
-        self.save_config(format!("New installs go to {}.", target.label()), cx);
-    }
+	pub fn set_target(&mut self, target: Target, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		self.session.engine.config.target = target;
+		self.save_config(format!("New installs go to {}.", target.label()), cx);
+	}
 
-    pub fn set_channel(&mut self, channel: &str, cx: &mut Context<Self>) {
-        self.session.engine.config.channel = channel.to_string();
-        self.save_config(format!("Live search uses {channel}."), cx);
-    }
+	pub fn set_channel(&mut self, channel: &str, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		self.session.engine.config.channel = channel.to_string();
+		self.save_config(format!("Live search uses {channel}."), cx);
+	}
 
-    pub fn set_theme(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.session.engine.config.theme = name.to_string();
-        theme::apply(name, Some(window), cx);
-        self.save_config(format!("Theme set to {name}."), cx);
-    }
+	pub fn set_theme(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		self.session.engine.config.theme = name.to_string();
+		theme::apply(name, Some(window), cx);
+		self.save_config(format!("Theme set to {name}."), cx);
+	}
 
-    fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
-        let status = match self.session.engine.config.save() {
-            Ok(()) => done,
-            Err(error) => format!("Saving settings failed: {error}"),
-        };
-        self.set_status(status, cx);
-    }
+	/// Display only, and settings live outside the reviewed configuration, so
+	/// this neither waits for nor discards a repository review.
+	pub fn set_tab_labels(&mut self, labels: TabLabels, cx: &mut Context<Self>) {
+		self.session.engine.config.tab_labels = labels;
+		self.save_config(format!("Tabs show {}.", labels.label().to_lowercase()), cx);
+	}
 
-    /// Notification and dialog layers, drawn above the page.
-    pub fn overlays(
-        window: &mut Window,
-        cx: &mut App,
-    ) -> impl Iterator<Item = gpui_kit::AnyElement> {
-        use gpui_kit::IntoElement;
-        [
-            Root::render_sheet_layer(window, cx).map(IntoElement::into_any_element),
-            Root::render_dialog_layer(window, cx).map(IntoElement::into_any_element),
-            Root::render_notification_layer(window, cx).map(IntoElement::into_any_element),
-        ]
-        .into_iter()
-        .flatten()
-    }
+	/// Uses the typed directory; an empty field returns to the default.
+	pub fn apply_config_dir_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		let typed = self.config_dir_input.read(cx).value().trim().to_owned();
+		let path = (!typed.is_empty()).then(|| expand_home(&typed));
+		self.set_config_dir(path, window, cx);
+	}
+
+	pub fn browse_config_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		let paths = cx.prompt_for_paths(PathPromptOptions {
+			files: false,
+			directories: true,
+			multiple: false,
+			prompt: Some("Use as configuration".into()),
+		});
+		cx.spawn_in(window, async move |this, cx| {
+			let Ok(Ok(Some(paths))) = paths.await else {
+				return;
+			};
+			if let Some(path) = paths.into_iter().next() {
+				let _ = this.update_in(cx, |this, window, cx| {
+					this.set_config_dir(Some(path), window, cx)
+				});
+			}
+		})
+		.detach();
+	}
+
+	/// Moves nixbox to another configuration directory, or back to the
+	/// default with `None`, and reloads everything read from the old one.
+	/// Refused while writes are queued, since they target the old directory.
+	pub fn set_config_dir(
+		&mut self,
+		path: Option<PathBuf>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		let current = self.session.config_dir().display().to_string();
+		let refuse =
+			|this: &mut Self, status: String, window: &mut Window, cx: &mut Context<Self>| {
+				this.config_dir_input
+					.update(cx, |input, cx| input.set_value(current.clone(), window, cx));
+				this.set_status(status, cx);
+			};
+		if config_dir_from_env().is_some() {
+			return refuse(
+				self,
+				"NIXBOX_CONFIG_DIR is set, and it overrides the saved location.".into(),
+				window,
+				cx,
+			);
+		}
+		if self.repository_pending_writes() {
+			return refuse(
+				self,
+				"Finish or drop queued changes before changing the configuration.".into(),
+				window,
+				cx,
+			);
+		}
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		let path = match path.map(std::path::absolute).transpose() {
+			Ok(path) => path,
+			Err(error) => return refuse(self, format!("Invalid path: {error}"), window, cx),
+		};
+		if let Some(path) = path.as_ref().filter(|path| !path.is_dir()) {
+			return refuse(
+				self,
+				format!("{} is not a directory.", path.display()),
+				window,
+				cx,
+			);
+		}
+		let mut config = self.session.engine.config.clone();
+		config.config_dir = path;
+		let engine = match Engine::with_config(config) {
+			Ok(engine) => engine,
+			Err(error) => {
+				return refuse(
+					self,
+					format!("Could not load that configuration: {error:#}"),
+					window,
+					cx,
+				);
+			}
+		};
+		self.session.engine = engine;
+		let root = self.session.config_dir();
+		self.config_dir_input.update(cx, |input, cx| {
+			input.set_value(root.display().to_string(), window, cx)
+		});
+		self.options_cache.clear();
+		self.options = None;
+		self.options_task = None;
+		if self.page == Page::Options {
+			self.page = Page::Installed;
+		}
+		self.repository.forget(&root);
+		let mut done = format!("Configuration set to {}.", root.display());
+		if !root.join("flake.nix").is_file() {
+			done.push_str(" It has no flake.nix, so rebuilds fail until it does.");
+		}
+		self.save_config(done, cx);
+	}
+
+	fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
+		let status = match self.session.engine.config.save() {
+			Ok(()) => done,
+			Err(error) => format!("Saving settings failed: {error}"),
+		};
+		self.set_status(status, cx);
+	}
+
+	/// Notification and dialog layers, drawn above the page.
+	pub fn overlays(
+		window: &mut Window,
+		cx: &mut App,
+	) -> impl Iterator<Item = gpui_kit::AnyElement> {
+		use gpui_kit::IntoElement;
+		[
+			Root::render_sheet_layer(window, cx).map(IntoElement::into_any_element),
+			Root::render_dialog_layer(window, cx).map(IntoElement::into_any_element),
+			Root::render_notification_layer(window, cx).map(IntoElement::into_any_element),
+		]
+		.into_iter()
+		.flatten()
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::component::Root;
-    use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{AppContext as _, TestAppContext, px, size};
-    use nixbox_config::{Config, Target};
-    use nixbox_core::{Engine, Op, Session};
-    use nixbox_nix::build::BuildEvent;
-    use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
-    use nixbox_nix::manifest::Manifest;
-    use nixbox_nix::search::SearchHit;
+	use gpui_kit::component::Root;
+	use gpui_kit::test::TestWindowExt as _;
+	use gpui_kit::{AppContext as _, TestAppContext, px, size};
+	use nixbox_config::{Config, TabLabels, Target};
+	use nixbox_core::vcs::{Backend, Repository};
+	use nixbox_core::{Engine, Op, Session};
+	use nixbox_nix::build::BuildEvent;
+	use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
+	use nixbox_nix::manifest::Manifest;
+	use nixbox_nix::search::SearchHit;
 
-    use super::{NixboxApp, Page};
+	use super::{NixboxApp, Page, expand_home};
 
-    #[gpui_kit::test]
-    async fn every_page_renders_with_data_and_while_building(cx: &mut TestAppContext) {
-        cx.update(gpui_kit::init);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
-        let mut home = Manifest::default();
-        home.packages.insert("ripgrep".into());
-        let (session, build_rx) = Session::new(Engine::from_parts(
-            Config::default(),
-            home,
-            Manifest::default(),
-            Vec::new(),
-        ));
-        let session = session
-            .without_persistence()
-            .with_runtime(runtime.handle().clone());
+	#[test]
+	fn typed_paths_expand_a_leading_tilde() {
+		let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+		assert_eq!(expand_home("~"), home);
+		assert_eq!(expand_home("~/nixos"), home.join("nixos"));
+		assert_eq!(
+			expand_home("/etc/nixos"),
+			std::path::PathBuf::from("/etc/nixos")
+		);
+		assert_eq!(expand_home("~other"), std::path::PathBuf::from("~other"));
+	}
 
-        let mut app = None;
-        let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
-            let view = cx
-                .new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
-            app = Some(view.clone());
-            Root::new(view, window, cx)
-        });
-        let app = app.expect("view");
+	#[gpui_kit::test]
+	async fn package_results_appear_replace_and_clear_in_the_window(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
+		let hit = |attr: &str| SearchHit {
+			attr: attr.into(),
+			pname: attr.into(),
+			version: "1.0".into(),
+			description: "Search result".into(),
+		};
 
-        app.update(cx, |app, _| {
-            app.results = vec![SearchHit {
-                attr: "ripgrep".into(),
-                pname: "ripgrep".into(),
-                version: "14.1.1".into(),
-                description: "Fast grep".into(),
-            }];
-            let _cancel = app
-                .session
-                .fake_build(Target::HomeManager, "apply 1 queued change(s)");
-            app.session
-                .on_build_event(BuildEvent::Line("building...".into()));
-        });
+		// Exercise completion updates on the same page, without a page switch
+		// that could hide a missing repaint or a collapsed list viewport.
+		for hits in [
+			Vec::new(),
+			vec![hit("ripgrep"), hit("fd")],
+			vec![hit("git")],
+			Vec::new(),
+			vec![hit("ripgrep")],
+		] {
+			let count = hits.len();
+			cx.update_window(handle.into(), |_, window, cx| {
+				app.update(cx, |app, cx| {
+					app.results = hits;
+					app.searching = false;
+					cx.notify();
+				});
+				window.render_frame(cx);
+				for index in 0..count {
+					let button = window.find(("install", index));
+					assert!(button.visible(), "Search result {index} must be visible");
+					assert!(button.bounds().size.width > px(0.));
+					assert!(button.bounds().size.height > px(0.));
+				}
+				assert!(window.try_find(("install", count)).is_none());
+			})
+			.expect("window");
+		}
+	}
 
-        for page in [
-            Page::Packages,
-            Page::Flakes,
-            Page::Installed,
-            Page::Options,
-            Page::Queue,
-            Page::Build,
-            Page::Settings,
-        ] {
-            cx.update_window(handle.into(), |_, window, cx| {
-                app.update(cx, |app, cx| app.set_page(page, window, cx));
-                window.render_frame(cx);
-            })
-            .expect("window");
-        }
+	#[gpui_kit::test]
+	async fn every_page_renders_with_data_and_while_building(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let mut home = Manifest::default();
+		home.packages.insert("ripgrep".into());
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			home,
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
 
-        // ripgrep is only tracked for home and the default target is NixOS, so
-        // it is queued, and waits behind the running rebuild.
-        cx.update_window(handle.into(), |_, window, cx| {
-            app.update(cx, |app, cx| app.install(0, window, cx));
-        })
-        .expect("window");
-        app.read_with(cx, |app, _| {
-            assert_eq!(app.session.queue.len(), 1);
-            assert!(app.status.contains("Queued behind the running rebuild"));
-        });
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
 
-        app.update(cx, |app, _| {
-            app.flake_details = Some(FlakeDetails {
-                repo: "owner/repo".into(),
-                repo_url: String::new(),
-                path: "flake.nix".into(),
-                description: None,
-                stars: 0,
-                topics: Vec::new(),
-                homepage: None,
-                default_branch: "main".into(),
-                pushed_at: None,
-                archived: false,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                output_entries: Vec::new(),
-                system: "x86_64-linux".into(),
-                packages: vec![FlakePackage {
-                    attr: "default".into(),
-                    name: "pkg".into(),
-                    version: String::new(),
-                }],
-                modules: vec!["nixosModules.server".into()],
-                nixos_module: None,
-                home_manager_module: None,
-            });
-            app.flake_picker_open = true;
-            app.page = Page::Flakes;
-        });
-        cx.update_window(handle.into(), |_, window, cx| {
-            window.render_frame(cx);
-            app.update(cx, |app, cx| {
-                app.install_flake_choice("nixosModules.server", window, cx)
-            });
-        })
-        .expect("window");
-        app.read_with(cx, |app, _| {
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				app.set_page(Page::Settings, window, cx);
+				assert_eq!(app.page, Page::Settings);
+				assert!(
+					!app.repository.busy,
+					"Settings must not start repository commands"
+				);
+			});
+		})
+		.expect("window");
+
+		app.update(cx, |app, _| {
+			app.results = vec![SearchHit {
+				attr: "ripgrep".into(),
+				pname: "ripgrep".into(),
+				version: "14.1.1".into(),
+				description: "Fast grep".into(),
+			}];
+			let _cancel = app
+				.session
+				.fake_build(Target::HomeManager, "apply 1 queued change(s)");
+			app.session
+				.on_build_event(BuildEvent::Line("building...".into()));
+		});
+
+		for page in [
+			Page::Packages,
+			Page::Flakes,
+			Page::Installed,
+			Page::Options,
+			Page::Queue,
+			Page::Build,
+			Page::VersionControl,
+			Page::Settings,
+		] {
+			cx.update_window(handle.into(), |_, window, cx| {
+				window.render_frame(cx);
+				let first = window.within("page-tabs").find(0_usize).bounds();
+				let last = window.within("page-tabs").find(6_usize).bounds();
+				assert_eq!(first.top(), last.top(), "Tabs must share a horizontal row");
+				assert!(last.left() > first.right());
+				assert!(first.bottom() < px(120.), "Navigation must stay at the top");
+				let index = match page {
+					Page::Packages => Some(0),
+					Page::Flakes => Some(1),
+					Page::Installed => Some(2),
+					Page::Options => None,
+					Page::Queue => Some(3),
+					Page::Build => Some(4),
+					Page::VersionControl => Some(5),
+					Page::Settings => Some(6),
+				};
+				if let Some(index) = index {
+					window.within("page-tabs").click(index, cx);
+				}
+				app.update(cx, |app, cx| {
+					let notice = app.repository.notice.clone();
+					if page == Page::Options {
+						app.set_page(page, window, cx);
+					}
+					assert_eq!(app.page, page);
+					if page == Page::VersionControl {
+						assert!(!app.repository.busy, "Rebuilds must block automatic review");
+						assert_eq!(app.repository.notice, notice);
+					}
+				});
+				window.render_frame(cx);
+				if page == Page::Packages {
+					assert!(
+						window.find(("install", 0_usize)).visible(),
+						"Computed search results must be visible in the package list"
+					);
+				}
+			})
+			.expect("window");
+		}
+
+		// ripgrep is only tracked for home and the default target is NixOS, so
+		// it is queued, and waits behind the running rebuild.
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| app.install(0, window, cx));
+		})
+		.expect("window");
+		app.read_with(cx, |app, _| {
+			assert_eq!(app.session.queue.len(), 1);
+			assert!(app.status.contains("Queued behind the running rebuild"));
+		});
+
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				// Pending writes must refuse a repository operation before spawning.
+				app.refresh_repository(window, cx);
+				assert!(!app.repository.busy);
+				assert!(app.repository.notice.contains("queued operations"));
+				// A repository worker excludes new writes from every GUI page.
+				app.repository.busy = true;
+				let target = app.session.engine.config.target;
+				app.set_target(Target::HomeManager, cx);
+				assert_eq!(app.session.engine.config.target, target);
+				app.remove_managed("fd".into(), Target::HomeManager, window, cx);
+				assert_eq!(app.session.queue.len(), 1);
+				assert!(app.status.contains("Wait for the repository operation"));
+				app.repository.busy = false;
+			});
+		})
+		.expect("window");
+
+		app.update(cx, |app, _| {
+			app.flake_details = Some(FlakeDetails {
+				repo: "owner/repo".into(),
+				repo_url: String::new(),
+				path: "flake.nix".into(),
+				description: None,
+				stars: 0,
+				topics: Vec::new(),
+				homepage: None,
+				default_branch: "main".into(),
+				pushed_at: None,
+				archived: false,
+				inputs: Vec::new(),
+				outputs: Vec::new(),
+				output_entries: Vec::new(),
+				system: "x86_64-linux".into(),
+				packages: vec![FlakePackage {
+					attr: "default".into(),
+					name: "pkg".into(),
+					version: String::new(),
+				}],
+				modules: vec!["nixosModules.server".into()],
+				nixos_module: None,
+				home_manager_module: None,
+			});
+			app.flake_picker_open = true;
+			app.page = Page::Flakes;
+		});
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.render_frame(cx);
+			app.update(cx, |app, cx| {
+				app.install_flake_choice("nixosModules.server", window, cx)
+			});
+		})
+		.expect("window");
+		app.read_with(cx, |app, _| {
             assert_eq!(app.session.queue.len(), 2);
             assert!(!app.flake_picker_open);
             assert!(matches!(app.session.queue.back(), Some(Op::InstallFlake { module, .. }) if module == "nixosModules.server"));
         });
-    }
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				app.session.on_build_event(BuildEvent::Cancelled);
+				assert!(!app.session.is_building());
+				assert_eq!(app.session.queue.len(), 2);
+				app.refresh_repository(window, cx);
+				assert!(!app.repository.busy);
+				assert!(app.repository.notice.contains("queued operations"));
+			});
+		})
+		.expect("window");
+	}
+
+	#[gpui_kit::test]
+	async fn tab_labels_and_the_repository_panes_render(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
+
+		let mut widths = Vec::new();
+		for labels in TabLabels::ALL {
+			cx.update_window(handle.into(), |_, window, cx| {
+				// Assigned directly: `set_tab_labels` would save the host's settings.
+				app.update(cx, |app, cx| {
+					app.session.engine.config.tab_labels = labels;
+					cx.notify();
+				});
+				window.render_frame(cx);
+				let first = window.within("page-tabs").find(0_usize).bounds();
+				let last = window.within("page-tabs").find(6_usize).bounds();
+				assert_eq!(first.top(), last.top(), "{labels:?} tabs share a row");
+				widths.push(first.size.width);
+			})
+			.expect("window");
+		}
+		let [icons, both, names] = widths[..] else {
+			unreachable!()
+		};
+		assert!(icons < names && names < both, "{widths:?}");
+
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.render_frame(cx);
+			let first = window.within("page-tabs").find(0_usize).bounds();
+			let last = window.within("page-tabs").find(6_usize).bounds();
+			let center = (first.left() + last.right()) / 2.;
+			assert!(
+				(center - px(590.)).abs() < px(8.),
+				"Tabs center in the window: {center:?}"
+			);
+			assert!(first.top() < px(8.), "Tabs sit at the top: {first:?}");
+
+			// A missing directory is refused before anything is saved or reloaded.
+			app.update(cx, |app, cx| {
+				let before = app.session.config_dir();
+				let missing = std::env::temp_dir().join("nixbox-missing-config-dir");
+				app.set_config_dir(Some(missing), window, cx);
+				assert!(app.status.contains("is not a directory"), "{}", app.status);
+				assert_eq!(app.session.config_dir(), before);
+				assert_eq!(
+					app.config_dir_input.read(cx).value().as_str(),
+					before.display().to_string()
+				);
+			});
+		})
+		.expect("window");
+
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				let root = std::env::temp_dir();
+				app.repository.backend = Some(Backend::Git);
+				app.repository.detected = Some(Repository {
+					backend: Backend::Git,
+					root: root.clone(),
+					config_root: root,
+				});
+				app.repository.loaded = true;
+				app.page = Page::VersionControl;
+				cx.notify();
+			});
+			window.render_frame(cx);
+			// The commit and push controls sit beside the diff, not below it.
+			for id in ["repository-commit", "repository-push"] {
+				assert!(window.find(id).visible(), "{id} must be visible");
+			}
+			// The remote section can sit below the fold of the scrolling panel.
+			assert!(window.try_find("repository-create-remote").is_some());
+		})
+		.expect("window");
+	}
 }

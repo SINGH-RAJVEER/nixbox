@@ -3,11 +3,15 @@ mod app;
 #[cfg(feature = "native")]
 mod askpass;
 #[cfg(feature = "native")]
+mod delta;
+#[cfg(feature = "native")]
 mod model;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "native")]
 mod options;
+#[cfg(feature = "native")]
+mod repository;
 #[cfg(feature = "native")]
 mod theme;
 #[cfg(feature = "native")]

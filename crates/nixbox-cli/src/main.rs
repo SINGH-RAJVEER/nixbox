@@ -8,5 +8,5 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    nixbox_cmd::run(env!("CARGO_BIN_NAME")).await
+	nixbox_cmd::run(env!("CARGO_BIN_NAME")).await
 }

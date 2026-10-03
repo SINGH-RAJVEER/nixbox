@@ -4452,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "nixbox-cmd",
  "tokio",
@@ -4460,7 +4460,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-cli"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "nixbox-cmd",
  "tokio",
@@ -4468,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-cmd"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4488,7 +4488,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-config"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -4498,7 +4498,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-core"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -4511,22 +4511,25 @@ dependencies = [
 
 [[package]]
 name = "nixbox-gui"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
+ "regex",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
 name = "nixbox-nix"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -4539,7 +4542,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-tui"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossterm",

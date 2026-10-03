@@ -12,6 +12,8 @@ The complete shape is:
 	"target": "nixos-system",
 	"theme": "default",
 	"input_mode": "vim",
+	"tab_labels": "icons-and-names",
+	"config_dir": null,
 	"recent_searches": [],
 	"home_manager_main_file": null,
 	"nixos_main_file": null
@@ -24,15 +26,17 @@ The complete shape is:
 | `target` | `nixos-system` | Scope for new package and flake installs. Valid values are `home-manager` and `nixos-system`. |
 | `theme` | `default` | Active color palette. Valid built-in names are `default`, `dracula`, `gruvbox`, `nord`, `catppuccin`, and `monokai`. An unknown value displays the default theme until another theme is selected. |
 | `input_mode` | `vim` | Text editing behavior. Valid values are `vim` and `normal`. |
+| `tab_labels` | `icons-and-names` | What the desktop GUI's navigation tabs show. Valid values are `icons`, `icons-and-names`, and `names`. `nixbox config set tab-labels` accepts the same values. |
+| `config_dir` | `null` | Optional configuration root. `null` uses `~/.config/nixos`; `NIXBOX_CONFIG_DIR` overrides it. |
 | `recent_searches` | `[]` | The schema can retain up to 20 non-empty package queries, newest first, with duplicates moved to the front. The current TUI neither adds queries to this field nor displays a recent-search screen. |
 | `home_manager_main_file` | `null` | Optional absolute or relative path to the Home Manager file that NixBox scans and imports its generated Home Manager modules into. |
 | `nixos_main_file` | `null` | Optional absolute or relative path to the NixOS file that NixBox scans and imports its generated NixOS modules into. |
 
-NixBox saves settings immediately after selecting an input mode, theme, target, or channel. It writes formatted JSON directly to the settings path.
+NixBox saves settings immediately after selecting an input mode, theme, tab labels, configuration location, target, or channel. It writes formatted JSON directly to the settings path.
 
 ## Configuration root
 
-`NIXBOX_CONFIG_DIR` changes the directory used for the target configuration. If the variable is unset, NixBox uses `$XDG_CONFIG_HOME/nixos`, normally `~/.config/nixos`.
+The configuration root is, in order: `NIXBOX_CONFIG_DIR` when it is set, then the saved `config_dir` setting, then `$XDG_CONFIG_HOME/nixos`, normally `~/.config/nixos`. Change the saved location in GUI Settings or with `nixbox config set config-dir <path>`; an empty value returns to the default.
 
 The configuration root determines these paths:
 
@@ -52,6 +56,12 @@ The configuration root determines these paths:
 If `<root>/configuration.nix` does not exist and `nixos_main_file` is unset, NixBox uses `/etc/nixos/configuration.nix`. The generated files still stay under the configuration root.
 
 `NIXBOX_CONFIG_DIR` does not move `settings.json`, `state.json`, or the package catalog cache.
+
+## Version control journal
+
+Repository controls use the configuration root above, not the directory containing NixBox's own settings. Successful operations that change files are recorded in `$XDG_CONFIG_HOME/nixbox/vcs-journal/<root-hash>.json`. The hash is stable for a canonical root path, and each journal also stores that full path to verify its scope. The journal stores operation descriptions and changed paths, not option values.
+
+Commit-message suggestions sort the pending descriptions deterministically. A successful app commit clears the journal; pushing does not. External commits do not clear it, so review and edit the suggested message if you also commit outside NixBox. Keep main-file overrides inside the configuration root. A pending operation that touched an external file prevents committing rather than silently omitting that change. See [Version control](VERSION_CONTROL.md) for repository scope and safety rules.
 
 ## Package catalog cache
 

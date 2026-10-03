@@ -11,7 +11,7 @@ use crate::cli::Cli;
 use crate::program;
 
 pub fn run(shell: Shell) {
-    let name = program();
-    let mut command = Cli::command().name(name).bin_name(name);
-    generate(shell, &mut command, name, &mut std::io::stdout());
+	let name = program();
+	let mut command = Cli::command().name(name).bin_name(name);
+	generate(shell, &mut command, name, &mut std::io::stdout());
 }
