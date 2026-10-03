@@ -268,7 +268,7 @@ mod tests {
 		] {
 			assert!(rendered.contains(&format!("--- {label} ---\n{text}\n--- End {label} ---")));
 		}
-		execute(
+		let result = execute(
 			&CommitArgs {
 				edit: true,
 				dry_run: true,
@@ -277,6 +277,7 @@ mod tests {
 			&vcs,
 		)
 		.unwrap();
+		assert_eq!(result, ExitCode::SUCCESS);
 		assert_eq!(vcs.review(Some(message)).unwrap(), review);
 		assert!(!root.0.join(".git/index").exists());
 		assert!(
