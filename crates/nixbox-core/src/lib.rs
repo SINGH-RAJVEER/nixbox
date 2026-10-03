@@ -30,6 +30,7 @@ pub use vcs::{Backend, CommitOutcome, JournalEntry, Repository, Review, Vcs, Vis
 
 #[cfg(test)]
 pub(crate) mod tests {
+	use std::ffi::OsString;
 	use std::path::PathBuf;
 	use std::sync::atomic::{AtomicU32, Ordering};
 	use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -40,14 +41,17 @@ pub(crate) mod tests {
 	static ENV_LOCK: Mutex<()> = Mutex::new(());
 	static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-	/// Points `NIXBOX_CONFIG_DIR` at a fresh empty directory for as long as
-	/// the guard lives.
+	/// Isolates configuration files and user settings in separate temporary
+	/// directories for as long as the guard lives, including the VCS journal.
 	///
 	/// The config crate reads that variable on every path lookup, so it is
 	/// process-global state: the guard holds a lock to keep tests that touch
 	/// it from overlapping.
 	pub(crate) struct TempConfigDir {
 		path: PathBuf,
+		settings: PathBuf,
+		previous_config: Option<OsString>,
+		previous_settings: Option<OsString>,
 		_guard: MutexGuard<'static, ()>,
 	}
 
@@ -67,8 +71,20 @@ pub(crate) mod tests {
 		fn drop(&mut self) {
 			// SAFETY: the lock this guard holds is still held here, so no
 			// other test is reading the environment concurrently.
-			unsafe { std::env::remove_var("NIXBOX_CONFIG_DIR") };
+			unsafe {
+				for (name, previous) in [
+					("NIXBOX_CONFIG_DIR", &self.previous_config),
+					("XDG_CONFIG_HOME", &self.previous_settings),
+				] {
+					if let Some(value) = previous {
+						std::env::set_var(name, value);
+					} else {
+						std::env::remove_var(name);
+					}
+				}
+			}
 			let _ = std::fs::remove_dir_all(&self.path);
+			let _ = std::fs::remove_dir_all(&self.settings);
 		}
 	}
 
@@ -79,10 +95,22 @@ pub(crate) mod tests {
 			std::env::temp_dir().join(format!("nixbox-{label}-{}-{unique}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&path);
 		std::fs::create_dir_all(&path).expect("create temp config dir");
+		// Keep journals outside the configuration root, as production requires.
+		let settings = path.with_extension("settings");
+		let _ = std::fs::remove_dir_all(&settings);
+		std::fs::create_dir_all(&settings).expect("create temp settings dir");
+		let previous_config = std::env::var_os("NIXBOX_CONFIG_DIR");
+		let previous_settings = std::env::var_os("XDG_CONFIG_HOME");
 		// SAFETY: guarded by ENV_LOCK, held for the lifetime of the guard.
-		unsafe { std::env::set_var("NIXBOX_CONFIG_DIR", &path) };
+		unsafe {
+			std::env::set_var("NIXBOX_CONFIG_DIR", &path);
+			std::env::set_var("XDG_CONFIG_HOME", &settings);
+		}
 		TempConfigDir {
 			path,
+			settings,
+			previous_config,
+			previous_settings,
 			_guard: guard,
 		}
 	}

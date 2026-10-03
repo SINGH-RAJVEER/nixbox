@@ -4,6 +4,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## 0.3.0 - 2026-10-04
 
+- Corrected the 0.3.0 flake tag to fix sandboxed Nix package builds by isolating core test settings and VCS journals from the build user's home, and supplying Git and Jujutsu for repository integration tests. The published crates.io archives are unchanged.
 - Added old and new line numbers and within-line word highlighting to the GUI repository diff, using Delta's token alignment. Unpaired lines and changes beyond the alignment limits keep their line colors without word highlighting.
 - Added configuration version control pages to the TUI and GUI, with Git and colocated Jujutsu detection, repository initialization, full status and diff review, and editable commit messages.
 - Added `nixbox commit` to the CLI, with optional message editing, explicit approval, and a Git dry run. Suggested messages describe successful configuration operations and omit option values.

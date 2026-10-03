@@ -91,6 +91,11 @@
                 "nixbox-cmd"
               ];
 
+			nativeCheckInputs = [
+				pkgs.git
+				pkgs.jujutsu
+			];
+
           nativeBuildInputs = [ pkgs.makeWrapper ] ++ pkgs.lib.optionals gui [
             pkgs.pkg-config
             pkgs.desktop-file-utils
