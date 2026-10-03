@@ -1,19 +1,19 @@
 default:
-    @just --list
+	@just --list
 
 # ── Cargo ──────────────────────────────────────────────────────────────────────
 
 # Build debug binary
 build:
-    cargo build --workspace --exclude nixbox-gui
+	cargo build --workspace --exclude nixbox-gui
 
 # Build release binary
 release:
-    cargo build --workspace --exclude nixbox-gui --release
+	cargo build --workspace --exclude nixbox-gui --release
 
 # Type-check without codegen
 check:
-    cargo check --workspace --exclude nixbox-gui
+	cargo check --workspace --exclude nixbox-gui
 
 # The desktop front-end is excluded from the workspace-wide recipes: it needs
 # the graphics stack, which only the devenv shell provides. `just gui-ci`
@@ -21,11 +21,11 @@ check:
 
 # Run all tests
 test:
-    cargo nextest run --workspace --exclude nixbox-gui
+	cargo nextest run --workspace --exclude nixbox-gui
 
 # Run the TUI (debug build)
 run:
-    cargo run
+	cargo run
 
 # `nixbox` turns on nixbox-cmd's `tui` feature and cargo unifies features
 # across a workspace build, so `cargo nextest run --workspace` always compiles the
@@ -33,42 +33,42 @@ run:
 
 # Lint and test the CLI packages on their own
 cli:
-    cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets -- -D warnings
-    cargo nextest run -p nixbox-cli -p nixbox-cmd
+	cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets -- -D warnings
+	cargo nextest run -p nixbox-cli -p nixbox-cmd
 
 # Build the nixbox-cli release binary
 release-cli:
-    cargo build --release -p nixbox-cli
+	cargo build --release -p nixbox-cli
 
-# Run the desktop GUI (debug build)
+# Run the desktop GUI in the pinned devenv shell (debug build)
 gui:
-    cargo run -p nixbox-gui --features native
+	devenv shell -- cargo run -p nixbox-gui --features native
 
 # Build the nixbox-gui release binary
 release-gui:
-    cargo build --release -p nixbox-gui --features native
+	cargo build --release -p nixbox-gui --features native
 
 # Lint and test the desktop GUI
 gui-ci:
-    cargo clippy -p nixbox-gui --features native --all-targets -- -D warnings
-    cargo nextest run -p nixbox-gui --features native
+	cargo clippy -p nixbox-gui --features native --all-targets -- -D warnings
+	cargo nextest run -p nixbox-gui --features native
 
 # Format all crates
 fmt:
-    cargo fmt --all
+	cargo fmt --all
 
 # --all-targets so test code is linted too, matching CI.
 
 # Lint with clippy
 lint:
-    cargo clippy --workspace --exclude nixbox-gui --all-targets -- -D warnings
+	cargo clippy --workspace --exclude nixbox-gui --all-targets -- -D warnings
 
 # Format + lint
 fix: fmt lint
 
 # Remove build artifacts
 clean:
-    cargo clean
+	cargo clean
 
 # ── Test VM ────────────────────────────────────────────────────────────────────
 
@@ -78,11 +78,11 @@ clean:
 
 # Build the throwaway NixOS test VM
 vm-build:
-    nixos-rebuild build-vm --flake .#nixbox-testvm
+	nixos-rebuild build-vm --flake .#nixbox-testvm
 
 # Build and boot the test VM (login: tester/tester, quit with ctrl-a x)
 vm: vm-build
-    ./result/bin/run-nixos-vm
+	./result/bin/run-nixos-vm
 
 # The config dir under ~/.config/nixos is seeded once, by an activation
 # script that skips itself if the directory is already there. Exercising
@@ -93,28 +93,28 @@ vm-fresh: vm-clean vm
 
 # Delete the test VM's disk image and build result
 vm-clean:
-    rm -f nixos.qcow2 result
+	rm -f nixos.qcow2 result
 
 # --no-link because vm-build and vm own ./result: without it a bare vm-test
 # leaves the check's output there and `just vm` boots the wrong thing.
 
 # Run the automated VM check
 vm-test:
-    nix build --no-link --print-build-logs ".#checks.$(nix eval --raw --impure --expr builtins.currentSystem).cli"
+	nix build --no-link --print-build-logs ".#checks.$(nix eval --raw --impure --expr builtins.currentSystem).cli"
 
 # ── Dev ────────────────────────────────────────────────────────────────────────
 
 # Enter the devenv shell
 dev:
-    devenv shell
+	devenv shell
 
 # Update pinned devenv inputs
 dev-update:
-    devenv update
+	devenv update
 
 # Evaluate the devenv configuration and run its tests
 dev-test:
-    devenv test
+	devenv test
 
 # Full pre-commit gate: format, lint, test, CLI-only build
 ci: fmt lint test cli

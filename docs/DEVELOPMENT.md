@@ -64,7 +64,7 @@ The Nix flake exposes both as `packages.nixbox` and `packages.nixbox-cli`.
 Building the native feature needs pkg-config, fontconfig, freetype, Wayland, xkbcommon, X11/xcb, and the Vulkan loader, and running it needs the Vulkan loader and the windowing libraries on the library path. The devenv shell provides all of that. The crate stays out of the workspace-wide commands so they do not build the native feature through test dependency unification:
 
 - The root `Cargo.toml` lists every other crate in `default-members`, so a bare `cargo build` or `cargo nextest run` skips it.
-- `just build`, `just check`, `just test`, and `just lint` pass `--exclude nixbox-gui`. `just gui`, `just gui-ci`, and `just release-gui` enable `native` and build it on its own.
+- `just build`, `just check`, `just test`, and `just lint` pass `--exclude nixbox-gui`. `just gui`, `just gui-ci`, and `just release-gui` enable `native` and build it on its own. `just gui` enters the pinned devenv shell automatically; run the other GUI recipes inside that shell.
 - CI lints and tests the native feature in its own `gui` job, which installs the graphics libraries first.
 - The flake's `nixbox` package runs workspace tests with `--exclude nixbox-gui`, so building the TUI never needs the graphics stack.
 

@@ -10,6 +10,8 @@ let
 	];
 in
 {
+    dotenv.disableHint = true;
+
 	packages = [
 		# Build, lint, and test commands.
 		pkgs.bash
