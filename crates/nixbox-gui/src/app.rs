@@ -62,6 +62,8 @@ pub enum Page {
 	Installed,
 	/// One installed package's options, opened from the Installed page.
 	Options,
+	/// Host-wide NixOS option discovery, independent of the install target.
+	Nixos,
 	Queue,
 	Build,
 	VersionControl,
@@ -105,6 +107,8 @@ pub struct NixboxApp {
 	pub options_filter: Entity<InputState>,
 	/// The value field for the selected option's text editor.
 	pub option_input: Entity<InputState>,
+	pub nixos: crate::nixos::NixosView,
+	pub nixos_filter: Entity<InputState>,
 	/// The configuration directory field on the Settings page.
 	pub config_dir_input: Entity<InputState>,
 
@@ -131,6 +135,9 @@ impl NixboxApp {
 			cx.new(|cx| InputState::new(window, cx).placeholder("Filter installed packages"));
 		let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
 		let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
+		let nixos_filter = cx.new(|cx| {
+			InputState::new(window, cx).placeholder("Search NixOS option paths and descriptions")
+		});
 		let config_dir_input = cx.new(|cx| {
 			let mut input =
 				InputState::new(window, cx).placeholder("Path to your configuration flake");
@@ -142,6 +149,11 @@ impl NixboxApp {
 		search_input.update(cx, |input, cx| input.focus(window, cx));
 
 		let subscriptions = vec![
+			cx.subscribe_in(&nixos_filter, window, |this, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					this.refresh_nixos_filter(cx);
+				}
+			}),
 			cx.subscribe_in(&repository.branch, window, |_, _, _: &InputEvent, _, cx| {
 				cx.notify()
 			}),
@@ -245,6 +257,8 @@ impl NixboxApp {
 			options_task: None,
 			options_filter,
 			option_input,
+			nixos: crate::nixos::NixosView::default(),
+			nixos_filter,
 			config_dir_input,
 			_build_events: build_events,
 			_subscriptions: subscriptions,
@@ -282,6 +296,7 @@ impl NixboxApp {
 			Page::Flakes => Some(&self.flake_input),
 			Page::Installed => Some(&self.installed_input),
 			Page::Options => Some(&self.options_filter),
+			Page::Nixos => Some(&self.nixos_filter),
 			Page::Queue | Page::Build | Page::VersionControl | Page::Settings => None,
 		};
 		if let Some(input) = input {
@@ -289,6 +304,9 @@ impl NixboxApp {
 		}
 		if page == Page::Build {
 			self.scroll_log_to_end();
+		}
+		if page == Page::Nixos && !self.nixos.initialized {
+			self.reload_nixos(cx);
 		}
 		if page == Page::VersionControl && !self.repository_pending_writes() {
 			self.refresh_repository(window, cx);
@@ -298,7 +316,7 @@ impl NixboxApp {
 
 	pub fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
 		let page = match self.page {
-			Page::Flakes | Page::Installed => self.page,
+			Page::Flakes | Page::Installed | Page::Options | Page::Nixos => self.page,
 			_ => Page::Packages,
 		};
 		self.set_page(page, window, cx);
@@ -808,6 +826,7 @@ impl NixboxApp {
 		window.push_notification(note, cx);
 		self.set_status(status, cx);
 		self.options_after_build(cx);
+		self.nixos_after_build(cx);
 		self.repository.review = None;
 		if self.page == Page::VersionControl && !self.repository_pending_writes() {
 			self.refresh_repository(window, cx);
@@ -950,6 +969,7 @@ impl NixboxApp {
 		self.options_cache.clear();
 		self.options = None;
 		self.options_task = None;
+		self.nixos.reset();
 		if self.page == Page::Options {
 			self.page = Page::Installed;
 		}
@@ -1131,6 +1151,7 @@ mod tests {
 			Page::Flakes,
 			Page::Installed,
 			Page::Options,
+			Page::Nixos,
 			Page::Queue,
 			Page::Build,
 			Page::VersionControl,
@@ -1139,7 +1160,7 @@ mod tests {
 			cx.update_window(handle.into(), |_, window, cx| {
 				window.render_frame(cx);
 				let first = window.within("page-tabs").find(0_usize).bounds();
-				let last = window.within("page-tabs").find(6_usize).bounds();
+				let last = window.within("page-tabs").find(7_usize).bounds();
 				assert_eq!(first.top(), last.top(), "Tabs must share a horizontal row");
 				assert!(last.left() > first.right());
 				assert!(first.bottom() < px(120.), "Navigation must stay at the top");
@@ -1148,10 +1169,11 @@ mod tests {
 					Page::Flakes => Some(1),
 					Page::Installed => Some(2),
 					Page::Options => None,
-					Page::Queue => Some(3),
-					Page::Build => Some(4),
-					Page::VersionControl => Some(5),
-					Page::Settings => Some(6),
+					Page::Nixos => Some(3),
+					Page::Queue => Some(4),
+					Page::Build => Some(5),
+					Page::VersionControl => Some(6),
+					Page::Settings => Some(7),
 				};
 				if let Some(index) = index {
 					window.within("page-tabs").click(index, cx);
@@ -1296,7 +1318,7 @@ mod tests {
 				});
 				window.render_frame(cx);
 				let first = window.within("page-tabs").find(0_usize).bounds();
-				let last = window.within("page-tabs").find(6_usize).bounds();
+				let last = window.within("page-tabs").find(7_usize).bounds();
 				assert_eq!(first.top(), last.top(), "{labels:?} tabs share a row");
 				widths.push(first.size.width);
 			})
@@ -1310,7 +1332,7 @@ mod tests {
 		cx.update_window(handle.into(), |_, window, cx| {
 			window.render_frame(cx);
 			let first = window.within("page-tabs").find(0_usize).bounds();
-			let last = window.within("page-tabs").find(6_usize).bounds();
+			let last = window.within("page-tabs").find(7_usize).bounds();
 			let center = (first.left() + last.right()) / 2.;
 			assert!(
 				(center - px(590.)).abs() < px(8.),

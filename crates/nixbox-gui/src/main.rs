@@ -9,6 +9,8 @@ mod model;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "native")]
+mod nixos;
+#[cfg(feature = "native")]
 mod options;
 #[cfg(feature = "native")]
 mod repository;

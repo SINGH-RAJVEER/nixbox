@@ -5,6 +5,7 @@ pub mod options;
 pub mod scan;
 pub mod search;
 pub mod settings;
+pub mod system_options;
 pub mod wiring;
 
 pub use build::{

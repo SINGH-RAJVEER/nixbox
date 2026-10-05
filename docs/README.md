@@ -19,6 +19,7 @@ The README is the short entry point. These documents describe the behavior that 
 - [Architecture](ARCHITECTURE.md) describes crate ownership, dependencies, the asynchronous event loop, state transitions, data flow, and module boundaries.
 - [Development and testing](DEVELOPMENT.md) covers the pinned environment, commands, Cargo features, tests, lint rules, Nix packaging, Jujutsu usage, and release preparation.
 - [Release notes](RELEASE_NOTES.md) records published changes and the work planned for the next release from `dev`.
+- [NixOS settings tab plan](NIXOS_SETTINGS_PLAN.md) records the implemented read-only browser and the remaining phases for complete option discovery, staged editing, validation, and system application.
 
 ## Source of truth
 

@@ -2,6 +2,12 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Added a read-only NixOS tab with host selection, category and description search, diagnostic declarations, nested option templates, virtualized rows, and on-demand values, defaults, examples, and source locations. Recursive and embedded full-system schema branches remain visible with partial markers.
+- Kept system inspection separate from package targets, package option editors, and queued mutations. System-wide editing and validated application remain in development.
+- Kept Ctrl-F on the Options and NixOS pages so it focuses their own search fields. Added live schema fixtures and rendered-window coverage for the NixOS browser.
+
 ## 0.3.1 - 2026-10-04
 
 - Published the sandbox build fix in the crate archives: core test fixtures isolate user settings and VCS journals, and restore the caller's environment when dropped. The Nix flake supplies Git and Jujutsu for repository integration tests.

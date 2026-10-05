@@ -126,6 +126,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `manifest.rs` owns generated package and flake-module files, package marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list.
 - `settings.rs` owns the generated settings modules: `SettingValue`, the `SettingsManifest` map from option path to value, rendering, and the strict line parser.
 - `options.rs` and `options.nix` evaluate a package's module options from the user's flake. The query goes to Nix as JSON in an environment variable, and the result is decoded into an `OptionSet` of `OptionEntry` values with an `OptionKind`, the evaluated value, and the files that define each option.
+- `system_options.rs` and `system_options.nix` discover NixOS output names, index host-wide schema metadata, and inspect one option on demand. `NixosConfiguration` binds each inspection to its root and output key, independently of the package-operation target. Schema traversal does not read option values or defaults; it includes nested templates and flags bounded or failed submodule expansion. Selected-value previews have bounded depth and size and withhold credential fields.
 - `scan.rs` detects simple package tokens in selected Nix lists and removes dedicated lines during migration.
 - `flakes.rs` calls GitHub through `gh api`, ranks repository candidates, evaluates locked revisions for package and module outputs, caches inspections in memory, reads root `flake.nix` files for input names, and edits a conventional root flake for output installation.
 - `build.rs` resolves executables in common Nix profiles, chooses Home Manager or NixOS commands, starts rebuild process groups, forwards output, and cancels a complete process group.
@@ -173,9 +174,10 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `askpass.rs` is that prompt: it prints the password to stdout for sudo, or exits non-zero on cancel so the rebuild stops.
 - `app.rs` owns `NixboxApp`, the window state. Searches and flake lookups run on the tokio runtime; gpui tasks await their join handles, debounce input, and discard stale results by epoch, as the TUI does. A gpui task feeds `BuildEvent`s to the `Session` and raises notifications when a rebuild ends.
 - `options.rs` holds the Options page's state (`OptionsView`): the package and scope, the evaluated options, the selected option, and staged edits, plus the actions that load, stage, unset, discard, and apply them. Evaluations run on the tokio runtime and are cached per scope and package until a rebuild ends, as in the TUI.
+- `nixos.rs` holds the separate read-only `NixosView`, with hosts, schema, filtered indices, selected option, and lazy inspection tasks. It aborts superseded Tokio jobs as well as rejecting stale results by epoch. Build completion and configuration-directory changes invalidate it. It never enqueues a mutation, and its host selection never redirects package work. Edits to source files outside the application need explicit Reload.
 - `model.rs` computes the Installed page's filtered sections and a search hit's installed scopes without gpui, so they are unit tested.
 - `theme.rs` maps the theme names in `nixbox-config::THEMES` onto gpui-component: `default` follows the desktop appearance, the others are dark with the TUI palette's background and accent.
-- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules.
+- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, NixOS, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules. `ui/nixos.rs` virtualizes schema rows and switches to full-width details in small windows.
 
 ## Design constraints
 

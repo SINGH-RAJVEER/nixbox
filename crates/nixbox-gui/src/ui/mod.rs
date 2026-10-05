@@ -4,6 +4,7 @@
 mod flakes;
 mod installed;
 mod logo;
+mod nixos;
 mod options;
 mod packages;
 mod queue;
@@ -33,6 +34,7 @@ impl Render for NixboxApp {
 			Page::Flakes => flakes::render(self, cx),
 			Page::Installed => installed::render(self, cx),
 			Page::Options => options::render(self, cx),
+			Page::Nixos => nixos::render(self, window, cx),
 			Page::Queue => queue::render_queue(self, cx),
 			Page::Build => queue::render_build(self, cx),
 			Page::VersionControl => repository::render(self, cx),
@@ -60,6 +62,7 @@ impl NixboxApp {
 			("nixpkgs", Page::Packages),
 			("Flakes", Page::Flakes),
 			("Installed", Page::Installed),
+			("NixOS", Page::Nixos),
 			("Queue", Page::Queue),
 			("Build", Page::Build),
 			("Version control", Page::VersionControl),
@@ -271,6 +274,7 @@ fn page_icon(page: Page, backend: Option<Backend>) -> AnyElement {
 		Page::Queue => IconName::GalleryVerticalEnd,
 		Page::Build => IconName::SquareTerminal,
 		Page::Settings => IconName::Settings,
+		Page::Nixos => IconName::Settings,
 		Page::VersionControl => return logo::vcs_logo(backend, px(16.)),
 	};
 	Icon::new(icon).size_4().into_any_element()

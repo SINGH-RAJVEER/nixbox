@@ -39,12 +39,23 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs. Clicking a hit with multiple installable outputs opens a list of exact package and compatible module paths; clicking a path installs that output. A single compatible output can be installed directly. |
 | Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
+| NixOS | A read-only browser of the selected host's option schema, with categories, search by path and description, nested templates, and on-demand values and declaration locations. |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
 | Settings | Install target, channel, theme, tab labels, and the configuration directory, saved immediately to `~/.config/nixbox/settings.json`. |
 
-Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
+Ctrl-F focuses the search box on nixpkgs, Flakes, Installed, Options, or NixOS, and opens nixpkgs search from other pages. Ctrl-Q quits.
+
+## NixOS settings browser
+
+Open **NixOS** to inspect settings across the system without opening an installed package. Host names come from the configuration flake's `nixosConfigurations` outputs. The browser selects `nixos` when available, or the only host when there is one. Otherwise choose a host. This choice only affects inspection; it does not change the install target or the host used by existing package operations.
+
+Categories group the selected host's declarations, including disabled services and imported custom modules. All options includes uncategorized namespaces. Search matches full paths and descriptions, with exact paths first. Diagnostic options includes internal or hidden declarations. Select an option to fetch its effective value, default, example, and definition locations separately from schema discovery. Unavailable values, null, nested templates, and withheld credential fields have different statuses. Previews limit nested depth, collection length, and long strings; sensitive attribute names are also withheld inside structured previews.
+
+Nested schema entries describe fields such as `users.users.<name>.shell`, but concrete instance inspection is not available yet. Expansions deeper than four submodules and embedded full-system configurations have a partial marker instead of silently disappearing. Their declarations remain visible. The tab currently offers inspection only. Editing, review, validation, and host-specific writes are the next implementation work; see the [implementation plan](NIXOS_SETTINGS_PLAN.md).
+
+Reload discovers hosts and options again. Switching hosts cancels older evaluations, and stale results cannot replace the current selection. Search, category, and inspection state survive tab switches. A finished rebuild invalidates the schema, including failed or cancelled rebuilds; changing the configuration directory resets it. Source edits and lock changes made outside NixBox need an explicit Reload. On smaller windows, selection opens details as a full-width page with Back to options.
 
 The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
 
