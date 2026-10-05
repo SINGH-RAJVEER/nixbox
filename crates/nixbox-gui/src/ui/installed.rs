@@ -10,7 +10,7 @@ use gpui_kit::{
 	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 
-use super::{empty, muted, page_header, row, section};
+use super::{empty, hover_row, muted, page_header, section};
 use crate::app::NixboxApp;
 use crate::model::{InstalledRows, target_of};
 
@@ -65,7 +65,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						let name = package.name.clone();
 						let scope = package.scope;
 						let options_name = name.clone();
-						row(cx)
+						hover_row(cx)
 							.child(name_cell(&package.name))
 							.child(Tag::secondary().xsmall().child(scope.tag()))
 							.child(
@@ -98,7 +98,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				);
 				let repo = flake.repo.clone().unwrap_or_else(|| flake.input.clone());
 				let removable = flake.removable;
-				row(cx)
+				hover_row(cx)
 					.child(
 						v_flex()
 							.flex_1()
@@ -145,7 +145,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						let migratable = package.migratable;
 						let options_name = package.name.clone();
 						let scope = target_of(package.scope);
-						row(cx)
+						hover_row(cx)
 							.child(
 								v_flex()
 									.flex_1()

@@ -9,7 +9,7 @@ use gpui_kit::{
 	uniform_list,
 };
 
-use super::{empty, muted, page_header, row};
+use super::{empty, hover_row, muted, page_header};
 use crate::app::NixboxApp;
 use crate::model::installed_scopes;
 
@@ -46,7 +46,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						let hit = this.results.get(index)?;
 						let installed = installed_scopes(&this.session.engine, &hit.attr);
 						Some(
-							row(cx)
+							hover_row(cx)
 								.child(
 									v_flex()
 										.flex_1()

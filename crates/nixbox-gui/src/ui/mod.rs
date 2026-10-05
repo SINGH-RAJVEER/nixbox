@@ -225,6 +225,12 @@ fn row(cx: &App) -> gpui_kit::Div {
 		.border_color(cx.theme().border)
 }
 
+/// A list row that highlights under the pointer.
+fn hover_row(cx: &App) -> gpui_kit::Div {
+	let hover = cx.theme().list_hover;
+	row(cx).hover(move |row| row.bg(hover))
+}
+
 /// A line of secondary text.
 fn muted(text: impl Into<SharedString>, cx: &App) -> gpui_kit::Div {
 	div()
