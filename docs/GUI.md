@@ -27,6 +27,10 @@ nixbox-gui
 
 To compile and run the native GUI from a checkout, use `just gui`. This command enters the pinned devenv shell automatically, including when invoked from an older shell. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
 
+The equivalent command is `devenv shell -- cargo run -p nixbox-gui --features native`. Without `--features native`, Cargo builds the launcher for the tagged release, so it runs the published GUI rather than the checkout's code.
+
+If startup fails with `No GPU adapters found`, run `VK_LOADER_DEBUG=error,warn just gui` to see the Vulkan loader's errors. A `GLIBC_` version error from Mesa or LLVM means the GUI's runtime libraries are older than the host driver requires. For checkout builds, update `devenv update nixpkgs rust-overlay`, enter a fresh shell, and rebuild with `just gui`. The tagged release has its own pinned libraries; updating devenv does not change them. Use the native checkout build to bypass an incompatible release. Do not add another glibc to `LD_LIBRARY_PATH`.
+
 To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";` and include `nixbox.packages.${pkgs.stdenv.hostPlatform.system}.nixbox-gui` in `environment.systemPackages` or `home.packages`. Here `nixbox` is the input available in the enclosing `outputs` function. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
 
 ## Pages
@@ -45,6 +49,8 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Settings | Install target, channel, theme, tab labels, and the configuration directory, saved immediately to `~/.config/nixbox/settings.json`. |
 
 Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
+
+Ctrl-+ (or Ctrl-=) zooms in and Ctrl-- zooms out, in 10% steps between 50% and 200%; Ctrl-0 returns to 100%. Zoom scales text and layout together, carries across theme changes, and resets when the GUI restarts.
 
 The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
 

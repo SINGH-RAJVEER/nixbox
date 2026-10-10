@@ -33,7 +33,7 @@ use crate::model::target_of;
 use crate::options::OptionsView;
 use crate::theme;
 
-actions!(nixbox, [Quit, FocusSearch]);
+actions!(nixbox, [Quit, FocusSearch, ZoomIn, ZoomOut, ResetZoom]);
 
 /// Expands a leading `~` the way a shell would, for typed paths.
 fn expand_home(path: &str) -> PathBuf {
@@ -51,8 +51,18 @@ pub fn bind_keys(cx: &mut App) {
 	cx.bind_keys([
 		KeyBinding::new("ctrl-q", Quit, None),
 		KeyBinding::new("ctrl-f", FocusSearch, None),
+		// Ctrl-= is the unshifted `+` key, so zooming in needs no Shift.
+		KeyBinding::new("ctrl-=", ZoomIn, None),
+		KeyBinding::new("ctrl-+", ZoomIn, None),
+		KeyBinding::new("ctrl--", ZoomOut, None),
+		KeyBinding::new("ctrl-0", ResetZoom, None),
 	]);
 	cx.on_action(|_: &Quit, cx| cx.quit());
+	cx.on_action(|_: &ZoomIn, cx| theme::set_zoom(theme::zoom(cx) + theme::ZOOM_STEP, cx));
+	cx.on_action(|_: &ZoomOut, cx| {
+		theme::set_zoom(theme::zoom(cx).saturating_sub(theme::ZOOM_STEP), cx);
+	});
+	cx.on_action(|_: &ResetZoom, cx| theme::set_zoom(theme::DEFAULT_ZOOM, cx));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1070,6 +1080,61 @@ mod tests {
 			})
 			.expect("window");
 		}
+	}
+
+	#[gpui_kit::test]
+	async fn zoom_keys_scale_the_window_and_survive_theme_changes(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		cx.update(super::bind_keys);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			Root::new(view, window, cx)
+		});
+		let window = handle.into();
+		let rem = |cx: &mut TestAppContext| {
+			cx.update_window(window, |_, window, cx| {
+				window.render_frame(cx);
+				window.rem_size()
+			})
+			.expect("window")
+		};
+		let base = rem(cx);
+		let assert_zoom = |rem: gpui_kit::Pixels, percent: f32| {
+			let expected = base * (percent / 100.);
+			assert!(
+				(rem - expected).abs() < px(0.01),
+				"{rem:?} is not {percent}% of {base:?}"
+			);
+		};
+
+		cx.simulate_keystrokes(window, "ctrl-= ctrl-+");
+		assert_zoom(rem(cx), 120.);
+
+		cx.update_window(window, |_, window, cx| {
+			crate::theme::apply("dracula", Some(window), cx)
+		})
+		.expect("window");
+		assert_zoom(rem(cx), 120.);
+
+		cx.simulate_keystrokes(window, &["ctrl--"; 10].join(" "));
+		assert_zoom(rem(cx), 50.);
+
+		cx.simulate_keystrokes(window, "ctrl-0");
+		assert_zoom(rem(cx), 100.);
 	}
 
 	#[gpui_kit::test]

@@ -19,7 +19,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
 	Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-	prelude::FluentBuilder as _, px,
+	prelude::FluentBuilder as _, rems,
 };
 
 use nixbox_core::vcs::Backend;
@@ -271,7 +271,7 @@ fn page_icon(page: Page, backend: Option<Backend>) -> AnyElement {
 		Page::Queue => IconName::GalleryVerticalEnd,
 		Page::Build => IconName::SquareTerminal,
 		Page::Settings => IconName::Settings,
-		Page::VersionControl => return logo::vcs_logo(backend, px(16.)),
+		Page::VersionControl => return logo::vcs_logo(backend, rems(1.)),
 	};
 	Icon::new(icon).size_4().into_any_element()
 }
