@@ -34,6 +34,7 @@ pub const LOG_LIMIT: usize = 1000;
 struct ActiveBuild {
 	scope: Target,
 	label: String,
+	activation: crate::Activation,
 	cancel: Option<oneshot::Sender<()>>,
 }
 
@@ -261,13 +262,21 @@ impl Session {
 				return None;
 			};
 
+			let batch = self.take_scope(scope);
+			let mut activation = crate::Activation::Packages;
 			let mut applied = 0_usize;
-			for op in self.take_scope(scope) {
+			for op in batch {
+				let required = self.engine.activation_for(std::slice::from_ref(&op));
 				let mut reporter = LogReporter::new();
 				let result = self.engine.apply(&op, &mut reporter);
 				self.log.extend(reporter.into_lines());
 				match result {
-					Ok(()) => applied = applied.saturating_add(1),
+					Ok(()) => {
+						applied = applied.saturating_add(1);
+						if required == crate::Activation::Configuration {
+							activation = crate::Activation::Configuration;
+						}
+					}
 					Err(e) => self
 						.log
 						.push(format!("{}: failed to write manifest: {e}", op.label())),
@@ -282,7 +291,7 @@ impl Session {
 				continue;
 			}
 			let label = format!("apply {applied} queued {} change(s)", scope.label());
-			self.start_rebuild(scope, label.clone());
+			self.start_activation(scope, label.clone(), activation);
 			return Some(label);
 		}
 	}
@@ -299,12 +308,22 @@ impl Session {
 	/// Starts a rebuild for `scope` without writing anything first, for
 	/// changes that are already on disk.
 	pub fn start_rebuild(&mut self, scope: Target, label: String) {
+		self.start_activation(scope, label, crate::Activation::Configuration);
+	}
+
+	pub fn start_activation(
+		&mut self,
+		scope: Target,
+		label: String,
+		activation: crate::Activation,
+	) {
 		let (cancel_tx, cancel_rx) = oneshot::channel();
 		self.log.clear();
 		self.progress.start(&label);
 		self.build = Some(ActiveBuild {
 			scope,
 			label,
+			activation,
 			cancel: Some(cancel_tx),
 		});
 		self.persist();
@@ -322,9 +341,10 @@ impl Session {
 				}
 			};
 			tokio::join!(
-				rebuild::run(
+				rebuild::run_activation(
 					config_dir,
 					scope,
+					activation,
 					escalation,
 					LogFormat::Structured,
 					tx,
@@ -447,7 +467,7 @@ impl Session {
 			} else {
 				format!("resume {}", ip.label)
 			};
-			self.start_rebuild(ip.scope, label.clone());
+			self.start_activation(ip.scope, label.clone(), ip.activation);
 			return Restored::Rebuild(label);
 		}
 		if self.queue.is_empty() {
@@ -510,6 +530,7 @@ impl Session {
 			in_progress: self.build.as_ref().map(|build| InProgress {
 				scope: build.scope,
 				label: build.label.clone(),
+				activation: build.activation,
 			}),
 			last_error: self.last_error.clone(),
 		};
@@ -530,6 +551,7 @@ impl Session {
 		self.build = Some(ActiveBuild {
 			scope,
 			label: label.into(),
+			activation: crate::Activation::Configuration,
 			cancel: Some(cancel_tx),
 		});
 		self.progress.start(label);
@@ -604,6 +626,23 @@ mod tests {
 			session.queue.front(),
 			Some(Op::Install { hit, scope: Target::NixosSystem }) if hit.attr == "fd"
 		));
+	}
+
+	#[test]
+	fn a_failed_setup_does_not_turn_a_package_batch_into_a_system_switch() {
+		let dir = temp_dir("session-package-only");
+		let mut session = session(dir.config());
+		session.engine.nixos_manifest.mode = nixbox_nix::PackageMode::Profile;
+		session.queue.push_back(install("fd", Target::NixosSystem));
+		session.queue.push_back(Op::SetupProfile {
+			scope: Target::NixosSystem,
+			home_inside_nixos: false,
+		});
+		assert!(session.drain().is_some());
+		assert_eq!(
+			session.build.as_ref().map(|build| build.activation),
+			Some(crate::Activation::Packages)
+		);
 	}
 
 	#[tokio::test]

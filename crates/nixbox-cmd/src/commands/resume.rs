@@ -12,7 +12,7 @@ use clap::Args;
 use nixbox_config::Target;
 use nixbox_core::{Op, PersistedState};
 
-use crate::apply::{ApplyOpts, Plan, execute, run_rebuild};
+use crate::apply::{ApplyOpts, Plan, execute, run_activation};
 use crate::cli::GlobalArgs;
 use crate::commands::target_name;
 
@@ -56,7 +56,13 @@ pub async fn run(args: &ResumeArgs, global: &GlobalArgs) -> Result<ExitCode> {
 			eprintln!("  the configuration is already written; skipping the rebuild.");
 		} else {
 			let engine = global.engine()?;
-			let code = run_rebuild(&engine, in_progress.scope, &in_progress.label).await?;
+			let code = run_activation(
+				&engine,
+				in_progress.scope,
+				&in_progress.label,
+				in_progress.activation,
+			)
+			.await?;
 			clear_in_progress()?;
 			if code != ExitCode::SUCCESS {
 				return Ok(code);

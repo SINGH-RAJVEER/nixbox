@@ -417,3 +417,21 @@ with subtest("unsetting removes the line again"):
 	machine.succeed("su -l tester -c 'tmux kill-session -t nb'")
 	nixbox("config set input-mode normal")
 	nixbox("remove git --no-rebuild --yes")
+
+with subtest("profile setup and teardown change only the package file's mode"):
+	# Offline, so nothing is rebuilt: this checks the files and that the
+	# guest's real module system accepts them.
+	nixbox("install hello --no-rebuild --yes")
+	before = managed()
+	nixbox("profile setup --no-rebuild --yes")
+	assert "# nixbox:mode profile" in managed(), managed()
+	assert "pkgs.hello" in managed(), managed()
+	assert "nixbox-packages" in evaluated("nixbox.profile.drvPath")
+	# The profile build and the activation script share one store path, so
+	# a rebuild after a profile update leaves the profile alone.
+	environment = evaluated("nixbox.profile.outPath").strip('"')
+	assert environment in evaluated("system.activationScripts.nixboxProfile")
+	assert "/nix/var/nix/profiles/nixbox" in evaluated("environment.profiles")
+	nixbox("profile teardown --no-rebuild --yes")
+	assert managed() == before, managed()
+	nixbox("remove hello --no-rebuild --yes")

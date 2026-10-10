@@ -45,6 +45,9 @@ pub fn run(global: &GlobalArgs) -> Result<ExitCode> {
 					"main_file": main,
 					"main_file_exists": main.exists(),
 					"imported": import_label(engine.import_state(target)),
+					"package_mode": engine.manifest_for(target).mode,
+					"package_profile": nixbox_core::profile::profile_path(target).ok(),
+					"profile_setup": nixbox_core::profile::setup_status(&engine, target).name(),
 				})
 			})
 			.collect();
@@ -106,6 +109,15 @@ fn target_block(engine: &Engine, target: Target) -> String {
 		(
 			"  imported",
 			import_label(engine.import_state(target)).to_string(),
+		),
+		(
+			"  profile",
+			nixbox_core::profile::profile_path(target)
+				.map_or_else(|error| error.to_string(), |path| path.display().to_string()),
+		),
+		(
+			"  profile setup",
+			nixbox_core::profile::setup_status(engine, target).describe(target),
 		),
 	]);
 	format!("\n{}{}\n{}", target_name(target), active, body)

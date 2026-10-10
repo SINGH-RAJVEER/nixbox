@@ -1,4 +1,4 @@
-//! `nixbox install` — track a package and rebuild.
+//! `nixbox install` — track a package, then rebuild or update the profile.
 
 use std::process::ExitCode;
 

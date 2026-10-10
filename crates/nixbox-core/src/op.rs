@@ -70,6 +70,19 @@ pub fn flake_choices(details: &FlakeDetails, scope: Target) -> Vec<FlakeChoice> 
 /// from an older release.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
+	/// Moves the target's packages into an independent profile and wires the
+	/// profile into the environment.
+	SetupProfile {
+		scope: Target,
+		/// Home Manager runs inside NixOS, so the NixOS side also puts the
+		/// profile on PATH through PAM.
+		#[serde(default)]
+		home_inside_nixos: bool,
+	},
+	/// Moves the target's packages back into the configuration.
+	TeardownProfile {
+		scope: Target,
+	},
 	Install {
 		hit: SearchHit,
 		scope: Target,
@@ -132,7 +145,9 @@ impl Op {
 	#[must_use]
 	pub fn scope(&self) -> Target {
 		match self {
-			Op::Install { scope, .. }
+			Op::SetupProfile { scope, .. }
+			| Op::TeardownProfile { scope }
+			| Op::Install { scope, .. }
 			| Op::InstallFlake { scope, .. }
 			| Op::InstallFlakePackage { scope, .. }
 			| Op::UninstallFlake { scope, .. }
@@ -153,6 +168,10 @@ impl Op {
 			return false;
 		}
 		match (self, other) {
+			(
+				Op::SetupProfile { .. } | Op::TeardownProfile { .. },
+				Op::SetupProfile { .. } | Op::TeardownProfile { .. },
+			) => true,
 			(Op::Install { hit: a, .. }, Op::Install { hit: b, .. }) => a.attr == b.attr,
 			(
 				Op::InstallFlake {
@@ -263,6 +282,8 @@ impl Op {
 	pub fn label(&self) -> String {
 		let tag = self.scope().tag();
 		match self {
+			Op::SetupProfile { .. } => format!("set up package profile [{tag}]"),
+			Op::TeardownProfile { .. } => format!("tear down package profile [{tag}]"),
 			Op::Install { hit, .. } => format!("install {} [{}]", hit.attr, tag),
 			Op::InstallFlake { repo, .. } => format!("install flake {} [{}]", repo, tag),
 			Op::InstallFlakePackage { repo, package, .. } => {

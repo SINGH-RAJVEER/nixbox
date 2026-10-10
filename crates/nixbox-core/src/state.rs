@@ -25,6 +25,8 @@ use crate::op::Op;
 pub struct InProgress {
 	pub scope: Target,
 	pub label: String,
+	#[serde(default)]
+	pub activation: crate::Activation,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

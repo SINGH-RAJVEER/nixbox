@@ -51,6 +51,14 @@ pub(super) fn entries(op: &Op, changed_files: &[PathBuf]) -> Vec<JournalEntry> {
 	let target = op.scope();
 	let scope = target.title();
 	let mut descriptions = match op {
+		Op::SetupProfile { .. } => vec![(
+			format!("set up the package profile for {scope}"),
+			format!("Move NixBox packages for {scope} into an independent package profile."),
+		)],
+		Op::TeardownProfile { .. } => vec![(
+			format!("tear down the package profile for {scope}"),
+			format!("Return NixBox packages for {scope} to the configuration."),
+		)],
 		Op::Install { hit, .. } => vec![(
 			format!("install {} for {scope}", hit.attr),
 			if hit.version.is_empty() {

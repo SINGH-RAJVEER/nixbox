@@ -887,7 +887,11 @@ fn validate_name(name: &str) -> Result<()> {
 }
 
 pub(crate) fn operation_files(config: &Config) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
-	let mut files = vec![config.flake_file(), config.config_root().join("flake.lock")];
+	let mut files = vec![
+		config.flake_file(),
+		config.config_root().join("flake.lock"),
+		config.home_integration_file(),
+	];
 	for scope in [Target::HomeManager, Target::NixosSystem] {
 		files.extend([
 			config.main_file_for(scope),

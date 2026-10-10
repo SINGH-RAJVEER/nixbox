@@ -79,6 +79,7 @@ mod tests {
 			in_progress: Some(InProgress {
 				scope: Target::HomeManager,
 				label: "install ripgrep [hm]".into(),
+				activation: nixbox_core::Activation::Packages,
 			}),
 			last_error: Some("install foo [hm]: nonzero exit".into()),
 		};

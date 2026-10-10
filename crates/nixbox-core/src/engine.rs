@@ -6,8 +6,11 @@ use std::process::{Command, Stdio};
 use anyhow::Result;
 use nixbox_config::{Config, Target};
 use nixbox_nix::{
-	Manifest, SettingsFile, SettingsManifest,
-	manifest::{FlakeOutput, ImportStatus, ManagedFile, ensure_imported},
+	Manifest, PackageMode, SettingsFile, SettingsManifest,
+	manifest::{
+		FlakeOutput, ImportStatus, ManagedFile, ManagedFlakeFile, ensure_imported,
+		write_home_integration,
+	},
 	scan::{ExternalPackage, ScanTarget, remove_from_source, scan},
 };
 
@@ -197,6 +200,71 @@ impl Engine {
 		Ok(managed)
 	}
 
+	/// Rewrites `scope`'s package and flake-output modules in `mode`. This is
+	/// the only place a target changes mode: ordinary package changes keep
+	/// whatever mode the files already have.
+	fn set_package_mode(
+		&mut self,
+		scope: Target,
+		mode: PackageMode,
+		home_inside_nixos: bool,
+		reporter: &mut dyn Reporter,
+	) -> Result<()> {
+		let main = self.config.main_file_for(scope);
+		anyhow::ensure!(
+			main.exists(),
+			"{} is missing; create the main {} configuration first",
+			main.display(),
+			scope.label()
+		);
+		let integrate =
+			scope == Target::HomeManager && mode == PackageMode::Profile && home_inside_nixos;
+		let nixos_main = self.config.main_file_for(Target::NixosSystem);
+		anyhow::ensure!(
+			!integrate || nixos_main.exists(),
+			"Home Manager runs inside NixOS, but {} is missing; set `nixos_main_file` so the profile can join PATH",
+			nixos_main.display()
+		);
+
+		self.manifest_for_mut(scope).mode = mode;
+		let managed = self.write_manifest(scope)?;
+		note_import(&main, managed.path(), reporter);
+		git_track(managed.path(), reporter);
+		git_track(&main, reporter);
+
+		let flakes = ManagedFlakeFile::new(self.config.flake_manifest_for(scope));
+		if flakes.path().exists() {
+			let manifest = flakes.load()?;
+			match scope {
+				Target::HomeManager => flakes.write_home_manager(&manifest, mode)?,
+				Target::NixosSystem => flakes.write_nixos(&manifest, mode)?,
+			}
+			git_track(flakes.path(), reporter);
+		}
+
+		let integration = self.config.home_integration_file();
+		if integrate {
+			write_home_integration(&integration, true)?;
+			note_import(&nixos_main, &integration, reporter);
+			git_track(&integration, reporter);
+			git_track(&nixos_main, reporter);
+		} else if scope == Target::HomeManager && integration.exists() {
+			// Keep the import valid, but take the profile off PATH.
+			write_home_integration(&integration, false)?;
+			git_track(&integration, reporter);
+		}
+
+		reporter.info(format!(
+			"Wrote {} for {}.",
+			match mode {
+				PackageMode::Configuration => "configuration-managed packages",
+				PackageMode::Profile => "the independent package profile",
+			},
+			scope.label()
+		));
+		Ok(())
+	}
+
 	/// Applies one op: updates the in-memory manifest, writes every file the
 	/// op touches, makes sure the managed file is imported, and keeps git
 	/// aware of what was generated.
@@ -219,6 +287,19 @@ impl Engine {
 	fn apply_inner(&mut self, op: &Op, reporter: &mut dyn Reporter) -> Result<()> {
 		let scope = op.scope();
 		match op {
+			Op::SetupProfile {
+				home_inside_nixos, ..
+			} => {
+				return self.set_package_mode(
+					scope,
+					PackageMode::Profile,
+					*home_inside_nixos,
+					reporter,
+				);
+			}
+			Op::TeardownProfile { .. } => {
+				return self.set_package_mode(scope, PackageMode::Configuration, false, reporter);
+			}
 			Op::Install { hit, .. } => {
 				self.manifest_for_mut(scope).add(&hit.attr);
 			}

@@ -11,6 +11,7 @@ pub mod engine;
 pub mod flakes;
 pub mod op;
 pub mod options;
+pub mod profile;
 pub mod progress;
 pub mod rebuild;
 pub mod report;
@@ -25,6 +26,7 @@ pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_targe
 pub use flakes::InstalledFlake;
 pub use op::{FlakeChoice, Op, flake_choices};
 pub use options::{OptionChange, load_options};
+pub use profile::Activation;
 pub use rebuild::{Escalation, HOME_FALLBACK_NOTE, RebuildCommand};
 pub use report::{LogReporter, Reporter, SilentReporter};
 pub use session::{BuildEnded, Enqueued, Restored, Session};

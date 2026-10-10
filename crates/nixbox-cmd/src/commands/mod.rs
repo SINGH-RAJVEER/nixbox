@@ -9,6 +9,7 @@ pub mod flake;
 pub mod install;
 pub mod list;
 pub mod migrate;
+pub mod profile;
 pub mod remove;
 pub mod resume;
 pub mod scan;
