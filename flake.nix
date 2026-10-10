@@ -1,5 +1,5 @@
 {
-  description = "NixBox, a TUI package manager for NixOS and Home Manager";
+  description = "NixBox, a desktop package manager for NixOS and Home Manager";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -18,19 +18,19 @@
       # to one system rather than generated per system.
       vmSystem = "x86_64-linux";
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-      # `nixbox` with the terminal UI and `nixbox-cli` without it share one
-      # command tree. `nixbox-gui` is the desktop front-end, Linux only for
-      # now, and the only one that needs the graphics stack.
+      # `nixbox` is the desktop front-end, Linux only for now, and the only
+      # one that needs the graphics stack. `nixbox-tui` adds the terminal UI
+      # and `nixbox-cli` no interface at all; all three share one command
+      # tree and install under their own names, so they can sit in one
+      # profile without overwriting each other.
       mkNixbox =
         {
           pkgs,
           package ? "nixbox",
         }:
         let
-          # `nixbox-cli` deliberately installs under its own name so both can
-          # sit in one profile without overwriting each other.
           binary = package;
-          gui = package == "nixbox-gui";
+          gui = package == "nixbox";
           # Loaded at runtime rather than linked, so they go on the library
           # path through the wrapper.
           guiLibraries = [
@@ -65,23 +65,21 @@
             "native"
           ];
           useNextest = true;
-          # A workspace test run unifies features and always enables the UI,
-          # so the CLI package is tested on its own to cover the other half.
-          # The desktop front-end is excluded so the TUI build never needs the
-          # graphics stack.
+          # The terminal UI's run covers every crate but the desktop one, so
+          # the TUI build never needs the graphics stack.
           cargoTestFlags =
-            if package == "nixbox" then
+            if gui then
+              [
+                "--package"
+                "nixbox"
+                "--features"
+                "native"
+              ]
+            else if package == "nixbox-tui" then
               [
                 "--workspace"
                 "--exclude"
-                "nixbox-gui"
-              ]
-            else if gui then
-              [
-                "--package"
-                "nixbox-gui"
-                "--features"
-                "native"
+                "nixbox"
               ]
             else
               [
@@ -119,20 +117,20 @@
                 ]
               }${pkgs.lib.optionalString gui " --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibraries}"}
             ${pkgs.lib.optionalString gui ''
-              install -Dm644 ${./assets/nixbox-gui.svg} "$out/share/icons/hicolor/scalable/apps/nixbox-gui.svg"
-              install -Dm644 ${./assets/nixbox-gui.desktop.in} "$out/share/applications/nixbox-gui.desktop"
-              substituteInPlace "$out/share/applications/nixbox-gui.desktop" \
-                --replace-fail '@NIXBOX_GUI_EXEC@' "$out/bin/nixbox-gui"
-              desktop-file-validate "$out/share/applications/nixbox-gui.desktop"
+              install -Dm644 ${./assets/nixbox.svg} "$out/share/icons/hicolor/scalable/apps/nixbox.svg"
+              install -Dm644 ${./assets/nixbox.desktop.in} "$out/share/applications/nixbox.desktop"
+              substituteInPlace "$out/share/applications/nixbox.desktop" \
+                --replace-fail '@NIXBOX_EXEC@' "$out/bin/nixbox"
+              desktop-file-validate "$out/share/applications/nixbox.desktop"
             ''}
           '';
 
           meta = {
             description =
-              if package == "nixbox" then
-                "TUI package manager for NixOS and Home Manager"
-              else if gui then
+              if gui then
                 "Desktop package manager for NixOS and Home Manager"
+              else if package == "nixbox-tui" then
+                "Terminal UI package manager for NixOS and Home Manager"
               else
                 "Command-line package manager for NixOS and Home Manager";
             homepage = "https://github.com/SINGH-RAJVEER/nixbox";
@@ -141,6 +139,7 @@
             platforms = if gui then pkgs.lib.platforms.linux else pkgs.lib.platforms.unix;
           };
         };
+      isLinux = nixpkgs.lib.hasSuffix "-linux";
     in
     {
       packages = forAllSystems (
@@ -149,63 +148,61 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          nixbox = mkNixbox { inherit pkgs; };
+          nixbox-tui = mkNixbox {
+            inherit pkgs;
+            package = "nixbox-tui";
+          };
           nixbox-cli = mkNixbox {
             inherit pkgs;
             package = "nixbox-cli";
           };
-          default = nixbox;
+          # The desktop GUI wherever it builds, the terminal UI elsewhere.
+          default = if isLinux system then self.packages.${system}.nixbox else nixbox-tui;
         }
-        // nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
-          nixbox-gui = mkNixbox {
-            inherit pkgs;
-            package = "nixbox-gui";
-          };
+        // nixpkgs.lib.optionalAttrs (isLinux system) {
+          nixbox = mkNixbox { inherit pkgs; };
         }
       );
 
       apps = forAllSystems (
         system:
+        let
+          app = package: description: {
+            type = "app";
+            program = nixpkgs.lib.getExe self.packages.${system}.${package};
+            meta = { inherit description; };
+          };
+        in
         {
-          default = {
-            type = "app";
-            program = "${self.packages.${system}.default}/bin/nixbox";
-            meta.description = "Run NixBox";
-          };
-          nixbox-cli = {
-            type = "app";
-            program = "${self.packages.${system}.nixbox-cli}/bin/nixbox-cli";
-            meta.description = "Run the NixBox command line";
-          };
+          default = app "default" "Run NixBox";
+          nixbox-tui = app "nixbox-tui" "Run the NixBox terminal UI";
+          nixbox-cli = app "nixbox-cli" "Run the NixBox command line";
         }
-        // nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
-          nixbox-gui = {
-            type = "app";
-            program = "${self.packages.${system}.nixbox-gui}/bin/nixbox-gui";
-            meta.description = "Run the NixBox desktop GUI";
-          };
+        // nixpkgs.lib.optionalAttrs (isLinux system) {
+          nixbox = app "nixbox" "Run the NixBox desktop GUI";
         }
       );
 
       overlays.default = final: _prev: {
         nixbox = mkNixbox { pkgs = final; };
+        nixbox-tui = mkNixbox {
+          pkgs = final;
+          package = "nixbox-tui";
+        };
         nixbox-cli = mkNixbox {
           pkgs = final;
           package = "nixbox-cli";
-        };
-        nixbox-gui = mkNixbox {
-          pkgs = final;
-          package = "nixbox-gui";
         };
       };
 
       # A throwaway VM for exercising NixBox against a real rebuild. Build and
       # boot it with `just vm`. Nothing here is ever applied to the host: the
       # only safe subcommands are `build-vm` and `build-vm-with-bootloader`.
+      # It is headless, so it gets the terminal UI rather than the default.
       nixosConfigurations.nixbox-testvm = nixpkgs.lib.nixosSystem {
         system = vmSystem;
         specialArgs = {
-          nixbox = self.packages.${vmSystem}.default;
+          nixboxTui = self.packages.${vmSystem}.nixbox-tui;
           nixboxCli = self.packages.${vmSystem}.nixbox-cli;
           nixpkgsFlake = nixpkgs;
         };
@@ -219,7 +216,7 @@
         in
         {
           cli = import ./vm/test.nix {
-            nixbox = self.packages.${system}.default;
+            nixboxTui = self.packages.${system}.nixbox-tui;
             nixboxCli = self.packages.${system}.nixbox-cli;
             nixpkgsFlake = nixpkgs;
             inherit (pkgs) testers;

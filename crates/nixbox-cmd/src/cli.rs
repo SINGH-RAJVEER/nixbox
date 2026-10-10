@@ -13,26 +13,21 @@ use crate::commands;
 /// one that failed outright.
 pub const EXIT_FAILURE: u8 = 1;
 
-/// `--help` has to describe the binary that was actually built. The crate
-/// description cannot do this job, because `nixbox` and `nixbox-cli` are one
-/// crate compiled twice.
-#[cfg(feature = "tui")]
-const ABOUT: &str = "TUI package manager for NixOS and Home Manager";
-#[cfg(not(feature = "tui"))]
+/// What `--help` says for `nixbox-cli`. A binary with an interface replaces
+/// both through its [`crate::Frontend`].
 const ABOUT: &str = "Command-line package manager for NixOS and Home Manager";
 
-#[cfg(feature = "tui")]
 const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into your home-manager \
-                          or NixOS configuration and rebuild. Run without a subcommand for the \
-                          terminal UI.";
-#[cfg(not(feature = "tui"))]
-const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into your home-manager \
-                          or NixOS configuration and rebuild. This build has no terminal UI; the \
-                          `nixbox` crate is the same commands plus one.";
+                          or NixOS configuration and rebuild. This build has no user interface; \
+                          `nixbox` adds the desktop GUI and `nixbox-tui` the terminal UI.";
+
+/// Printed after the help when `nixbox-cli` runs without a subcommand.
+const NO_INTERFACE: &str =
+	"This is nixbox-cli. Install `nixbox` for the desktop GUI or `nixbox-tui` for the terminal UI.";
 
 // `name` is overridden at runtime with the installed binary name, because one
-// crate backs both `nixbox` and `nixbox-cli`. The literal here is only the
-// default for tests and for `Cli::command()` called outside `run`.
+// crate backs `nixbox`, `nixbox-tui`, and `nixbox-cli`. The literal here is
+// only the default for tests and for `Cli::command()` called outside `run`.
 #[derive(Parser, Debug)]
 #[command(
     name = "nixbox",
@@ -104,10 +99,6 @@ impl From<TargetArg> for Target {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-	/// Launch the terminal UI (what you get with no subcommand).
-	#[cfg(feature = "tui")]
-	Tui,
-
 	/// Search a nixpkgs channel.
 	Search(commands::search::SearchArgs),
 
@@ -164,18 +155,16 @@ pub enum Command {
 impl Cli {
 	pub async fn run(self) -> Result<ExitCode> {
 		match self.command {
-			#[cfg(feature = "tui")]
-			None | Some(Command::Tui) => {
-				nixbox_tui::run().await?;
-				Ok(ExitCode::SUCCESS)
-			}
-			// Built without the TUI: there is nothing to fall back to, so say
-			// what this binary can do instead of exiting silently.
-			#[cfg(not(feature = "tui"))]
+			// A binary with an interface opens it before getting here, so
+			// this is `nixbox-cli`: say what it can do instead of exiting
+			// silently.
 			None => {
 				use clap::CommandFactory;
-				Cli::command().print_help()?;
-				eprintln!("\nThis is nixbox-cli. Install the `nixbox` crate for the terminal UI.");
+				Cli::command()
+					.name(crate::program())
+					.bin_name(crate::program())
+					.print_help()?;
+				eprintln!("\n{NO_INTERFACE}");
 				Ok(ExitCode::from(EXIT_FAILURE))
 			}
 			Some(Command::Search(args)) => commands::search::run(&args, &self.global).await,
@@ -280,16 +269,6 @@ mod tests {
 	fn a_bare_invocation_carries_no_subcommand() {
 		let cli = Cli::parse_from(["nixbox"]);
 		assert!(cli.command.is_none());
-	}
-
-	/// The feature gate decides whether a bare `nixbox` opens a UI or prints
-	/// help, so the subcommand has to track it in both configurations.
-	#[test]
-	fn the_tui_subcommand_exists_only_in_a_tui_build() {
-		let offered = Cli::command()
-			.get_subcommands()
-			.any(|sub| sub.get_name() == "tui");
-		assert_eq!(offered, cfg!(feature = "tui"));
 	}
 
 	#[test]

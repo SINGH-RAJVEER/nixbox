@@ -5,7 +5,7 @@
 	lib,
 	pkgs,
 	modulesPath,
-	nixbox,
+	nixboxTui,
 	nixboxCli,
 	...
 }:
@@ -40,8 +40,8 @@ in
 		install -d -o tester -g users -m 0755 /home/tester/.config
 		install -d -o tester -g users -m 0755 /home/tester/.local
 		install -d -o tester -g users -m 0755 /home/tester/.local/bin
-		ln -sfn ${lib.getExe nixbox} /home/tester/.local/bin/nixbox
-		chown -h tester:users /home/tester/.local/bin/nixbox
+		ln -sfn ${lib.getExe nixboxTui} /home/tester/.local/bin/nixbox-tui
+		chown -h tester:users /home/tester/.local/bin/nixbox-tui
 		# The other published binary, so the test can prove it behaves the
 		# same on a real machine.
 		ln -sfn ${lib.getExe nixboxCli} /home/tester/.local/bin/nixbox-cli

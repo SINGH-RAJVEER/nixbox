@@ -8,12 +8,11 @@ members = [
     "crates/nixbox-core",
     "crates/nixbox-nix",
     "crates/nixbox-config",
-    "crates/nixbox-gui",
 ]
-# The desktop front-end pulls in gpui and the graphics stack, so a plain
-# `cargo build`/`cargo test` leaves it out. Build it with `-p nixbox-gui`.
+# `nixbox` is the desktop front-end and pulls in gpui and the graphics stack,
+# so a plain `cargo build`/`cargo test` leaves it out. Build it with
+# `-p nixbox --features native`.
 default-members = [
-    "crates/nixbox",
     "crates/nixbox-cli",
     "crates/nixbox-cmd",
     "crates/nixbox-tui",
@@ -23,16 +22,16 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.5"
 edition = "2024"
 authors = ["Rajveer Singh"]
 license = "Apache-2.0"
 repository = "https://github.com/SINGH-RAJVEER/nixbox"
 homepage = "https://github.com/SINGH-RAJVEER/nixbox"
 readme = "README.md"
-keywords = ["nixos", "nix", "tui", "package-manager", "home-manager"]
+keywords = ["nixos", "nix", "package-manager", "home-manager"]
 categories = ["command-line-utilities"]
-description = "TUI package manager for NixOS that wires selections into your flake + home-manager config"
+description = "Package manager for NixOS that wires selections into your flake + home-manager config"
 
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }

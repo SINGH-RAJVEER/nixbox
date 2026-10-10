@@ -13,11 +13,11 @@ machine.wait_for_unit("multi-user.target")
 
 
 def nixbox(args: str) -> str:
-	return machine.succeed("su -l tester -c 'nixbox " + args + "'")
+	return machine.succeed("su -l tester -c 'nixbox-tui " + args + "'")
 
 
 def nixbox_fails(args: str) -> str:
-	return machine.fail("su -l tester -c 'nixbox " + args + "'")
+	return machine.fail("su -l tester -c 'nixbox-tui " + args + "'")
 
 
 def managed() -> str:
@@ -66,7 +66,7 @@ with subtest("the managed file is imported and tracked by git"):
 
 with subtest("list reports what was migrated, as text and as json"):
 	assert "hello" in nixbox("list")
-	parsed = machine.succeed("su -l tester -c 'nixbox list --json' | jq -r '.[0].name'")
+	parsed = machine.succeed("su -l tester -c 'nixbox-tui list --json' | jq -r '.[0].name'")
 	assert parsed.strip() == "hello", parsed
 
 with subtest("a change without a terminal needs --yes"):
@@ -148,12 +148,10 @@ with subtest("nixbox-cli is the same program without the UI"):
 	# than trusting that the shared command tree behaves the same.
 	cli = machine.succeed("su -l tester -c 'nixbox-cli --help'")
 	assert "Usage: nixbox-cli" in cli, cli
-	assert "no terminal UI" in cli, cli
-	# The `tui` subcommand is feature-gated away. The message matters as
+	assert "no user interface" in cli, cli
+	# A bare invocation has no interface to open. The message matters as
 	# much as the failure: a nixbox-cli that still carried the UI would
 	# also fail here, by having no terminal to open.
-	rejected = machine.fail("su -l tester -c 'nixbox-cli tui' 2>&1")
-	assert "unrecognized subcommand 'tui'" in rejected, rejected
 	bare = machine.fail("su -l tester -c 'nixbox-cli 2>&1'")
 	assert "This is nixbox-cli" in bare, bare
 	# Hints name the binary that was actually run.
@@ -264,7 +262,7 @@ with subtest("a queued flake package is wired in as a person would write it"):
 with subtest("flake list reports the managed package, as text and as json"):
 	listed = nixbox("flake list")
 	assert REPO in listed and "package" in listed and "default" in listed, listed
-	kind = machine.succeed("su -l tester -c 'nixbox flake list --json' | jq -r '.[0].kind'")
+	kind = machine.succeed("su -l tester -c 'nixbox-tui flake list --json' | jq -r '.[0].kind'")
 	assert kind.strip() == "package", kind
 
 with subtest("a second package from the same flake sits next to the first"):
@@ -287,7 +285,7 @@ with subtest("a package configuration.nix already declares is not added twice"):
 
 with subtest("the Installed tab lists flake packages from both places"):
 	nixbox("config set input-mode vim")
-	machine.succeed("su -l tester -c 'tmux new-session -d -s nb -x 200 -y 50 nixbox'")
+	machine.succeed("su -l tester -c 'tmux new-session -d -s nb -x 200 -y 50 nixbox-tui'")
 	machine.wait_until_succeeds(
 		"su -l tester -c 'tmux capture-pane -p -t nb' | grep -q Installed", timeout=60
 	)
@@ -369,7 +367,7 @@ def evaluated(option: str) -> str:
 with subtest("Enter on an Installed package opens its options"):
 	nixbox("install git --no-rebuild --yes")
 	nixbox("config set input-mode vim")
-	machine.succeed("su -l tester -c 'tmux new-session -d -s nb -x 200 -y 50 nixbox'")
+	machine.succeed("su -l tester -c 'tmux new-session -d -s nb -x 200 -y 50 nixbox-tui'")
 	screen_has("Installed")
 	tui("Tab")
 	tui("Tab")

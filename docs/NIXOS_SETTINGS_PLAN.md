@@ -29,8 +29,8 @@ The initial product configures an existing local flake-based NixOS installation.
 | `nixbox-nix/src/settings.rs` | Typed Nix serialization and generated module load/write. | Only null, booleans, numbers, strings, and string lists round-trip. Paths, structured values, references, and expressions need representation. |
 | `Op::SetOptions` and `Session` | Persistent queue, coalesced edits, rebuild progress, cancellation, and resume. | Batching currently keys only on Home Manager versus NixOS and starts work immediately when idle. Validation and selected-host identity must reach execution and recovery. |
 | `nixbox-core/src/rebuild.rs` and `nixbox-nix/src/build.rs` | Shared rebuild commands and GUI askpass escalation. | The NixOS invocation fixes `#nixos` and `switch`; the tab needs explicit host and action. |
-| `nixbox-gui/src/options.rs` and `ui/options.rs` | Staged changes, selection, filtering, type editors, and reload behavior. | Package-bound view state cannot serve as the system-wide browser state. |
-| `nixbox-gui/src/ui/mod.rs` | Horizontal GPUI Kit navigation, tab label modes, queue count, and build status. | Add a distinct tab without changing package Options navigation. |
+| `nixbox/src/options.rs` and `ui/options.rs` | Staged changes, selection, filtering, type editors, and reload behavior. | Package-bound view state cannot serve as the system-wide browser state. |
+| `nixbox/src/ui/mod.rs` | Horizontal GPUI Kit navigation, tab label modes, queue count, and build status. | Add a distinct tab without changing package Options navigation. |
 
 Keep the work in the existing crates. Extend the shared options module so callers can discover a target, list its schema, inspect an option, and prepare a change batch through a small interface. GUI code should not decide Nix definition priorities or construct rebuild commands.
 

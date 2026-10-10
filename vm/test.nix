@@ -4,7 +4,7 @@
 # it, so keeping it in a real .py file means editors and the checker see the
 # same thing.
 {
-	nixbox,
+	nixboxTui,
 	nixboxCli,
 	nixpkgsFlake,
 	testers,
@@ -12,7 +12,7 @@
 testers.runNixOSTest {
 	name = "nixbox-cli";
 
-	node.specialArgs = { inherit nixbox nixboxCli nixpkgsFlake; };
+	node.specialArgs = { inherit nixboxTui nixboxCli nixpkgsFlake; };
 
 	nodes.machine =
 		{ pkgs, ... }:

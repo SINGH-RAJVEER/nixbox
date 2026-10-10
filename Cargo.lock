@@ -4452,69 +4452,11 @@ dependencies = [
 
 [[package]]
 name = "nixbox"
-version = "0.3.1"
-dependencies = [
- "nixbox-cmd",
- "tokio",
-]
-
-[[package]]
-name = "nixbox-cli"
-version = "0.3.1"
-dependencies = [
- "nixbox-cmd",
- "tokio",
-]
-
-[[package]]
-name = "nixbox-cmd"
-version = "0.3.1"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "directories",
- "libc",
- "nixbox-config",
- "nixbox-core",
- "nixbox-nix",
- "nixbox-tui",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "nixbox-config"
-version = "0.3.1"
-dependencies = [
- "anyhow",
- "directories",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "nixbox-core"
-version = "0.3.1"
-dependencies = [
- "anyhow",
- "directories",
- "nixbox-config",
- "nixbox-nix",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "nixbox-gui"
-version = "0.3.1"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "nixbox-cmd",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
@@ -4528,8 +4470,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "nixbox-cli"
+version = "0.3.5"
+dependencies = [
+ "nixbox-cmd",
+]
+
+[[package]]
+name = "nixbox-cmd"
+version = "0.3.5"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "directories",
+ "libc",
+ "nixbox-config",
+ "nixbox-core",
+ "nixbox-nix",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nixbox-config"
+version = "0.3.5"
+dependencies = [
+ "anyhow",
+ "directories",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nixbox-core"
+version = "0.3.5"
+dependencies = [
+ "anyhow",
+ "directories",
+ "nixbox-config",
+ "nixbox-nix",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "nixbox-nix"
-version = "0.3.1"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "libc",
@@ -4542,12 +4533,13 @@ dependencies = [
 
 [[package]]
 name = "nixbox-tui"
-version = "0.3.1"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "crossterm",
  "directories",
  "futures",
+ "nixbox-cmd",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",

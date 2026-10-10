@@ -9,7 +9,7 @@ homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Persisted user settings (channel, target, paths) for the nixbox TUI."
+description = "Persisted user settings (channel, target, theme, paths) for nixbox"
 
 [dependencies]
 anyhow = { workspace = true }
