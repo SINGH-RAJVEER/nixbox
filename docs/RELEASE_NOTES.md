@@ -4,6 +4,12 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added opt-in package profiles. `nixbox profile setup` moves a target's packages into an independent Nix profile and rebuilds once; installs and removals then build only the profile. Modules, options and migrations still rebuild. `nixbox profile teardown` moves the packages back, writing exactly the files earlier releases wrote.
+- Made every rebuild set the profile to the configuration's package set, so fresh installs, `nixos-rebuild --rollback`, the boot menu and `nix flake update` carry the profile along. The profile build and the rebuild share one `nixbox.profile` option and produce the same store path.
+- Put the profile on PATH through PAM on NixOS, and through `home.sessionPath` and nushell's `env.nu` for Home Manager. When Home Manager runs inside NixOS, setup also adds the profile to the NixOS PAM environment.
+- Added `nixbox profile generations` and `nixbox profile rollback [--to <generation>]`, `apply --configuration`, and setup status in `status` and `doctor`.
+- Recorded the profile mode in the generated package file, so it travels with the configuration repository.
+
 ## 0.4.0 - 2026-10-16
 
 - Reworked the desktop Build page into expandable preparation, evaluation, download, build, and activation steps. Each step shows its duration and output; download and build progress uses Nix's reported counts and bytes. The running step opens automatically, and failures retain the failed step and its error.

@@ -29,17 +29,18 @@ None of these are written back to the settings file. `nixbox config set` is the 
 | `nixbox search <query>` | Search the active channel. `-n` limits the result count. Uses the local package catalog when one is available and falls back to live search otherwise; `--channel` always searches live. |
 | `nixbox list` | List the packages NixBox manages for the active target. `-a` covers both. |
 | `nixbox scan` | List packages declared by hand in your own configuration that NixBox does not manage. |
-| `nixbox status` | Show the active target, the files NixBox owns, and whether the import is wired up. |
-| `nixbox doctor` | Check that Nix, the config directory, Git, the flake, the main config, the import, and `gh` are all in place. |
+| `nixbox status` | Show the active target, the files NixBox owns, whether the import is wired up, and how far package profile setup has got. |
+| `nixbox doctor` | Check that Nix, the config directory, Git, the flake, the main config, the import, and `gh` are all in place, and warn when a package profile is set up but not active. |
 
 ## Changing the configuration
 
 | Command | Purpose |
 | --- | --- |
-| `nixbox install <package>...` | Add packages and rebuild. |
-| `nixbox remove <package>...` | Drop packages and rebuild. Aliases: `rm`, `uninstall`. |
+| `nixbox install <package>...` | Add packages and rebuild. With a package profile set up, update the profile instead. |
+| `nixbox remove <package>...` | Drop packages and rebuild, or update the profile. Aliases: `rm`, `uninstall`. |
 | `nixbox migrate <package>...` | Move hand-declared packages into the managed file. `-a` migrates everything that can move cleanly. |
-| `nixbox apply` | Rewrite the managed file and rebuild without changing the package set. |
+| `nixbox apply` | Rewrite the managed file and rebuild without changing the package set. With a package profile, update the profile; `--configuration` rebuilds instead. |
+| `nixbox profile <setup\|teardown\|generations\|rollback>` | Move the target's packages into an independent profile and back, list its generations, or roll it back. See [Package profiles](#package-profiles). |
 | `nixbox resume` | Finish work a previous run left behind: an interrupted rebuild, or a queue the TUI saved. `--discard` throws it away instead. |
 
 Each of these accepts:
@@ -47,12 +48,27 @@ Each of these accepts:
 | Flag | Effect |
 | --- | --- |
 | `--dry-run` | Print what would change and exit without touching anything. |
-| `--no-rebuild` | Write the configuration change but skip the rebuild. |
+| `--no-rebuild`, `--no-activate` | Write the configuration change but skip the rebuild or profile update. |
 | `--yes`, `-y` | Do not ask before changing the configuration. |
 
 Without a terminal on stdin, a change requires `--yes`. This is deliberate: a script that forgets it stops rather than rebuilding a machine unattended.
 
-Writing happens before the rebuild. If a rebuild fails, the files already reflect the intent, so recovering is `nixbox apply` rather than repeating the original command.
+Writing happens before the rebuild. If a rebuild fails, the files already reflect the intent, so recovering is `nixbox apply` rather than repeating the original command. With a package profile, a failed module, option or migration change is recovered with `nixbox apply --configuration`; the failure message names the right command.
+
+## Package profiles
+
+By default every package change rebuilds NixOS or Home Manager. `nixbox --target <target> profile setup` moves that target's packages into an independent Nix profile instead: installs and removals then build only the profile and never rebuild the configuration. Building the NixOS profile still asks for sudo; the Home Manager profile belongs to you. Setup rebuilds the configuration once, to put the profile on PATH. Modules, options and migrations still rebuild, because they reach beyond a list of packages.
+
+| Command | Purpose |
+| --- | --- |
+| `nixbox profile setup` | Rewrite the generated files in profile mode, add the PATH wiring, and rebuild once. Accepts the flags above. |
+| `nixbox profile teardown` | Move the packages back into the configuration and rebuild. The profile stays on disk until you delete it. |
+| `nixbox profile generations` | List the profile's generations. |
+| `nixbox profile rollback [--to <generation>]` | Point the profile at its previous generation, or at the one given. |
+
+Every rebuild of the configuration, and on NixOS every boot, also sets the profile to the configuration's package set, so the profile follows a fresh install, `nixos-rebuild --rollback`, the boot menu and `nix flake update`. A profile rollback is therefore a quick undo, not a permanent one: the generated file still lists the packages, so the next install, `apply`, rebuild or reboot restores them. Remove the packages to make it permanent.
+
+After setup, start a new login session so shells and the desktop see the profile. `status` and `doctor` report the setup as not set up, not activated on this machine, activated but not on this process's PATH, or active. The mode is recorded in the generated package file, so it travels with the configuration repository: on another machine, `nixbox apply --configuration` or any rebuild activates it. [Independent package profiles](MANAGED_FILES.md#independent-package-profiles) describes the files and commands involved.
 
 ## Committing configuration changes
 
@@ -84,7 +100,7 @@ nixbox-cli commit --edit -y
 
 ## Resuming
 
-A rebuild is recorded in `state.json` before it starts and cleared when it reaches a verdict, so a run killed mid-rebuild leaves a marker behind. `nixbox resume` re-runs that rebuild; the configuration was already written, so nothing else needs redoing.
+A rebuild is recorded in `state.json` before it starts and cleared when it reaches a verdict, so a run killed mid-rebuild leaves a marker behind. `nixbox resume` re-runs that rebuild; the configuration was already written, so nothing else needs redoing. The record says whether it was a profile update or a configuration rebuild, and `resume` repeats the same kind.
 
 The TUI queues operations and applies them in a batch, and saves that queue to the same file. `nixbox resume` drains it one target at a time, in the order the queue first mentions each target, with one rebuild per target. `--dry-run` prints the queue without applying it, and `--discard` clears the file.
 

@@ -1,6 +1,6 @@
 # NixBox
 
-NixBox is a desktop package manager for NixOS and Home Manager, with a terminal UI and a plain command line over the same engine. It searches the nixpkgs revision locked by your configuration, writes selected packages into generated Nix modules, imports those modules into your configuration, and runs the matching rebuild command.
+NixBox is a desktop package manager for NixOS and Home Manager, with a terminal UI and a plain command line over the same engine. It searches the nixpkgs revision locked by your configuration, writes selected packages into generated Nix modules, imports those modules into your configuration, and runs the matching rebuild command. After `nixbox profile setup`, installs and removals update an independent package profile instead, without rebuilding.
 
 ## What it does
 
@@ -137,6 +137,7 @@ nixbox list                      # what NixBox manages
 nixbox scan                      # packages you declared by hand
 nixbox migrate htop              # move one of them into the managed file
 nixbox apply                     # rewrite the managed file and rebuild
+nixbox profile setup             # install packages into a profile instead of rebuilding
 nixbox resume                    # finish an interrupted rebuild or a queued batch
 nixbox status                    # target, paths, and how they are wired
 nixbox doctor                    # check what NixBox depends on
@@ -169,12 +170,12 @@ nixbox completions fish > ~/.config/fish/completions/nixbox.fish
 | `-c`, `--channel`    | use another channel for this invocation only                     |
 | `--json`             | machine-readable output instead of a table                       |
 | `--dry-run`          | print the plan and stop, writing nothing                         |
-| `--no-rebuild`       | write the configuration but skip the rebuild                     |
+| `--no-rebuild`       | write the configuration but skip the rebuild or profile update   |
 | `-y`, `--yes`        | do not ask before changing the configuration                     |
 
 Anything that changes your configuration asks first. Without a terminal to ask at, it refuses unless you pass `--yes`, so a script can never trigger a rebuild by accident. `--target` and `--channel` never touch `settings.json` — only `nixbox config set` does.
 
-The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run `nixbox apply` to finish.
+The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run the `nixbox apply` command the failure message names to finish.
 
 Every front-end shares `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in an interface and never ran; `--dry-run` shows it first and `--discard` throws it away.
 
