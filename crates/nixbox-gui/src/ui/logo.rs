@@ -4,7 +4,7 @@
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::component::Icon;
-use gpui_kit::{AnyElement, Image, ImageFormat, IntoElement, Pixels, Styled as _, img};
+use gpui_kit::{AnyElement, Image, ImageFormat, IntoElement, Rems, Styled as _, img};
 use nixbox_core::vcs::Backend;
 
 static GIT: LazyLock<Arc<Image>> = LazyLock::new(|| svg(include_bytes!("../../assets/git.svg")));
@@ -18,7 +18,7 @@ fn svg(bytes: &[u8]) -> Arc<Image> {
 }
 
 /// The logo of `backend`, or a generic branch icon when there is none.
-pub fn vcs_logo(backend: Option<Backend>, size: Pixels) -> AnyElement {
+pub fn vcs_logo(backend: Option<Backend>, size: Rems) -> AnyElement {
 	match backend {
 		Some(Backend::Git) => img(GIT.clone())
 			.size(size)

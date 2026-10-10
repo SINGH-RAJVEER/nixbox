@@ -5,6 +5,8 @@ mod askpass;
 #[cfg(feature = "native")]
 mod delta;
 #[cfg(feature = "native")]
+mod keyboard;
+#[cfg(feature = "native")]
 mod model;
 #[cfg(feature = "native")]
 mod native;

@@ -4,8 +4,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
-	AnyElement, Context, FontWeight, IntoElement, ParentElement as _, Styled as _, div,
-	prelude::FluentBuilder as _, uniform_list,
+	AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, uniform_list,
 };
 
 use super::{empty, muted, page_header, row};
@@ -43,16 +43,25 @@ pub fn render_queue(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElem
 		empty("Nothing queued.", cx).into_any_element()
 	} else {
 		v_flex()
+			.id("queue-rows")
+			.size_full()
+			.overflow_y_scroll()
+			.track_scroll(&app.keyboard.queue_scroll)
 			.children(running)
 			.children(app.session.queue.iter().enumerate().map(|(index, op)| {
-				row(cx).child(div().flex_1().child(op.label())).child(
-					Button::new(("dequeue", index))
-						.small()
-						.ghost()
-						.icon(IconName::Close)
-						.tooltip("Drop from the queue")
-						.on_click(cx.listener(move |this, _, _, cx| this.dequeue(index, cx))),
-				)
+				row(cx)
+					.when(app.keyboard.selected == index, |row| {
+						row.bg(cx.theme().list_active)
+					})
+					.child(div().flex_1().child(op.label()))
+					.child(
+						Button::new(("dequeue", index))
+							.small()
+							.ghost()
+							.icon(IconName::Close)
+							.tooltip("Drop from the queue")
+							.on_click(cx.listener(move |this, _, _, cx| this.dequeue(index, cx))),
+					)
 			}))
 			.into_any_element()
 	};

@@ -16,6 +16,7 @@ pub mod report;
 pub mod search;
 pub mod session;
 pub mod state;
+pub mod text_motion;
 pub mod vcs;
 
 pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};

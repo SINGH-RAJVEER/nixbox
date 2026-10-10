@@ -20,7 +20,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
 	Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-	prelude::FluentBuilder as _, px,
+	prelude::FluentBuilder as _, rems,
 };
 
 use nixbox_core::vcs::Backend;
@@ -43,6 +43,7 @@ impl Render for NixboxApp {
 		v_flex()
 			.id("nixbox")
 			.key_context("Nixbox")
+			.track_focus(&self.keyboard.focus)
 			.on_action(cx.listener(NixboxApp::focus_search))
 			.size_full()
 			.child(self.navigation(cx))
@@ -164,6 +165,13 @@ impl NixboxApp {
 			.when(self.searching || self.catalog_loading, |bar| {
 				bar.child(Spinner::new().small())
 			})
+			.child(div().id("keyboard-mode").child(
+				if self.session.engine.config.input_mode == nixbox_config::InputMode::Vim {
+					format!("VIM {:?}", self.keyboard.mode).to_uppercase()
+				} else {
+					"NORMAL".into()
+				},
+			))
 			.child(div().flex_1().truncate().child(self.status.clone()))
 			.when_some(self.session.last_error.clone(), |bar, error| {
 				bar.child(
@@ -275,7 +283,7 @@ fn page_icon(page: Page, backend: Option<Backend>) -> AnyElement {
 		Page::Build => IconName::SquareTerminal,
 		Page::Settings => IconName::Settings,
 		Page::Nixos => IconName::Settings,
-		Page::VersionControl => return logo::vcs_logo(backend, px(16.)),
+		Page::VersionControl => return logo::vcs_logo(backend, rems(1.)),
 	};
 	Icon::new(icon).size_4().into_any_element()
 }

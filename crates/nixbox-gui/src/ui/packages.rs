@@ -5,8 +5,8 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
-	AnyElement, Context, FontWeight, IntoElement, ParentElement as _, Styled as _, div,
-	uniform_list,
+	AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, uniform_list,
 };
 
 use super::{empty, hover_row, muted, page_header};
@@ -21,17 +21,25 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		None,
 		cx,
 	);
-	let search = div().px_6().pb_3().child(
-		Input::new(&app.search_input)
-			.prefix(IconName::Search)
-			.cleanable(true),
-	);
+	let search = div()
+		.on_mouse_down(
+			gpui_kit::MouseButton::Left,
+			cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
+		)
+		.px_6()
+		.pb_3()
+		.child(
+			Input::new(&app.search_input)
+				.readonly(app.filter_readonly())
+				.prefix(IconName::Search)
+				.cleanable(true),
+		);
 
 	let body = if app.results.is_empty() {
 		let text = if app.searching {
 			"Searching..."
 		} else if app.search_input.read(cx).value().trim().is_empty() {
-			"Type to search packages. Ctrl-F focuses the search from anywhere."
+			"Type to search packages."
 		} else {
 			"No packages match."
 		};
@@ -47,6 +55,13 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						let installed = installed_scopes(&this.session.engine, &hit.attr);
 						Some(
 							hover_row(cx)
+								.id(("package-row", index))
+								.when(this.keyboard.selected == index, |row| {
+									row.bg(cx.theme().list_active)
+								})
+								.on_click(cx.listener(move |this, _, window, cx| {
+									this.select_row(index, window, cx)
+								}))
 								.child(
 									v_flex()
 										.flex_1()
@@ -83,6 +98,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					.collect::<Vec<_>>()
 			}),
 		)
+		.track_scroll(&app.keyboard.package_scroll)
 		.size_full()
 		.into_any_element()
 	};

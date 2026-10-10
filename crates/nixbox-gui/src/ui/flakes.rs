@@ -23,11 +23,19 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		None,
 		cx,
 	);
-	let search = div().px_6().pb_3().child(
-		Input::new(&app.flake_input)
-			.prefix(IconName::Github)
-			.cleanable(true),
-	);
+	let search = div()
+		.on_mouse_down(
+			gpui_kit::MouseButton::Left,
+			cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
+		)
+		.px_6()
+		.pb_3()
+		.child(
+			Input::new(&app.flake_input)
+				.readonly(app.filter_readonly())
+				.prefix(IconName::Github)
+				.cleanable(true),
+		);
 
 	let hits = if app.flake_results.is_empty() {
 		let text = if app.flake_searching {
@@ -44,6 +52,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		);
 		v_flex()
 			.id("flake-hits")
+			.track_scroll(&app.keyboard.flake_scroll)
 			.size_full()
 			.overflow_y_scroll()
 			.children(app.flake_results.iter().enumerate().map(|(index, hit)| {
@@ -102,6 +111,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			details,
 			app.session.engine.config.target,
 			app.flake_picker_open,
+			&app.keyboard,
 			cx,
 		)
 		.into_any_element(),
@@ -141,12 +151,14 @@ fn render_details(
 	details: &FlakeDetails,
 	target: Target,
 	picker_open: bool,
+	keyboard: &crate::keyboard::Keyboard,
 	cx: &mut Context<NixboxApp>,
 ) -> impl IntoElement {
 	let choices = flake_choices(details, target);
 	let choice_count = choices.len();
 	v_flex()
 		.id("flake-details")
+		.track_scroll(&keyboard.details_scroll)
 		.size_full()
 		.overflow_y_scroll()
 		.pb_4()
@@ -192,13 +204,19 @@ fn render_details(
 				.child(section("Installable outputs", choice_count, cx))
 				.children(choices.into_iter().enumerate().map(|(index, choice)| {
 					let path = choice.path;
-					h_flex().px_6().py_1().child(
-						Button::new(format!("install-flake-output-{index}"))
-							.label(path.clone())
-							.on_click(cx.listener(move |this, _, window, cx| {
-								this.install_flake_choice(&path, window, cx);
-							})),
-					)
+					h_flex()
+						.px_6()
+						.py_1()
+						.when(keyboard.choice == index, |row| {
+							row.bg(cx.theme().list_active)
+						})
+						.child(
+							Button::new(format!("install-flake-output-{index}"))
+								.label(path.clone())
+								.on_click(cx.listener(move |this, _, window, cx| {
+									this.install_flake_choice(&path, window, cx);
+								})),
+						)
 				}))
 		})
 		.child(

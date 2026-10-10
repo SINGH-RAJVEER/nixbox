@@ -63,11 +63,19 @@ pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>)
 		.gap_3()
 		.items_center()
 		.child(
-			div().flex_1().min_w_0().child(
-				Input::new(&app.nixos_filter)
-					.prefix(IconName::Search)
-					.cleanable(true),
-			),
+			div()
+				.flex_1()
+				.min_w_0()
+				.on_mouse_down(
+					gpui_kit::MouseButton::Left,
+					cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
+				)
+				.child(
+					Input::new(&app.nixos_filter)
+						.readonly(app.filter_readonly())
+						.prefix(IconName::Search)
+						.cleanable(true),
+				),
 		)
 		.child(
 			Switch::new("nixos-diagnostic")
