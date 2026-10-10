@@ -41,6 +41,7 @@ impl Render for NixboxApp {
 		v_flex()
 			.id("nixbox")
 			.key_context("Nixbox")
+			.track_focus(&self.keyboard.focus)
 			.on_action(cx.listener(NixboxApp::focus_search))
 			.size_full()
 			.child(self.navigation(cx))
@@ -161,6 +162,13 @@ impl NixboxApp {
 			.when(self.searching || self.catalog_loading, |bar| {
 				bar.child(Spinner::new().small())
 			})
+			.child(div().id("keyboard-mode").child(
+				if self.session.engine.config.input_mode == nixbox_config::InputMode::Vim {
+					format!("VIM {:?}", self.keyboard.mode).to_uppercase()
+				} else {
+					"NORMAL".into()
+				},
+			))
 			.child(div().flex_1().truncate().child(self.status.clone()))
 			.when_some(self.session.last_error.clone(), |bar, error| {
 				bar.child(

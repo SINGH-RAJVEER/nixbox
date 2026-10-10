@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -102,6 +103,9 @@ pub struct Config {
 	pub input_mode: InputMode,
 	#[serde(default)]
 	pub tab_labels: TabLabels,
+	/// Desktop keyboard overrides. Missing actions use their defaults; empty lists disable them.
+	#[serde(default)]
+	pub gui_shortcuts: BTreeMap<String, Vec<String>>,
 	#[serde(default)]
 	pub recent_searches: Vec<String>,
 	/// The configuration directory nixbox edits and rebuilds. `None` uses
@@ -144,6 +148,7 @@ impl Default for Config {
 			theme: default_theme(),
 			input_mode: InputMode::default(),
 			tab_labels: TabLabels::default(),
+			gui_shortcuts: BTreeMap::new(),
 			recent_searches: Vec::new(),
 			config_dir: None,
 			home_manager_main_file: None,
@@ -344,6 +349,7 @@ mod tests {
 		assert_eq!(cfg.theme, "default");
 		assert_eq!(cfg.input_mode, InputMode::Vim);
 		assert_eq!(cfg.tab_labels, TabLabels::IconsAndNames);
+		assert!(cfg.gui_shortcuts.is_empty());
 		assert!(cfg.recent_searches.is_empty());
 		assert!(cfg.home_manager_main_file.is_none());
 		assert!(cfg.nixos_main_file.is_none());
@@ -358,6 +364,19 @@ mod tests {
 		);
 		assert_eq!(InputMode::Vim.label(), "Vim mode");
 		assert_eq!(InputMode::Normal.label(), "Normal mode");
+	}
+
+	#[test]
+	fn desktop_shortcuts_round_trip_overrides_and_disabled_actions() {
+		let mut config = Config::default();
+		config
+			.gui_shortcuts
+			.insert("settings".into(), vec!["f2".into(), "ctrl-s".into()]);
+		config.gui_shortcuts.insert("quit".into(), Vec::new());
+		let restored: Config =
+			serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+		assert_eq!(restored.gui_shortcuts, config.gui_shortcuts);
+		assert_eq!(restored.input_mode, InputMode::Vim);
 	}
 
 	#[test]

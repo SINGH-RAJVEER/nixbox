@@ -46,15 +46,42 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
-| Settings | Install target, channel, theme, tab labels, and the configuration directory, saved immediately to `~/.config/nixbox/settings.json`. |
+| Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
 
-Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
-
-Ctrl-+ (or Ctrl-=) zooms in and Ctrl-- zooms out, in 10% steps between 50% and 200%; Ctrl-0 returns to 100%. Zoom scales text and layout together, carries across theme changes, and resets when the GUI restarts.
+Zoom scales text and layout together, carries across theme changes, and resets when the GUI restarts.
 
 The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
 
 Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
+
+## Keyboard
+
+Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
+
+| Default shortcut | Action |
+| --- | --- |
+| Tab / Shift-Tab, Ctrl-Tab / Ctrl-Shift-Tab | Next / previous page. Plain Tab traverses controls while editing other text fields. |
+| Ctrl-S | Open Settings or return to the previous page. |
+| Ctrl-R | Open version control. |
+| Ctrl-F | Focus the current search/filter, or open nixpkgs search. |
+| Up / Down, j / k in Vim Normal mode | Select a result, option, output choice, or queued operation. The selected row stays visible. |
+| Enter | Install a search result or flake output, open an installed package's options, or focus an option value editor. |
+| Delete, m, M in Installed | Remove the selected managed package/flake, migrate a declaration, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
+| Ctrl-W / w, Ctrl-U / u, Ctrl-Z / U, r in Options | Apply, unset, discard, or reload. Plain letters act in Vim Normal mode. |
+| c in Build | Cancel the running build. |
+| Ctrl-Enter / Delete in Queue | Apply the queue / drop its selected operation. |
+| PageUp / PageDown | Scroll the installed list, flake details, options, queue, build log, or diff. |
+| r, e, p, h in Version control | Refresh review, edit the commit message, edit the push branch/bookmark, or edit GitHub repository details. |
+| Ctrl-Enter in Version control | Submit the commit, push, or remote-creation form selected with e, p, or h. The existing review and repository checks still apply. |
+| g / j, Ctrl-B, Ctrl-V, Alt-Left / Alt-Right in Version control | Initialize Git/JJ when no repository exists, toggle the nixbox bookmark, show raw status, or pan the diff. |
+| Ctrl-Q | Quit. Ctrl-C also quits outside text fields; inside them it copies. |
+| Ctrl-+ / Ctrl-=, Ctrl--, Ctrl-0 | Zoom in, out, or reset, in 10% steps between 50% and 200%. |
+
+Vim editing includes i/a/I/A for insertion, h/l and arrows for movement, w/b/e and W/B/E for word/WORD motions, 0/$ for the start/end, v for inclusive Visual selection, x or d for deleting that selection, c for changing it, x for deleting a character, D for deleting to the end, and dd for clearing the input. On the Options page, w applies staged changes in Normal mode and moves by word in Visual mode. Esc also closes the flake output picker, returns from Options or Settings, or leaves another text field; it does not quit the GUI.
+
+Edit any shortcut under **Settings > Keyboard shortcuts**. Separate alternatives with commas, such as `ctrl-f, f2`, and sequence keys with spaces, such as `d d`. Uppercase letters mean Shift. Clear a field to disable the action. Enter or **Apply** saves the binding immediately; **Reset** restores its default. Invalid keys and overlapping bindings are refused, including prefixes of another sequence. The status line explains the conflict. Page-specific actions take precedence over Vim motions, matching the TUI.
+
+Bindings persist as `gui_shortcuts` overrides in `settings.json` and take effect without restarting. These overrides apply only to the GUI; `input_mode` is shared with the TUI.
 
 ## Configuration location
 
@@ -78,7 +105,6 @@ Git parent repositories are reviewed and committed only within the configuration
 
 The GUI reads the same theme setting as the TUI. `default` follows your desktop's light or dark appearance, including changes while NixBox is open. The other themes (`dracula`, `gruvbox`, `nord`, `catppuccin`, `monokai`) use their own dark palettes throughout the window, including text, borders, lists, tabs, inputs, buttons, and scrollbars. Changing the theme in Settings applies it immediately and saves it for the next launch.
 
-The TUI's input mode setting has no effect in the GUI.
 
 ## System rebuilds and your password
 

@@ -13,8 +13,8 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Root, WindowExt as _};
 use gpui_kit::{
-	App, AppContext as _, Context, Entity, KeyBinding, PathPromptOptions, SharedString,
-	Subscription, Task, UniformListScrollHandle, Window, actions,
+	App, AppContext as _, Context, Entity, PathPromptOptions, SharedString, Subscription, Task,
+	UniformListScrollHandle, Window, actions,
 };
 use nixbox_config::{TabLabels, Target, config_dir_from_env};
 use nixbox_core::search::{catalog_cache_path, search_packages};
@@ -48,15 +48,6 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 pub fn bind_keys(cx: &mut App) {
-	cx.bind_keys([
-		KeyBinding::new("ctrl-q", Quit, None),
-		KeyBinding::new("ctrl-f", FocusSearch, None),
-		// Ctrl-= is the unshifted `+` key, so zooming in needs no Shift.
-		KeyBinding::new("ctrl-=", ZoomIn, None),
-		KeyBinding::new("ctrl-+", ZoomIn, None),
-		KeyBinding::new("ctrl--", ZoomOut, None),
-		KeyBinding::new("ctrl-0", ResetZoom, None),
-	]);
 	cx.on_action(|_: &Quit, cx| cx.quit());
 	cx.on_action(|_: &ZoomIn, cx| theme::set_zoom(theme::zoom(cx) + theme::ZOOM_STEP, cx));
 	cx.on_action(|_: &ZoomOut, cx| {
@@ -79,6 +70,8 @@ pub enum Page {
 }
 
 pub struct NixboxApp {
+	pub keyboard: crate::keyboard::Keyboard,
+	pub keyboard_previous_page: Page,
 	pub repository: crate::repository::RepositoryControls,
 	pub session: Session,
 	pub page: Page,
@@ -147,11 +140,12 @@ impl NixboxApp {
 			input.set_value(session.config_dir().display().to_string(), window, cx);
 			input
 		});
+		let keyboard = crate::keyboard::Keyboard::new(&session.engine.config, window, cx);
 		let mut repository = crate::repository::RepositoryControls::new(window, cx);
 		repository.backend = crate::repository::nearest_backend(&session.config_dir());
 		search_input.update(cx, |input, cx| input.focus(window, cx));
 
-		let subscriptions = vec![
+		let mut subscriptions = vec![
 			cx.subscribe_in(&repository.branch, window, |_, _, _: &InputEvent, _, cx| {
 				cx.notify()
 			}),
@@ -179,13 +173,15 @@ impl NixboxApp {
 					this.schedule_flake_search(cx);
 				}
 			}),
-			cx.subscribe_in(&installed_input, window, |_, _, event, _, cx| {
+			cx.subscribe_in(&installed_input, window, |this, _, event, _, cx| {
 				if let InputEvent::Change = event {
+					this.keyboard.selected = 0;
 					cx.notify();
 				}
 			}),
-			cx.subscribe_in(&options_filter, window, |_, _, event, _, cx| {
+			cx.subscribe_in(&options_filter, window, |this, _, event, _, cx| {
 				if let InputEvent::Change = event {
+					this.keyboard.selected = 0;
 					cx.notify();
 				}
 			}),
@@ -210,6 +206,25 @@ impl NixboxApp {
 			}),
 		];
 
+		for (&id, input) in &keyboard.inputs {
+			subscriptions.push(cx.subscribe_in(
+				input,
+				window,
+				move |this, _, event, window, cx| {
+					if let InputEvent::PressEnter { .. } = event {
+						this.save_shortcut(id, false, window, cx);
+					}
+				},
+			));
+		}
+		let handle = window.window_handle();
+		let listener = cx.listener(NixboxApp::handle_key);
+		subscriptions.push(cx.intercept_keystrokes(move |event, window, cx| {
+			if window.window_handle() == handle {
+				listener(event, window, cx);
+			}
+		}));
+
 		let build_events = cx.spawn_in(window, async move |this, cx| {
 			while let Some(event) = build_rx.recv().await {
 				let updated = this.update_in(cx, |this, window, cx| {
@@ -224,6 +239,8 @@ impl NixboxApp {
 		let managed = session.engine.managed_packages().len();
 		let external = session.engine.external_packages.len();
 		let mut app = Self {
+			keyboard,
+			keyboard_previous_page: Page::Packages,
 			repository,
 			session,
 			page: Page::Packages,
@@ -286,7 +303,20 @@ impl NixboxApp {
 	}
 
 	pub fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+		if page == Page::Settings && self.page != Page::Settings {
+			self.keyboard_previous_page = self.page;
+		}
 		self.page = page;
+		self.keyboard
+			.reset_mode(self.session.engine.config.input_mode);
+		self.keyboard.selected = 0;
+		self.keyboard.choice = 0;
+		if page == Page::Settings {
+			self.keyboard
+				.settings_scroll
+				.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)));
+		}
+		self.keyboard.focus.focus(window, cx);
 		let input = match page {
 			Page::Packages => Some(&self.search_input),
 			Page::Flakes => Some(&self.flake_input),
@@ -424,6 +454,7 @@ impl NixboxApp {
 							format!("{} matches for `{label}`.", hits.len())
 						}
 						.into();
+						this.keyboard.selected = 0;
 						this.results = hits;
 					}
 					Err(error) => {
@@ -512,6 +543,7 @@ impl NixboxApp {
 	pub fn select_flake(&mut self, index: usize, cx: &mut Context<Self>) {
 		self.flake_epoch = self.flake_epoch.wrapping_add(1);
 		self.flake_picker_open = false;
+		self.keyboard.choice = 0;
 		let Some(hit) = self.flake_results.get(index).cloned() else {
 			self.flake_selected = None;
 			return;
@@ -971,7 +1003,7 @@ impl NixboxApp {
 		self.save_config(done, cx);
 	}
 
-	fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
+	pub(crate) fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
 		let status = match self.session.engine.config.save() {
 			Ok(()) => done,
 			Err(error) => format!("Saving settings failed: {error}"),
