@@ -35,9 +35,30 @@ pub fn ensure_home_nix(dir: &Path) -> Result<()> {
 
 const MANIFEST_HEADER: &str = "# Managed by nixbox. Do not edit by hand.";
 
+/// Marks a package file written in [`PackageMode::Profile`]. The mode lives in
+/// the generated file rather than in `settings.json` because the configuration
+/// repository travels between machines and the settings file does not.
+const PROFILE_MODE_MARKER: &str = "# nixbox:mode profile";
+
+/// How a target's managed packages reach the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PackageMode {
+	/// `home.packages` or `environment.systemPackages`: every change switches
+	/// the configuration. Files without a mode marker are in this mode.
+	#[default]
+	Configuration,
+	/// An independent Nix profile built from the `nixbox.profile` option.
+	/// Package changes update the profile alone, and every configuration
+	/// switch sets the profile to the same environment.
+	Profile,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
 	pub packages: BTreeSet<String>,
+	#[serde(default)]
+	pub mode: PackageMode,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -262,12 +283,26 @@ impl ManagedFlakeFile {
 		Ok(manifest)
 	}
 
-	pub fn write_home_manager(&self, manifest: &FlakeManifest) -> Result<()> {
-		self.write(manifest, "home.packages")
+	/// `mode` is that of the target's package file: in profile mode, flake
+	/// packages join `nixbox.packages`, which the package file declares.
+	pub fn write_home_manager(&self, manifest: &FlakeManifest, mode: PackageMode) -> Result<()> {
+		self.write(
+			manifest,
+			match mode {
+				PackageMode::Configuration => "home.packages",
+				PackageMode::Profile => "nixbox.packages",
+			},
+		)
 	}
 
-	pub fn write_nixos(&self, manifest: &FlakeManifest) -> Result<()> {
-		self.write(manifest, "environment.systemPackages")
+	pub fn write_nixos(&self, manifest: &FlakeManifest, mode: PackageMode) -> Result<()> {
+		self.write(
+			manifest,
+			match mode {
+				PackageMode::Configuration => "environment.systemPackages",
+				PackageMode::Profile => "nixbox.packages",
+			},
+		)
 	}
 
 	fn write(&self, manifest: &FlakeManifest, package_option: &str) -> Result<()> {
@@ -343,9 +378,14 @@ pub(crate) fn unquote(value: &str) -> String {
 
 fn parse(raw: &str) -> Manifest {
 	let mut packages = BTreeSet::new();
+	let mut mode = PackageMode::Configuration;
 	let mut in_block = false;
 	for line in raw.lines() {
 		let trimmed = line.trim();
+		if trimmed == PROFILE_MODE_MARKER {
+			mode = PackageMode::Profile;
+			continue;
+		}
 		if trimmed.starts_with("# nixbox:packages:start") {
 			in_block = true;
 			continue;
@@ -361,33 +401,139 @@ fn parse(raw: &str) -> Manifest {
 			}
 		}
 	}
-	Manifest { packages }
+	Manifest { packages, mode }
 }
 
-fn render_packages(manifest: &Manifest) -> String {
+fn render_packages(manifest: &Manifest, indent: &str) -> String {
 	let mut out = String::new();
-	out.push_str("    # nixbox:packages:start\n");
+	out.push_str(&format!("{indent}# nixbox:packages:start\n"));
 	for pname in &manifest.packages {
-		out.push_str(&format!("    pkgs.{}\n", pname));
+		out.push_str(&format!("{indent}pkgs.{}\n", pname));
 	}
-	out.push_str("    # nixbox:packages:end\n");
+	out.push_str(&format!("{indent}# nixbox:packages:end\n"));
 	out
 }
 
 fn render_home_manager(manifest: &Manifest) -> String {
-	format!(
-		"{header}\n{{ pkgs, ... }}:\n{{\n  home.packages = [\n{body}  ];\n}}\n",
-		header = MANIFEST_HEADER,
-		body = render_packages(manifest),
-	)
+	match manifest.mode {
+		PackageMode::Configuration => format!(
+			"{header}\n{{ pkgs, ... }}:\n{{\n  home.packages = [\n{body}  ];\n}}\n",
+			header = MANIFEST_HEADER,
+			body = render_packages(manifest, "    "),
+		),
+		PackageMode::Profile => {
+			render_profile_module(manifest, HOME_PROFILE_LET, HOME_PROFILE_WIRING)
+		}
+	}
 }
 
 fn render_nixos(manifest: &Manifest) -> String {
-	format!(
-		"{header}\n{{ pkgs, ... }}:\n{{\n  environment.systemPackages = [\n{body}  ];\n}}\n",
-		header = MANIFEST_HEADER,
-		body = render_packages(manifest),
-	)
+	match manifest.mode {
+		PackageMode::Configuration => format!(
+			"{header}\n{{ pkgs, ... }}:\n{{\n  environment.systemPackages = [\n{body}  ];\n}}\n",
+			header = MANIFEST_HEADER,
+			body = render_packages(manifest, "    "),
+		),
+		PackageMode::Profile => {
+			render_profile_module(manifest, NIXOS_PROFILE_LET, NIXOS_PROFILE_WIRING)
+		}
+	}
+}
+
+/// A profile-mode package module. It declares `nixbox.packages`, which the
+/// flake-output module also contributes to, and `nixbox.profile`, the one
+/// environment both the profile build (`nix build --profile`) and the
+/// activation script use, so they always agree on its store path.
+const PROFILE_MODULE: &str = r##"@HEADER@
+@MARKER@
+{ config, lib, pkgs, ... }:
+let
+@LET@in
+{
+	options.nixbox = {
+		packages = lib.mkOption {
+			type = lib.types.listOf lib.types.package;
+			default = [ ];
+			description = "Packages nixbox installs into its independent profile.";
+		};
+		profile = lib.mkOption {
+			type = lib.types.package;
+			readOnly = true;
+			description = "The environment nixbox builds into its profile.";
+		};
+	};
+	config = {
+		nixbox.packages = [
+@PACKAGES@		];
+		nixbox.profile = pkgs.buildEnv {
+			name = "nixbox-packages";
+			paths = config.nixbox.packages;
+			pathsToLink = [ "/bin" "/sbin" "/share" "/lib" "/libexec" "/etc" ];
+			extraOutputsToInstall = [ "man" ];
+		};
+@WIRING@	};
+}
+"##;
+
+const HOME_PROFILE_LET: &str = r##"	profile = "${config.home.homeDirectory}/.local/state/nix/profiles/nixbox";
+	nix = if (config.nix.package or null) != null then config.nix.package else pkgs.nix;
+"##;
+
+/// Home Manager wiring. `home.sessionPath` only reaches shells that source
+/// `hm-session-vars.sh`, so nushell gets its own line. When Home Manager runs
+/// inside NixOS, `nixbox-home-integration.nix` also adds the profile through
+/// PAM, which every shell and the desktop session inherit.
+const HOME_PROFILE_WIRING: &str = r##"		home.activation.nixboxProfile = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+			if [ "$(readlink -f ${lib.escapeShellArg profile})" != ${config.nixbox.profile} ]; then
+				run mkdir -p ${lib.escapeShellArg (dirOf profile)}
+				run ${nix}/bin/nix-env --profile ${lib.escapeShellArg profile} --set ${config.nixbox.profile}
+			fi
+		'';
+		home.sessionPath = [ "${profile}/bin" ];
+		xdg.systemDirs.data = [ "${profile}/share" ];
+		programs.nushell.extraEnv = lib.mkIf config.programs.nushell.enable ''
+			$env.PATH = ($env.PATH | split row (char esep) | append ${builtins.toJSON "${profile}/bin"})
+		'';
+		home.file.".local/state/nixbox/profile-ready".text = profile;
+"##;
+
+const NIXOS_PROFILE_LET: &str = r##"	profile = "/nix/var/nix/profiles/nixbox";
+"##;
+
+const NIXOS_PROFILE_WIRING: &str = r##"		environment.profiles = [ profile ];
+		system.activationScripts.nixboxProfile = ''
+			if [ "$(readlink -f ${profile})" != ${config.nixbox.profile} ]; then
+				${config.nix.package}/bin/nix-env --profile ${profile} --set ${config.nixbox.profile}
+			fi
+		'';
+		environment.etc."nixbox/profile-ready".text = profile;
+"##;
+
+fn render_profile_module(manifest: &Manifest, bindings: &str, wiring: &str) -> String {
+	PROFILE_MODULE
+		.replace("@HEADER@", MANIFEST_HEADER)
+		.replace("@MARKER@", PROFILE_MODE_MARKER)
+		.replace("@LET@", bindings)
+		.replace("@PACKAGES@", &render_packages(manifest, "\t\t\t"))
+		.replace("@WIRING@", wiring)
+}
+
+/// Writes the NixOS-side module that puts the Home Manager profile on PATH
+/// when Home Manager runs inside NixOS. `enabled: false` leaves an empty
+/// module, so a torn-down profile drops off PATH while the import stays valid.
+pub fn write_home_integration(path: &Path, enabled: bool) -> Result<()> {
+	let body = if enabled {
+		"# Puts the nixbox Home Manager profile on every user's PATH through PAM,\n\
+		 # which shells that skip Home Manager's session variables still read.\n\
+		 { ... }:\n{\n\tenvironment.profiles = [ \"$HOME/.local/state/nix/profiles/nixbox\" ];\n}\n"
+	} else {
+		"# The nixbox Home Manager profile is not set up.\n{ ... }:\n{\n}\n"
+	};
+	if let Some(parent) = path.parent() {
+		fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+	}
+	fs::write(path, format!("{MANIFEST_HEADER}\n{body}"))
+		.with_context(|| format!("writing {}", path.display()))
 }
 
 /// Status of an `ensure_imported` call.
@@ -658,18 +804,69 @@ mod tests {
 		let mut m = Manifest::default();
 		m.add("ripgrep");
 		m.add("fd");
-		let rendered = render_home_manager(&m);
-		let parsed = parse(&rendered);
-		assert_eq!(parsed.packages, m.packages);
+		for mode in [PackageMode::Configuration, PackageMode::Profile] {
+			m.mode = mode;
+			let parsed = parse(&render_home_manager(&m));
+			assert_eq!(parsed.packages, m.packages);
+			assert_eq!(parsed.mode, mode);
+		}
 	}
 
 	#[test]
 	fn round_trip_nixos() {
 		let mut m = Manifest::default();
 		m.add("htop");
-		let rendered = render_nixos(&m);
-		let parsed = parse(&rendered);
-		assert_eq!(parsed.packages, m.packages);
+		for mode in [PackageMode::Configuration, PackageMode::Profile] {
+			m.mode = mode;
+			let parsed = parse(&render_nixos(&m));
+			assert_eq!(parsed.packages, m.packages);
+			assert_eq!(parsed.mode, mode);
+		}
+	}
+
+	#[test]
+	fn configuration_mode_writes_what_earlier_releases_wrote() {
+		let mut m = Manifest::default();
+		m.add("fd");
+		assert_eq!(
+			render_home_manager(&m),
+			"# Managed by nixbox. Do not edit by hand.\n{ pkgs, ... }:\n{\n  home.packages = [\n    # nixbox:packages:start\n    pkgs.fd\n    # nixbox:packages:end\n  ];\n}\n"
+		);
+	}
+
+	#[test]
+	fn profile_mode_declares_one_environment_for_build_and_activation() {
+		let mut m = Manifest {
+			mode: PackageMode::Profile,
+			..Manifest::default()
+		};
+		m.add("fd");
+		let home = render_home_manager(&m);
+		assert!(home.contains("\t\t\tpkgs.fd\n"));
+		assert!(home.contains("--set ${config.nixbox.profile}"));
+		assert!(home.contains("programs.nushell.extraEnv"));
+		assert!(!home.contains("home.packages"));
+		let nixos = render_nixos(&m);
+		assert!(nixos.contains("environment.profiles = [ profile ];"));
+		assert!(nixos.contains("--set ${config.nixbox.profile}"));
+		assert!(!nixos.contains("environment.systemPackages"));
+	}
+
+	#[test]
+	fn home_integration_can_be_disabled_without_dropping_its_import() {
+		let path = std::env::temp_dir().join(format!(
+			"nixbox-home-integration-{}.nix",
+			std::process::id()
+		));
+		write_home_integration(&path, true).unwrap();
+		assert!(
+			fs::read_to_string(&path)
+				.unwrap()
+				.contains("$HOME/.local/state/nix/profiles/nixbox")
+		);
+		write_home_integration(&path, false).unwrap();
+		assert!(!fs::read_to_string(&path).unwrap().contains("environment"));
+		let _ = fs::remove_file(path);
 	}
 
 	#[test]
@@ -737,7 +934,9 @@ mod tests {
 			.inputs
 			.insert("owner/package".into(), "package".into());
 
-		managed.write_home_manager(&manifest).unwrap();
+		managed
+			.write_home_manager(&manifest, PackageMode::Configuration)
+			.unwrap();
 
 		let loaded = managed.load().unwrap();
 		assert_eq!(loaded.modules, manifest.modules);
@@ -794,10 +993,19 @@ mod tests {
 		let mut manifest = FlakeManifest::default();
 		manifest.add_package("owner/package".into(), "bun-latest".into());
 
-		managed.write_nixos(&manifest).unwrap();
+		managed
+			.write_nixos(&manifest, PackageMode::Configuration)
+			.unwrap();
 
 		let rendered = fs::read_to_string(&path).unwrap();
 		assert!(rendered.contains("environment.systemPackages = ["));
+		managed
+			.write_nixos(&manifest, PackageMode::Profile)
+			.unwrap();
+		let profile = fs::read_to_string(&path).unwrap();
+		assert!(profile.contains("nixbox.packages = ["));
+		assert!(!profile.contains("environment.systemPackages"));
+		assert_eq!(managed.load().unwrap().packages, manifest.packages);
 		assert!(rendered.contains(
 			"inputs.\"owner/package\".packages.${pkgs.stdenv.hostPlatform.system}.bun-latest"
 		));

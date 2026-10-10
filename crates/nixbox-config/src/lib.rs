@@ -227,6 +227,12 @@ impl Config {
 		}
 	}
 
+	/// Returns the NixOS module that puts the Home Manager package profile on
+	/// PATH when Home Manager runs inside NixOS.
+	pub fn home_integration_file(&self) -> PathBuf {
+		self.config_root().join("nixbox-home-integration.nix")
+	}
+
 	/// Returns the root flake that owns the inputs used by nixbox modules.
 	pub fn flake_file(&self) -> PathBuf {
 		self.config_root().join("flake.nix")

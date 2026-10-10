@@ -36,10 +36,17 @@ pub(crate) fn find_in_nix_profiles(name: &str) -> Option<PathBuf> {
 		.find(|p| p.exists())
 }
 
+/// The `homeConfigurations` attribute, and the Home Manager user, that every
+/// home rebuild and profile build targets.
+#[must_use]
+pub fn home_configuration_name() -> String {
+	std::env::var("USER").unwrap_or_else(|_| "user".into())
+}
+
 /// Returns (command, args) for `home-manager switch --flake <config_dir>#<user>`.
 /// Falls back to `nix run nixpkgs#home-manager -- switch` when the binary is absent.
 pub fn home_manager_switch_cmd(config_dir: &Path) -> (String, Vec<String>) {
-	let user = std::env::var("USER").unwrap_or_else(|_| "user".into());
+	let user = home_configuration_name();
 	let flake_ref = format!("{}#{}", config_dir.display(), user);
 	if let Some(bin) = find_in_nix_profiles("home-manager") {
 		(
@@ -66,7 +73,7 @@ pub fn home_manager_switch_cmd(config_dir: &Path) -> (String, Vec<String>) {
 /// be applied via `nixos-rebuild` because the user wires home-manager in as a
 /// NixOS module rather than as a separate flake output.
 pub async fn flake_has_home_configuration(config_dir: &Path) -> bool {
-	let user = std::env::var("USER").unwrap_or_else(|_| "user".into());
+	let user = home_configuration_name();
 	let nix = find_in_nix_profiles("nix").unwrap_or_else(|| PathBuf::from("nix"));
 	let expr = format!(
 		"let f = builtins.getFlake \"{}\"; in f ? homeConfigurations && f.homeConfigurations ? \"{}\"",
