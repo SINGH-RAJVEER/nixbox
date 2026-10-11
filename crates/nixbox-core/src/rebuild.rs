@@ -198,7 +198,7 @@ mod tests {
 
 	#[test]
 	fn askpass_escalation_makes_sudo_ask_through_the_helper() {
-		let helper = PathBuf::from("/run/current-system/sw/bin/nixbox-gui");
+		let helper = PathBuf::from("/run/current-system/sw/bin/nixbox");
 		let cmd = nixos(Path::new("/tmp/nixos")).escalated(&Escalation::Askpass(helper));
 
 		assert_eq!(cmd.program, "sudo");
@@ -209,7 +209,7 @@ mod tests {
 			[
 				(
 					"SUDO_ASKPASS".to_string(),
-					"/run/current-system/sw/bin/nixbox-gui".to_string()
+					"/run/current-system/sw/bin/nixbox".to_string()
 				),
 				(super::ASKPASS_ENV.to_string(), "1".to_string()),
 			]

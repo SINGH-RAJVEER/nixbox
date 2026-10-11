@@ -1,8 +1,10 @@
 //! Desktop front-end for nixbox.
 //!
-//! The same binary is also sudo's askpass helper: a system rebuild runs
-//! `sudo -A` with `SUDO_ASKPASS` pointing back here, and sudo starts this
-//! program with the password prompt as its only argument.
+//! Run without a subcommand, `nixbox` opens the window; with one, it is the
+//! same command line as `nixbox-cli`. The binary is also sudo's askpass
+//! helper: a system rebuild runs `sudo -A` with `SUDO_ASKPASS` pointing back
+//! here, and sudo starts this program with the password prompt as its only
+//! argument.
 
 use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode};
@@ -12,6 +14,7 @@ use gpui_kit::component::Root;
 use gpui_kit::{
 	App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
+use nixbox_cmd::Frontend;
 use nixbox_core::rebuild::{ASKPASS_ENV, ASKPASS_LIBRARY_PATH_ENV};
 use nixbox_core::{Engine, Escalation, Session};
 use tracing_subscriber::EnvFilter;
@@ -19,25 +22,29 @@ use tracing_subscriber::EnvFilter;
 use crate::app::{self, NixboxApp};
 use crate::askpass;
 
-pub(crate) fn main() -> ExitCode {
-	tracing_subscriber::fmt()
-		.with_env_filter(EnvFilter::from_default_env())
-		.with_writer(std::io::stderr)
-		.init();
+const FRONTEND: Frontend = Frontend {
+	about: "Desktop package manager for NixOS and Home Manager",
+	long_about: "Search nixpkgs, and let nixbox write the result into your home-manager or \
+	             NixOS configuration and rebuild. Run without a subcommand for the desktop GUI.",
+	// Quiet by default: the renderer warns about every driver it skips.
+	log_filter: "error",
+	launch: run,
+};
 
+pub(crate) fn main() -> ExitCode {
+	// Before the command line is parsed: sudo passes the prompt text as the
+	// only argument, which is no subcommand.
 	if std::env::var_os(ASKPASS_ENV).is_some() {
+		tracing_subscriber::fmt()
+			.with_env_filter(EnvFilter::from_default_env())
+			.with_writer(std::io::stderr)
+			.init();
 		restore_library_path();
 		let prompt = std::env::args().nth(1).unwrap_or_default();
 		return askpass::run(&prompt);
 	}
 
-	match run() {
-		Ok(()) => ExitCode::SUCCESS,
-		Err(error) => {
-			eprintln!("nixbox-gui: {error:#}");
-			ExitCode::FAILURE
-		}
-	}
+	nixbox_cmd::run(env!("CARGO_BIN_NAME"), Some(&FRONTEND))
 }
 
 /// Runs this program again with the `LD_LIBRARY_PATH` sudo stripped, so the
@@ -57,7 +64,7 @@ fn restore_library_path() {
 		.args(std::env::args_os().skip(1))
 		.env("LD_LIBRARY_PATH", saved)
 		.exec();
-	eprintln!("nixbox-gui: restarting with the library path failed: {error}");
+	eprintln!("nixbox: restarting with the library path failed: {error}");
 }
 
 fn run() -> Result<()> {
@@ -71,7 +78,7 @@ fn run() -> Result<()> {
 	let handle = runtime.handle().clone();
 
 	let engine = Engine::load()?;
-	let helper = std::env::current_exe().context("locating the nixbox-gui executable")?;
+	let helper = std::env::current_exe().context("locating the nixbox executable")?;
 	let (session, build_rx) = Session::new(engine);
 	let session = session
 		.with_runtime(handle.clone())
@@ -87,7 +94,7 @@ fn run() -> Result<()> {
 				let opened = cx.open_window(
 					WindowOptions {
 						window_bounds: Some(WindowBounds::Windowed(bounds)),
-						app_id: Some("nixbox-gui".into()),
+						app_id: Some("nixbox".into()),
 						titlebar: Some(TitlebarOptions {
 							title: Some("NixBox".into()),
 							..TitlebarOptions::default()
@@ -104,7 +111,7 @@ fn run() -> Result<()> {
 					},
 				);
 				if let Err(error) = opened {
-					eprintln!("nixbox-gui: opening the window failed: {error:#}");
+					eprintln!("nixbox: opening the window failed: {error:#}");
 					cx.update(|cx| cx.quit());
 				}
 			})

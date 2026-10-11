@@ -10,7 +10,7 @@ use gpui_kit::{
 	SharedString, StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 use nixbox_config::{
-	DEFAULT_CHANNEL, THEMES, TabLabels, Target, config_dir_from_env, default_config_dir,
+	DEFAULT_CHANNEL, InputMode, THEMES, TabLabels, Target, config_dir_from_env, default_config_dir,
 };
 
 use super::{muted, page_header};
@@ -83,6 +83,23 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		}));
 
 	let location = configuration(app, cx);
+	let input_modes = ButtonGroup::new("input-mode")
+		.outline()
+		.small()
+		.children([InputMode::Normal, InputMode::Vim].map(|mode| {
+			Button::new(mode.label())
+				.label(mode.label())
+				.selected(mode == app.session.engine.config.input_mode)
+		}))
+		.on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+			if let Some(mode) = clicked
+				.first()
+				.and_then(|index| [InputMode::Normal, InputMode::Vim].get(*index).copied())
+			{
+				this.set_input_mode(mode, cx);
+			}
+		}));
+	let shortcuts = keyboard_settings(app, cx);
 	v_flex()
 		.size_full()
 		.child(page_header(
@@ -94,9 +111,16 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.child(
 			v_flex()
 				.id("settings-scroll")
+				.track_scroll(&app.keyboard.settings_scroll)
 				.flex_1()
 				.min_h_0()
 				.overflow_y_scroll()
+				.child(setting(
+					"Input mode",
+					"Normal types directly. Vim adds Normal, Insert and Visual modes to search and filter fields. Shared with the TUI.",
+					input_modes,
+					cx,
+				))
 				.child(setting(
 					"Install target",
 					"Where new packages and flakes are added.",
@@ -126,9 +150,58 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					"The flake nixbox edits and rebuilds. Packages, flakes, options and version control all use it.",
 					location,
 					cx,
-				)),
+				))
+				.child(shortcuts),
 		)
 		.into_any_element()
+}
+
+fn keyboard_settings(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
+	let mut rows = v_flex().flex_shrink_0().px_6().py_4().gap_2()
+		.child(div().font_weight(FontWeight::MEDIUM).child("Keyboard shortcuts"))
+		.child(muted("Separate alternatives with commas, e.g. ctrl-f, f2. Spaces make sequences, e.g. d d. Clear a field to disable it. Enter or Apply saves immediately; Reset restores the default. Letter shortcuts stay inactive while typing.", cx));
+	let mut group = "";
+	for shortcut in crate::keyboard::SHORTCUTS {
+		if group != shortcut.group {
+			group = shortcut.group;
+			rows = rows.child(
+				div()
+					.pt_4()
+					.text_sm()
+					.font_weight(FontWeight::MEDIUM)
+					.child(group),
+			);
+		}
+		let id = shortcut.id;
+		let input = &app.keyboard.inputs[id];
+		rows = rows.child(
+			h_flex()
+				.id(format!("shortcut-row-{id}"))
+				.items_center()
+				.gap_3()
+				.child(div().w_1_3().text_sm().child(shortcut.label))
+				.child(div().flex_1().min_w_0().child(Input::new(input).small()))
+				.child(
+					Button::new(format!("shortcut-apply-{id}"))
+						.small()
+						.outline()
+						.label("Apply")
+						.on_click(cx.listener(move |this, _, window, cx| {
+							this.save_shortcut(id, false, window, cx)
+						})),
+				)
+				.child(
+					Button::new(format!("shortcut-reset-{id}"))
+						.small()
+						.ghost()
+						.label("Reset")
+						.on_click(cx.listener(move |this, _, window, cx| {
+							this.save_shortcut(id, true, window, cx)
+						})),
+				),
+		);
+	}
+	rows.into_any_element()
 }
 
 fn setting(
@@ -138,6 +211,7 @@ fn setting(
 	cx: &Context<NixboxApp>,
 ) -> impl IntoElement {
 	h_flex()
+		.flex_shrink_0()
 		.px_6()
 		.py_4()
 		.gap_6()

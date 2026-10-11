@@ -9,7 +9,7 @@ homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "nix-search wrapper, managed-file writer, and rebuild runner used by the nixbox TUI."
+description = "Nix search, managed-file writer, flake discovery, and rebuild runner behind nixbox"
 
 [dependencies]
 anyhow = { workspace = true }

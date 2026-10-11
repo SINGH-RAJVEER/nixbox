@@ -2,6 +2,19 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## 0.3.5 - 2026-10-11
+
+- Made the desktop GUI the default NixBox. The `nixbox` crate, flake package, and command are now the GUI, which `nixbox-gui` used to be; `cargo install nixbox` installs its Nix-backed launcher, and `nix profile install github:SINGH-RAJVEER/nixbox` installs it with its desktop entry, now `nixbox.desktop`. On macOS, where the GUI is not packaged, the flake's default package and the launcher run the terminal UI.
+- Moved the terminal UI to its own `nixbox-tui` crate, flake package, and command. `nixbox-cli` remains the command line with no interface. All three take the same subcommands, so `nixbox install`, `nixbox resume`, and the rest work from the GUI binary without opening a window.
+- Removed the `tui` subcommand: a bare `nixbox-tui` opens the terminal UI. The `nixbox-gui` crate and flake package are removed; install `nixbox` instead.
+- Updated all workspace crates and internal dependencies to 0.3.5.
+- Added a read-only NixOS tab with host selection, category and description search, diagnostic declarations, nested option templates, virtualized rows, and on-demand values, defaults, examples, and source locations. Recursive and embedded full-system schema branches remain visible with partial markers.
+- Kept system inspection separate from package targets, package option editors, and queued mutations. System-wide editing and validated application remain in development.
+- Kept Ctrl-F on the Options and NixOS pages so it focuses their own search fields. Added live schema fixtures and rendered-window coverage for the NixOS browser.
+- Added editable GUI keyboard shortcuts under Settings, saved as `gui_shortcuts` overrides, and the TUI's Normal/Vim input modes to the GUI's search and filter fields.
+- Added GUI zoom with Ctrl-+, Ctrl--, and Ctrl-0, in 10% steps between 50% and 200%, scaling text and layout together.
+- Highlighted hovered rows in the GUI search and Installed lists.
+
 ## 0.3.1 - 2026-10-04
 
 - Published the sandbox build fix in the crate archives: core test fixtures isolate user settings and VCS journals, and restore the caller's environment when dropped. The Nix flake supplies Git and Jujutsu for repository integration tests.

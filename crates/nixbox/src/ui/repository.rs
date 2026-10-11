@@ -14,8 +14,8 @@ use gpui_kit::component::{
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement,
 	ListHorizontalSizingBehavior, ParentElement as _, SharedString,
-	StatefulInteractiveElement as _, Styled as _, StyledText, div, prelude::FluentBuilder as _, px,
-	uniform_list,
+	StatefulInteractiveElement as _, Styled as _, StyledText, div, prelude::FluentBuilder as _,
+	rems, uniform_list,
 };
 use nixbox_core::vcs::Backend;
 
@@ -73,7 +73,7 @@ fn header(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 		.pt_5()
 		.pb_3()
 		.gap_3()
-		.child(vcs_logo(controls.backend, px(28.)))
+		.child(vcs_logo(controls.backend, rems(1.75)))
 		.child(
 			v_flex()
 				.flex_1()
@@ -157,7 +157,7 @@ fn initialize(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				h_flex()
 					.gap_2()
 					.items_center()
-					.child(vcs_logo(Some(backend), px(16.)))
+					.child(vcs_logo(Some(backend), rems(1.)))
 					.child(label),
 			)
 			.on_click(cx.listener(move |this, _, window, cx| {
@@ -326,7 +326,7 @@ fn changes(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			v_flex()
 				.id("repository-files")
 				.flex_shrink_0()
-				.max_h(px(200.))
+				.max_h(rems(12.5))
 				.overflow_y_scroll()
 				.children(files),
 		)
@@ -335,7 +335,7 @@ fn changes(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				div()
 					.id("repository-status")
 					.flex_shrink_0()
-					.max_h(px(160.))
+					.max_h(rems(10.))
 					.px_6()
 					.py_2()
 					.overflow_scroll()
@@ -476,7 +476,7 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 
 	let mut panel = v_flex()
 		.id("repository-scroll")
-		.w(px(380.))
+		.w(rems(23.75))
 		.flex_shrink_0()
 		.h_full()
 		.pb_6()

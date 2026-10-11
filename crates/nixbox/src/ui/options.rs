@@ -91,11 +91,19 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		),
 		cx,
 	);
-	let filter = div().px_6().pb_3().child(
-		Input::new(&app.options_filter)
-			.prefix(IconName::Search)
-			.cleanable(true),
-	);
+	let filter = div()
+		.on_mouse_down(
+			gpui_kit::MouseButton::Left,
+			cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
+		)
+		.px_6()
+		.pb_3()
+		.child(
+			Input::new(&app.options_filter)
+				.readonly(app.filter_readonly())
+				.prefix(IconName::Search)
+				.cleanable(true),
+		);
 
 	let body = if view.loading {
 		empty("Evaluating your configuration's options...", cx).into_any_element()
@@ -174,6 +182,7 @@ fn option_list(
 	);
 	v_flex()
 		.id("options")
+		.track_scroll(&app.keyboard.options_scroll)
 		.size_full()
 		.overflow_y_scroll()
 		.children(visible.into_iter().enumerate().map(|(index, entry)| {

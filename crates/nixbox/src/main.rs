@@ -1,11 +1,34 @@
-//! The `nixbox` binary: every subcommand plus the terminal UI.
-//!
-//! Running it with no subcommand opens the UI. The commands themselves live
-//! in `nixbox-cmd`, shared with the UI-less `nixbox-cli` binary.
+#[cfg(feature = "native")]
+mod app;
+#[cfg(feature = "native")]
+mod askpass;
+#[cfg(feature = "native")]
+mod delta;
+#[cfg(feature = "native")]
+mod keyboard;
+#[cfg(feature = "native")]
+mod model;
+#[cfg(feature = "native")]
+mod native;
+#[cfg(feature = "native")]
+mod nixos;
+#[cfg(feature = "native")]
+mod options;
+#[cfg(feature = "native")]
+mod repository;
+#[cfg(feature = "native")]
+mod theme;
+#[cfg(feature = "native")]
+mod ui;
 
-use std::process::ExitCode;
+#[cfg(not(feature = "native"))]
+mod launcher;
 
-#[tokio::main]
-async fn main() -> ExitCode {
-	nixbox_cmd::run(env!("CARGO_BIN_NAME")).await
+#[rustfmt::skip]
+fn main() -> std::process::ExitCode {
+	#[cfg(feature = "native")]
+	return native::main();
+
+	#[cfg(not(feature = "native"))]
+	return launcher::main();
 }

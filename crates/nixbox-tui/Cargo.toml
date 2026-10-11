@@ -7,14 +7,21 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
-keywords.workspace = true
+keywords = ["nixos", "nix", "tui", "package-manager", "home-manager"]
 categories.workspace = true
-description = "Ratatui front-end (search/build views, theming) for the nixbox TUI."
+description = "Terminal UI package manager for NixOS and Home Manager"
+
+[[bin]]
+# Its own name, like `nixbox-cli`, so it can share a profile with the desktop
+# `nixbox` without overwriting it.
+name = "nixbox-tui"
+path = "src/main.rs"
 
 [dependencies]
-nixbox-nix = { path = "../nixbox-nix", version = "0.3.1" }
-nixbox-core = { path = "../nixbox-core", version = "0.3.1" }
-nixbox-config = { path = "../nixbox-config", version = "0.3.1" }
+nixbox-cmd = { path = "../nixbox-cmd", version = "0.3.5" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.3.5" }
+nixbox-core = { path = "../nixbox-core", version = "0.3.5" }
+nixbox-config = { path = "../nixbox-config", version = "0.3.5" }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -27,4 +34,4 @@ serde_json = { workspace = true }
 directories = { workspace = true }
 
 [dev-dependencies]
-nixbox-core = { path = "../nixbox-core", version = "0.3.1", features = ["test-util"] }
+nixbox-core = { path = "../nixbox-core", version = "0.3.5", features = ["test-util"] }

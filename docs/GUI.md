@@ -1,13 +1,13 @@
 # Desktop GUI
 
-`nixbox-gui` is a desktop window over the same engine as the terminal UI. It reads and writes the same settings, the same managed files, and the same `state.json`, so work queued in one front-end can be resumed in another.
+`nixbox` is the default NixBox package: a desktop window over the same engine as the terminal UI. Run with a subcommand, it is the same command line as `nixbox-cli` instead. It reads and writes the same settings, the same managed files, and the same `state.json`, so work queued in one front-end can be resumed in another.
 
 ## Installing
 
 The GUI is Linux only for now. Install it from the repository flake to get its native libraries and runtime wrapper without setting up a build environment:
 
 ```sh
-nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
+nix profile install github:SINGH-RAJVEER/nixbox
 ```
 
 The flake package includes a NixBox desktop entry and icon. NixOS and Home Manager installs expose it through their application menus, and a `nix profile` install exposes it in desktops that discover the profile's `share/applications` directory. The entry launches the wrapped GUI binary from its Nix store path.
@@ -15,19 +15,23 @@ The flake package includes a NixBox desktop entry and icon. NixOS and Home Manag
 You can also run it without installing it into your profile:
 
 ```sh
-nix run github:SINGH-RAJVEER/nixbox#nixbox-gui
+nix run github:SINGH-RAJVEER/nixbox
 ```
 
 The crates.io package installs a small launcher that runs the matching tagged flake release. It needs Nix with flakes enabled and fetches or builds the GUI on first run, but it does not need graphics development libraries in your Cargo environment:
 
 ```sh
-cargo install nixbox-gui
-nixbox-gui
+cargo install nixbox
+nixbox
 ```
 
 To compile and run the native GUI from a checkout, use `just gui`. This command enters the pinned devenv shell automatically, including when invoked from an older shell. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
 
-To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";` and include `nixbox.packages.${pkgs.stdenv.hostPlatform.system}.nixbox-gui` in `environment.systemPackages` or `home.packages`. Here `nixbox` is the input available in the enclosing `outputs` function. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
+The equivalent command is `devenv shell -- cargo run -p nixbox --features native`. Without `--features native`, Cargo builds the launcher for the tagged release, so it runs the published GUI rather than the checkout's code.
+
+If startup fails with `No GPU adapters found`, run `VK_LOADER_DEBUG=error,warn just gui` to see the Vulkan loader's errors. A `GLIBC_` version error from Mesa or LLVM means the GUI's runtime libraries are older than the host driver requires. For checkout builds, update `devenv update nixpkgs rust-overlay`, enter a fresh shell, and rebuild with `just gui`. The tagged release has its own pinned libraries; updating devenv does not change them. Use the native checkout build to bypass an incompatible release. Do not add another glibc to `LD_LIBRARY_PATH`.
+
+To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJVEER/nixbox";` and include `nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default` in `environment.systemPackages` or `home.packages`. Here `nixbox` is the input available in the enclosing `outputs` function. The package wraps the binary with `gh`, `git`, and `nix` on `PATH`, and the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`. It runs on Wayland and X11 and needs a working Vulkan driver.
 
 ## Pages
 
@@ -39,16 +43,56 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs. Clicking a hit with multiple installable outputs opens a list of exact package and compatible module paths; clicking a path installs that output. A single compatible output can be installed directly. |
 | Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
+| NixOS | A read-only browser of the selected host's option schema, with categories, search by path and description, nested templates, and on-demand values and declaration locations. |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
-| Settings | Install target, channel, theme, tab labels, and the configuration directory, saved immediately to `~/.config/nixbox/settings.json`. |
+| Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
 
-Ctrl-F focuses the search box of the current page, or the nixpkgs search. Ctrl-Q quits.
+Zoom scales text and layout together, carries across theme changes, and resets when the GUI restarts.
+
+## NixOS settings browser
+
+Open **NixOS** to inspect settings across the system without opening an installed package. Host names come from the configuration flake's `nixosConfigurations` outputs. The browser selects `nixos` when available, or the only host when there is one. Otherwise choose a host. This choice only affects inspection; it does not change the install target or the host used by existing package operations.
+
+Categories group the selected host's declarations, including disabled services and imported custom modules. All options includes uncategorized namespaces. Search matches full paths and descriptions, with exact paths first. Diagnostic options includes internal or hidden declarations. Select an option to fetch its effective value, default, example, and definition locations separately from schema discovery. Unavailable values, null, nested templates, and withheld credential fields have different statuses. Previews limit nested depth, collection length, and long strings; sensitive attribute names are also withheld inside structured previews.
+
+Nested schema entries describe fields such as `users.users.<name>.shell`, but concrete instance inspection is not available yet. Expansions deeper than four submodules and embedded full-system configurations have a partial marker instead of silently disappearing. Their declarations remain visible. The tab currently offers inspection only. Editing, review, validation, and host-specific writes are the next implementation work; see the [implementation plan](NIXOS_SETTINGS_PLAN.md).
+
+Reload discovers hosts and options again. Switching hosts cancels older evaluations, and stale results cannot replace the current selection. Search, category, and inspection state survive tab switches. A finished rebuild invalidates the schema, including failed or cancelled rebuilds; changing the configuration directory resets it. Source edits and lock changes made outside NixBox need an explicit Reload. On smaller windows, selection opens details as a full-width page with Back to options.
 
 The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
 
 Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
+
+## Keyboard
+
+Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
+
+| Default shortcut | Action |
+| --- | --- |
+| Tab / Shift-Tab, Ctrl-Tab / Ctrl-Shift-Tab | Next / previous page. Plain Tab traverses controls while editing other text fields. |
+| Ctrl-S | Open Settings or return to the previous page. |
+| Ctrl-R | Open version control. |
+| Ctrl-F | Focus search/filter on nixpkgs, Flakes, Installed, Options, or NixOS; open nixpkgs search from other pages. |
+| Up / Down, j / k in Vim Normal mode | Select a result, option, output choice, or queued operation. The selected row stays visible. |
+| Enter | Install a search result or flake output, open an installed package's options, or focus an option value editor. |
+| Delete, m, M in Installed | Remove the selected managed package/flake, migrate a declaration, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
+| Ctrl-W / w, Ctrl-U / u, Ctrl-Z / U, r in Options | Apply, unset, discard, or reload. Plain letters act in Vim Normal mode. |
+| c in Build | Cancel the running build. |
+| Ctrl-Enter / Delete in Queue | Apply the queue / drop its selected operation. |
+| PageUp / PageDown | Scroll the installed list, flake details, options, queue, build log, or diff. |
+| r, e, p, h in Version control | Refresh review, edit the commit message, edit the push branch/bookmark, or edit GitHub repository details. |
+| Ctrl-Enter in Version control | Submit the commit, push, or remote-creation form selected with e, p, or h. The existing review and repository checks still apply. |
+| g / j, Ctrl-B, Ctrl-V, Alt-Left / Alt-Right in Version control | Initialize Git/JJ when no repository exists, toggle the nixbox bookmark, show raw status, or pan the diff. |
+| Ctrl-Q | Quit. Ctrl-C also quits outside text fields; inside them it copies. |
+| Ctrl-+ / Ctrl-=, Ctrl--, Ctrl-0 | Zoom in, out, or reset, in 10% steps between 50% and 200%. |
+
+Vim editing includes i/a/I/A for insertion, h/l and arrows for movement, w/b/e and W/B/E for word/WORD motions, 0/$ for the start/end, v for inclusive Visual selection, x or d for deleting that selection, c for changing it, x for deleting a character, D for deleting to the end, and dd for clearing the input. On the Options page, w applies staged changes in Normal mode and moves by word in Visual mode. Esc also closes the flake output picker, returns from Options or Settings, or leaves another text field; it does not quit the GUI.
+
+Edit any shortcut under **Settings > Keyboard shortcuts**. Separate alternatives with commas, such as `ctrl-f, f2`, and sequence keys with spaces, such as `d d`. Uppercase letters mean Shift. Clear a field to disable the action. Enter or **Apply** saves the binding immediately; **Reset** restores its default. Invalid keys and overlapping bindings are refused, including prefixes of another sequence. The status line explains the conflict. Page-specific actions take precedence over Vim motions, matching the TUI.
+
+Bindings persist as `gui_shortcuts` overrides in `settings.json` and take effect without restarting. These overrides apply only to the GUI; `input_mode` is shared with the TUI.
 
 ## Configuration location
 
@@ -72,7 +116,6 @@ Git parent repositories are reviewed and committed only within the configuration
 
 The GUI reads the same theme setting as the TUI. `default` follows your desktop's light or dark appearance, including changes while NixBox is open. The other themes (`dracula`, `gruvbox`, `nord`, `catppuccin`, `monokai`) use their own dark palettes throughout the window, including text, borders, lists, tabs, inputs, buttons, and scrollbars. Changing the theme in Settings applies it immediately and saves it for the next launch.
 
-The TUI's input mode setting has no effect in the GUI.
 
 ## System rebuilds and your password
 
@@ -89,5 +132,5 @@ A Home Manager rebuild with no standalone `homeConfigurations` output falls back
 ## Limits
 
 - Running the GUI and the TUI at the same time is not supported. Both write `state.json` and the managed files, and nothing coordinates them.
-- The GUI has no command line of its own. Use `nixbox` or `nixbox-cli` for scripting and for `nixbox resume`.
-- macOS is not packaged yet.
+- The subcommands `nixbox` accepts never open a window, so `nixbox resume` and scripts work over SSH. A bare `nixbox` always opens the GUI; use `nixbox-tui` for an interface in a terminal.
+- macOS is not packaged yet. There, the flake's default package and the `cargo install nixbox` launcher run the terminal UI instead.

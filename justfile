@@ -5,15 +5,15 @@ default:
 
 # Build debug binary
 build:
-	cargo build --workspace --exclude nixbox-gui
+	cargo build --workspace --exclude nixbox
 
 # Build release binary
 release:
-	cargo build --workspace --exclude nixbox-gui --release
+	cargo build --workspace --exclude nixbox --release
 
 # Type-check without codegen
 check:
-	cargo check --workspace --exclude nixbox-gui
+	cargo check --workspace --exclude nixbox
 
 # The desktop front-end is excluded from the workspace-wide recipes: it needs
 # the graphics stack, which only the devenv shell provides. `just gui-ci`
@@ -21,20 +21,11 @@ check:
 
 # Run all tests
 test:
-	cargo nextest run --workspace --exclude nixbox-gui
+	cargo nextest run --workspace --exclude nixbox
 
-# Run the TUI (debug build)
+# Run the terminal UI (debug build)
 run:
-	cargo run
-
-# `nixbox` turns on nixbox-cmd's `tui` feature and cargo unifies features
-# across a workspace build, so `cargo nextest run --workspace` always compiles the
-# UI in. The CLI configuration only gets covered if it is built on its own.
-
-# Lint and test the CLI packages on their own
-cli:
-	cargo clippy -p nixbox-cli -p nixbox-cmd --all-targets -- -D warnings
-	cargo nextest run -p nixbox-cli -p nixbox-cmd
+	cargo run -p nixbox-tui
 
 # Build the nixbox-cli release binary
 release-cli:
@@ -42,16 +33,16 @@ release-cli:
 
 # Run the desktop GUI in the pinned devenv shell (debug build)
 gui:
-	devenv shell -- cargo run -p nixbox-gui --features native
+	devenv shell -- cargo run -p nixbox --features native
 
-# Build the nixbox-gui release binary
+# Build the nixbox desktop release binary
 release-gui:
-	cargo build --release -p nixbox-gui --features native
+	cargo build --release -p nixbox --features native
 
 # Lint and test the desktop GUI
 gui-ci:
-	cargo clippy -p nixbox-gui --features native --all-targets -- -D warnings
-	cargo nextest run -p nixbox-gui --features native
+	cargo clippy -p nixbox --features native --all-targets -- -D warnings
+	cargo nextest run -p nixbox --features native
 
 # Format all crates
 fmt:
@@ -61,7 +52,7 @@ fmt:
 
 # Lint with clippy
 lint:
-	cargo clippy --workspace --exclude nixbox-gui --all-targets -- -D warnings
+	cargo clippy --workspace --exclude nixbox --all-targets -- -D warnings
 
 # Format + lint
 fix: fmt lint
@@ -116,8 +107,8 @@ dev-update:
 dev-test:
 	devenv test
 
-# Full pre-commit gate: format, lint, test, CLI-only build
-ci: fmt lint test cli
+# Full pre-commit gate: format, lint, test
+ci: fmt lint test
 
 # Full gate plus the VM check, which boots a machine and takes minutes
 ci-vm: ci vm-test

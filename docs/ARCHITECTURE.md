@@ -6,12 +6,15 @@ NixBox is a local application with three front-ends: a terminal UI, a command li
 
 ```mermaid
 flowchart LR
-		User[Terminal user] --> Binary[nixbox binary]
-		Binary --> TUI[nixbox-tui]
-		Binary --> Core[nixbox-core]
+		GUIUser[Desktop user] --> GUI[nixbox]
+		User[Terminal user] --> TUI[nixbox-tui]
+		Script[Scripts and SSH] --> CLI[nixbox-cli]
+		GUI --> Cmd[nixbox-cmd]
+		TUI --> Cmd
+		CLI --> Cmd
+		GUI --> Core[nixbox-core]
 		TUI --> Core
-		GUIUser[Desktop user] --> GUI[nixbox-gui]
-		GUI --> Core
+		Cmd --> Core
 		Core --> Config[nixbox-config]
 		Core --> Nix[nixbox-nix]
 		TUI --> Config
@@ -25,28 +28,27 @@ flowchart LR
 
 ## Workspace crates
 
-The workspace uses Rust edition 2024 and contains eight crates. The dependency direction is intentionally simple.
+The workspace uses Rust edition 2024 and contains seven crates. The dependency direction is intentionally simple.
 
 | Crate | Responsibility | Local dependencies |
 | --- | --- | --- |
 | `nixbox-config` | Settings types, defaults, path resolution, JSON loading, JSON saving, and the list of theme names. | None. |
 | `nixbox-nix` | Package search, package catalog, generated manifests, source scanning and migration, flake discovery and installation, rebuild command selection, output streaming, and cancellation. | None. |
 | `nixbox-core` | The headless engine: the `Op` every front-end queues, the persisted `state.json` format, manifest mutation, import wiring, external-package scanning, flake input and output installation, rebuild command selection and privilege escalation, and the `Session` that drives queued ops through rebuilds for the interactive front-ends. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
-| `nixbox-tui` | Terminal lifecycle, event handling, search scheduling, Vim input behavior, navigation, themes, and rendering. The queue and rebuilds are the `Session`'s. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
-| `nixbox-gui` | The default binary is a small Nix-backed launcher. The `native` feature builds the gpui desktop front-end over the same `Session`, and sudo's askpass helper for its system rebuilds. Published separately to crates.io. | `nixbox-config`, `nixbox-core`, `nixbox-nix` with `native`. |
-| `nixbox-cmd` | Clap command tree, the non-interactive commands, output rendering, tracing setup, and the call to `nixbox_tui::run` when no subcommand is given. Shared by both binaries. | `nixbox-config`, `nixbox-core`, `nixbox-nix`, and `nixbox-tui` behind the `tui` feature. |
-| `nixbox` | The `nixbox` binary: a `main` that calls `nixbox_cmd::run`, with the `tui` feature on. | `nixbox-cmd`. |
-| `nixbox-cli` | The `nixbox-cli` binary: the same `main`, with the `tui` feature off. | `nixbox-cmd`. |
+| `nixbox-cmd` | Clap command tree, the non-interactive commands, output rendering, and tracing setup. `run` takes an optional `Frontend` and opens it when no subcommand is given. Shared by all three binaries. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
+| `nixbox-tui` | The `nixbox-tui` binary, which passes its terminal front-end to `nixbox_cmd::run`, and that front-end: terminal lifecycle, event handling, search scheduling, Vim input behavior, navigation, themes, and rendering. The queue and rebuilds are the `Session`'s. | `nixbox-cmd`, `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
+| `nixbox-cli` | The `nixbox-cli` binary: `nixbox_cmd::run` with no front-end. | `nixbox-cmd`. |
+| `nixbox` | The `nixbox` binary and the default package. Its default build is a small Nix-backed launcher. The `native` feature builds the gpui desktop front-end over the same `Session`, passes it to `nixbox_cmd::run`, and makes the binary sudo's askpass helper for its system rebuilds. | `nixbox-cmd`, `nixbox-config`, `nixbox-core`, `nixbox-nix` with `native`. |
 
-The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-tui`, `nixbox-cmd`, `nixbox`, `nixbox-cli`, then `nixbox-gui`. The engine sits on the two leaf libraries, both front-ends sit on the engine, and the terminal binaries sit on the command tree.
+The crates.io publish order is `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-cmd`, `nixbox-tui`, `nixbox-cli`, then `nixbox`. The engine sits on the two leaf libraries, the command tree sits on the engine, and every binary sits on the command tree.
 
-`nixbox-gui` is left out of `default-members`, `just ci`, and the workspace-wide CLI checks because its native build needs the graphics stack (Wayland, xkbcommon, X11, Vulkan, fontconfig); `just gui-ci` and a separate CI job enable `native` and cover it. Publishing waits for both the CLI and GUI checks. The flake package also enables `native`, while the default Cargo build needs only the Rust toolchain and runs that flake package through Nix.
+`nixbox` is left out of `default-members`, `just ci`, and the workspace-wide checks because its native build needs the graphics stack (Wayland, xkbcommon, X11, Vulkan, fontconfig); `just gui-ci` and a separate CI job enable `native` and cover it. Publishing waits for both the workspace and GUI checks. The flake package also enables `native`, while the default Cargo build needs only the Rust toolchain and runs that flake package through Nix. On macOS, where the GUI is not packaged, the launcher runs the flake's `nixbox-tui` instead.
 
-`nixbox` and `nixbox-cli` are separate packages because crates.io lists packages and not feature combinations. Both are a four-line `main` over `nixbox-cmd`; the only difference is whether they enable that crate's `tui` feature. `nixbox-cli` excludes `ratatui`, `crossterm`, `tui-input`, and `nixbox-tui` itself. The GUI is a third binary with its own front-end.
+The three are separate packages so each installs under its own name and pulls in only its own interface. `nixbox-cli` excludes `ratatui`, `crossterm`, `tui-input`, gpui, and both front-end crates. The front-end is a `Frontend` value rather than a Cargo feature, so `nixbox-cmd` has no features and a workspace build compiles it the same way every binary does.
 
 Nothing the command line needs lives in the UI crate: the theme names the settings file accepts are declared in `nixbox-config` and the persisted-state format in `nixbox-core`, each with a test in the UI crate asserting the two stay in step.
 
-The two binaries install under different names, so one profile can hold both. `nixbox-cmd` learns which one is running from `env!("CARGO_BIN_NAME")`, passed into `run`, and uses it for the usage line, the generated completion script, and every message that tells the user what to run next.
+The three binaries install under different names, so one profile can hold all of them. `nixbox-cmd` learns which one is running from `env!("CARGO_BIN_NAME")`, passed into `run`, and uses it for the usage line, the generated completion script, and every message that tells the user what to run next.
 
 Every front-end goes through the same engine, so a change applied by `nixbox install`, in the TUI, or in the GUI takes the identical code path. The TUI and the GUI also share the `Session`, so queue batching, rebuild cancellation, the build log, and recovery behave the same in both. The engine is also what keeps `state.json` compatible between them: the queue holds `nixbox_core::Op` values verbatim, and the TUI's `QueuedOp` is a re-export of that type rather than a parallel definition.
 
@@ -60,7 +62,7 @@ The nearest repository boundary owns the config; colocated JJ takes precedence o
 
 ## Startup and terminal lifecycle
 
-`crates/nixbox-cmd/src/lib.rs` parses the command tree, initializes tracing to stderr with a default `warn` filter, and dispatches on Tokio's multithreaded runtime, driven by a `main` in whichever binary crate was built. With no subcommand it calls `nixbox_tui::run()`; with one it runs that command and returns its exit code. It also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
+`crates/nixbox-cmd/src/lib.rs` parses the command tree and initializes tracing to stderr, driven by a `main` in whichever binary crate was built. With no subcommand it calls the binary's `Frontend::launch` outside any async runtime, because gpui drives its own event loop; the terminal front-end starts a Tokio runtime around `nixbox_tui::run()` itself. With a subcommand it runs that command on Tokio's multithreaded runtime and returns its exit code. The default tracing filter is `warn` for commands and the front-end's own `log_filter` for an interface: `warn` for the TUI, `error` for the GUI, whose renderer warns about every Vulkan driver it skips. Before a command it also restores the default `SIGPIPE` disposition, so piping output into `head` ends the process quietly instead of panicking on a broken pipe.
 
 `run()` loads settings and manifests before changing terminal state. It then enables raw mode, enters the alternate screen, selects a blinking bar cursor, and starts the event loop. On normal return it disables raw mode, restores the cursor shape, leaves the alternate screen, and shows the cursor. Errors returned after terminal initialization still pass through this cleanup path because `run()` stores the event-loop result before restoring the terminal.
 
@@ -126,6 +128,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `manifest.rs` owns generated package and flake-module files, package marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list.
 - `settings.rs` owns the generated settings modules: `SettingValue`, the `SettingsManifest` map from option path to value, rendering, and the strict line parser.
 - `options.rs` and `options.nix` evaluate a package's module options from the user's flake. The query goes to Nix as JSON in an environment variable, and the result is decoded into an `OptionSet` of `OptionEntry` values with an `OptionKind`, the evaluated value, and the files that define each option.
+- `system_options.rs` and `system_options.nix` discover NixOS output names, index host-wide schema metadata, and inspect one option on demand. `NixosConfiguration` binds each inspection to its root and output key, independently of the package-operation target. Schema traversal does not read option values or defaults; it includes nested templates and flags bounded or failed submodule expansion. Selected-value previews have bounded depth and size and withhold credential fields.
 - `scan.rs` detects simple package tokens in selected Nix lists and removes dedicated lines during migration.
 - `flakes.rs` calls GitHub through `gh api`, ranks repository candidates, evaluates locked revisions for package and module outputs, caches inspections in memory, reads root `flake.nix` files for input names, and edits a conventional root flake for output installation.
 - `build.rs` resolves executables in common Nix profiles, chooses Home Manager or NixOS commands, starts rebuild process groups, forwards output, and cancels a complete process group.
@@ -144,20 +147,22 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 
 ### `nixbox-cmd`
 
-- `lib.rs` restores the default `SIGPIPE` disposition, records the running binary's name, parses arguments, starts tracing, and dispatches.
-- `cli.rs` defines the Clap command tree, the global `--target`, `--channel`, and `--json` flags, and dispatch. The `tui` subcommand and the no-subcommand default are behind the `tui` feature; without it, a bare `nixbox` prints help and exits `1`.
+- `lib.rs` defines `Frontend`, records the running binary's name, parses arguments, starts tracing, and either opens the front-end or restores the default `SIGPIPE` disposition and dispatches.
+- `cli.rs` defines the Clap command tree, the global `--target`, `--channel`, and `--json` flags, and dispatch. A binary with a front-end opens it before dispatch, so a bare invocation that reaches `cli.rs` is `nixbox-cli`: it prints help and exits `1`.
 - `apply.rs` is the shared path for every command that changes configuration: confirmation, the dry run, writing, the rebuild, and the exit code.
 - `commands/` holds one module per subcommand.
 - `commands/mod.rs` also holds `search_packages`, the shared lookup behind `search` and `install`: it prefers the cached package catalog and falls back to live search, and an explicit `--channel` always searches live.
 - `commands/resume.rs` finishes an interrupted rebuild and drains a queue the TUI left, one target at a time.
 - `render.rs` renders tables and field lists for the non-JSON output.
 
-### `nixbox` and `nixbox-cli`
+### `nixbox-cli`
 
-- `main.rs` in each is the same four lines: a Tokio entry point handing `env!("CARGO_BIN_NAME")` to `nixbox_cmd::run`. All behavioural difference comes from the `tui` feature their `Cargo.toml` selects.
+- `main.rs` hands `env!("CARGO_BIN_NAME")` and no front-end to `nixbox_cmd::run`.
+
 
 ### `nixbox-tui`
 
+- `main.rs` is the `nixbox-tui` binary: it hands its `Frontend`, which starts a Tokio runtime around `app::run`, to `nixbox_cmd::run`.
 - `app.rs` owns `App`, startup scanning, terminal setup, the event loop, visible-tab rules, combined installed-package state, and task cleanup.
 - `handlers.rs` translates key presses and `AppEvent` values into state changes.
 - `ops.rs` schedules searches, prepares the package catalog, turns the selected row into an `Op`, and reports what the `Session` did with it.
@@ -167,15 +172,18 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `theme.rs` defines the Ratatui styles for the six palettes named in `nixbox-config::THEMES`, with a test asserting the two lists match.
 - `ui/` renders the shared bars, package search, flake search and detail panel, installed list, build log, queue, and settings popup.
 
-### `nixbox-gui`
+### `nixbox`
 
-- `main.rs` starts a multithreaded tokio runtime for the nix work, builds a `Session` with `Escalation::Askpass` pointing at its own executable, and opens the window. Started by sudo as the askpass helper (`NIXBOX_ASKPASS` set), it shows the password prompt instead.
+- `main.rs` picks the launcher or, with `native`, `native.rs`. The launcher runs `nix run` on the matching tagged flake release, forwarding every argument.
+- `native.rs` hands its `Frontend` to `nixbox_cmd::run`. Opening it starts a multithreaded tokio runtime for the nix work, builds a `Session` with `Escalation::Askpass` pointing at its own executable, and opens the window. Started by sudo as the askpass helper (`NIXBOX_ASKPASS` set), it shows the password prompt instead, before the command line is parsed, because sudo passes the prompt text as the only argument.
+
 - `askpass.rs` is that prompt: it prints the password to stdout for sudo, or exits non-zero on cancel so the rebuild stops.
 - `app.rs` owns `NixboxApp`, the window state. Searches and flake lookups run on the tokio runtime; gpui tasks await their join handles, debounce input, and discard stale results by epoch, as the TUI does. A gpui task feeds `BuildEvent`s to the `Session` and raises notifications when a rebuild ends.
 - `options.rs` holds the Options page's state (`OptionsView`): the package and scope, the evaluated options, the selected option, and staged edits, plus the actions that load, stage, unset, discard, and apply them. Evaluations run on the tokio runtime and are cached per scope and package until a rebuild ends, as in the TUI.
+- `nixos.rs` holds the separate read-only `NixosView`, with hosts, schema, filtered indices, selected option, and lazy inspection tasks. It aborts superseded Tokio jobs as well as rejecting stale results by epoch. Build completion and configuration-directory changes invalidate it. It never enqueues a mutation, and its host selection never redirects package work. Edits to source files outside the application need explicit Reload.
 - `model.rs` computes the Installed page's filtered sections and a search hit's installed scopes without gpui, so they are unit tested.
 - `theme.rs` maps the theme names in `nixbox-config::THEMES` onto gpui-component: `default` follows the desktop appearance, the others are dark with the TUI palette's background and accent.
-- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules.
+- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, NixOS, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules. `ui/nixos.rs` virtualizes schema rows and switches to full-width details in small windows.
 
 ## Design constraints
 

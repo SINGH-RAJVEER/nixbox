@@ -186,13 +186,13 @@ If ordinary errors leave the terminal broken, that is a cleanup bug because `run
 
 ## The desktop GUI does not open
 
-`nixbox-gui` needs a Vulkan driver and the Wayland or X11 client libraries at runtime. The flake package puts the client libraries on `LD_LIBRARY_PATH`; the default Cargo-installed launcher runs that same package. A binary built with Cargo's `native` feature outside the devenv shell does not get the wrapper. Run that build from `devenv shell`, or install the flake package. `RUST_LOG=warn nixbox-gui` prints the driver the renderer tried.
+The desktop `nixbox` needs a Vulkan driver and the Wayland or X11 client libraries at runtime. The flake package puts the client libraries on `LD_LIBRARY_PATH`; the default Cargo-installed launcher runs that same package. A binary built with Cargo's `native` feature outside the devenv shell does not get the wrapper. Run that build from `devenv shell`, or install the flake package. `RUST_LOG=warn nixbox` prints the driver the renderer tried.
 
-If the Vulkan loader reports a missing `GLIBC_` version from Mesa or LLVM, followed by `No GPU adapters found`, the build environment's glibc is older than the host graphics driver requires. Update the development package and toolchain pins with `devenv update nixpkgs rust-overlay`, exit the old shell, and enter a fresh `devenv shell`. Rebuild with `cargo run -p nixbox-gui --features native`. If Cargo reuses the previous binary, run `cargo clean -p nixbox-gui` before rebuilding. Adding the host's glibc to `LD_LIBRARY_PATH` mixes runtimes and is not a reliable fix.
+If the Vulkan loader reports a missing `GLIBC_` version from Mesa or LLVM, followed by `No GPU adapters found`, the build environment's glibc is older than the host graphics driver requires. Update the development package and toolchain pins with `devenv update nixpkgs rust-overlay`, exit the old shell, and enter a fresh `devenv shell`. Rebuild with `cargo run -p nixbox --features native`. If Cargo reuses the previous binary, run `cargo clean -p nixbox` before rebuilding. Adding the host's glibc to `LD_LIBRARY_PATH` mixes runtimes and is not a reliable fix.
 
 ## The GUI rebuild fails with a sudo error
 
-A system rebuild from the GUI runs `sudo -A`, and sudo starts `nixbox-gui` again to ask for the password. Pressing Cancel in that window makes sudo fail on purpose. If no password window appears at all, check that the `nixbox-gui` executable is still at the path it was started from, and that your sudo configuration does not disable askpass.
+A system rebuild from the GUI runs `sudo -A`, and sudo starts `nixbox` again to ask for the password. Pressing Cancel in that window makes sudo fail on purpose. If no password window appears at all, check that the `nixbox` executable is still at the path it was started from, and that your sudo configuration does not disable askpass.
 
 ## Increase logging
 
@@ -202,4 +202,4 @@ Run with a tracing filter:
 RUST_LOG=debug nixbox
 ```
 
-Tracing goes to stderr. The Building tab separately shows rebuild stdout and stderr and retains only the newest 1,000 lines.
+Tracing goes to stderr. `nixbox-tui` and `nixbox-cli` accept the same variable; without it, commands and the terminal UI log warnings and the desktop GUI only errors. The Building tab separately shows rebuild stdout and stderr and retains only the newest 1,000 lines.

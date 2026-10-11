@@ -1,6 +1,6 @@
 # NixBox
 
-NixBox is a terminal package manager for NixOS and Home Manager. It searches the nixpkgs revision locked by your configuration, writes selected packages into generated Nix modules, imports those modules into your configuration, and runs the matching rebuild command.
+NixBox is a desktop package manager for NixOS and Home Manager, with a terminal UI and a plain command line over the same engine. It searches the nixpkgs revision locked by your configuration, writes selected packages into generated Nix modules, imports those modules into your configuration, and runs the matching rebuild command.
 
 ## What it does
 
@@ -20,30 +20,31 @@ NixBox is a terminal package manager for NixOS and Home Manager. It searches the
 
 ## Install
 
-Install the published crate:
+NixBox comes as three packages with the same subcommands. They install under different names, so one machine can have any combination:
+
+| Package | Command | Run without a subcommand |
+| ------- | ------- | ------------------------ |
+| `nixbox` | `nixbox` | opens the desktop GUI (Linux) |
+| `nixbox-tui` | `nixbox-tui` | opens the terminal UI |
+| `nixbox-cli` | `nixbox-cli` | prints help |
+
+On Linux, install the desktop GUI from the flake to get its native libraries and runtime wrapper without configuring a build environment. The package includes a desktop entry and icon for application menus:
+
+```sh
+nix profile install github:SINGH-RAJVEER/nixbox
+```
+
+The GUI is also published to crates.io. Its default Cargo installation is a small launcher that runs the matching flake package, so it needs Nix with flakes enabled but no graphics development libraries:
 
 ```sh
 cargo install nixbox
 ```
 
-For the command line without the terminal UI, install the sibling package instead. It has the same subcommands, installs as `nixbox-cli`, and leaves out the terminal UI dependencies:
+For the terminal UI, or the command line with no interface at all, install the sibling packages instead:
 
 ```sh
+cargo install nixbox-tui
 cargo install nixbox-cli
-```
-
-On Linux, install the desktop GUI from the flake to get its native libraries and runtime wrapper without configuring a build environment:
-
-```sh
-nix profile install github:SINGH-RAJVEER/nixbox#nixbox-gui
-```
-
-The flake GUI package includes a desktop entry and icon for application menus.
-
-The GUI is also published to crates.io. Its default Cargo installation is a small launcher that runs the matching flake package, so it needs Nix with flakes enabled but no graphics development libraries:
-
-```sh
-cargo install nixbox-gui
 ```
 
 Run NixBox directly from its flake:
@@ -81,16 +82,16 @@ For a standalone Home Manager configuration, add the same input and include its 
 })
 ```
 
-Here `nixbox` is the flake input available in the enclosing `outputs` function. Use `.nixbox-cli` instead of `.default` for the command-line-only binary. On Linux, `.nixbox-gui` installs the desktop application.
+Here `nixbox` is the flake input available in the enclosing `outputs` function. `.default` is the desktop GUI on Linux and the terminal UI on macOS. Use `.nixbox-tui` for the terminal UI or `.nixbox-cli` for the command-line-only binary.
 
-The flake also exports `overlays.default`, which adds `pkgs.nixbox` and `pkgs.nixbox-cli`:
+The flake also exports `overlays.default`, which adds `pkgs.nixbox`, `pkgs.nixbox-tui`, and `pkgs.nixbox-cli`:
 
 ```nix
 nixpkgs.overlays = [ inputs.nixbox.overlays.default ];
 environment.systemPackages = [ pkgs.nixbox ];
 ```
 
-Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
+Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The desktop GUI is built for the Linux systems only.
 
 ## Run
 
@@ -98,7 +99,7 @@ Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch6
 nixbox
 ```
 
-With no subcommand this starts the TUI. Every operation it performs is also a subcommand, so the same work can be scripted or run over SSH. The `nixbox-cli` package has those subcommands and no TUI; there the command is `nixbox-cli`, and running it bare prints help.
+With no subcommand this opens the desktop GUI; `nixbox-tui` opens the terminal UI instead. Every operation either interface performs is also a subcommand, so the same work can be scripted or run over SSH. `nixbox-cli` has those subcommands and no interface, and running it bare prints help.
 
 ## First run
 
@@ -122,7 +123,7 @@ Installing a package writes a generated module before the rebuild starts. NixBox
 
 ## CLI
 
-Running `nixbox` with no arguments opens the TUI. Every subcommand does the same work headlessly, against the same managed files.
+Running `nixbox` with no arguments opens the desktop GUI, and `nixbox-tui` the terminal UI. Every subcommand does the same work headlessly, against the same managed files.
 
 ```sh
 nixbox search ripgrep            # search the configured channel
@@ -147,7 +148,7 @@ nixbox flake list
 nixbox flake remove Mic92/nix-index-database
 ```
 
-Settings can be read and changed without opening the TUI:
+Settings can be read and changed without opening an interface:
 
 ```sh
 nixbox config show
@@ -171,9 +172,9 @@ Anything that changes your configuration asks first. Without a terminal to ask a
 
 The configuration is always written before the rebuild starts. If a rebuild fails or you interrupt it with Ctrl-C, your files already hold the change: fix the problem and run `nixbox apply` to finish.
 
-Both front-ends share `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in the TUI and never ran; `--dry-run` shows it first and `--discard` throws it away.
+Every front-end shares `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in an interface and never ran; `--dry-run` shows it first and `--discard` throws it away.
 
-Every command above works the same under `nixbox-cli`.
+Every command above works the same under `nixbox-tui` and `nixbox-cli`.
 
 ### Exit codes
 

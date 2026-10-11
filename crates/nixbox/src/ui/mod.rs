@@ -4,6 +4,7 @@
 mod flakes;
 mod installed;
 mod logo;
+mod nixos;
 mod options;
 mod packages;
 mod queue;
@@ -19,7 +20,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
 	Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-	prelude::FluentBuilder as _, px,
+	prelude::FluentBuilder as _, rems,
 };
 
 use nixbox_core::vcs::Backend;
@@ -33,6 +34,7 @@ impl Render for NixboxApp {
 			Page::Flakes => flakes::render(self, cx),
 			Page::Installed => installed::render(self, cx),
 			Page::Options => options::render(self, cx),
+			Page::Nixos => nixos::render(self, window, cx),
 			Page::Queue => queue::render_queue(self, cx),
 			Page::Build => queue::render_build(self, cx),
 			Page::VersionControl => repository::render(self, cx),
@@ -41,6 +43,7 @@ impl Render for NixboxApp {
 		v_flex()
 			.id("nixbox")
 			.key_context("Nixbox")
+			.track_focus(&self.keyboard.focus)
 			.on_action(cx.listener(NixboxApp::focus_search))
 			.size_full()
 			.child(self.navigation(cx))
@@ -60,6 +63,7 @@ impl NixboxApp {
 			("nixpkgs", Page::Packages),
 			("Flakes", Page::Flakes),
 			("Installed", Page::Installed),
+			("NixOS", Page::Nixos),
 			("Queue", Page::Queue),
 			("Build", Page::Build),
 			("Version control", Page::VersionControl),
@@ -161,6 +165,13 @@ impl NixboxApp {
 			.when(self.searching || self.catalog_loading, |bar| {
 				bar.child(Spinner::new().small())
 			})
+			.child(div().id("keyboard-mode").child(
+				if self.session.engine.config.input_mode == nixbox_config::InputMode::Vim {
+					format!("VIM {:?}", self.keyboard.mode).to_uppercase()
+				} else {
+					"NORMAL".into()
+				},
+			))
 			.child(div().flex_1().truncate().child(self.status.clone()))
 			.when_some(self.session.last_error.clone(), |bar, error| {
 				bar.child(
@@ -225,6 +236,12 @@ fn row(cx: &App) -> gpui_kit::Div {
 		.border_color(cx.theme().border)
 }
 
+/// A list row that highlights under the pointer.
+fn hover_row(cx: &App) -> gpui_kit::Div {
+	let hover = cx.theme().list_hover;
+	row(cx).hover(move |row| row.bg(hover))
+}
+
 /// A line of secondary text.
 fn muted(text: impl Into<SharedString>, cx: &App) -> gpui_kit::Div {
 	div()
@@ -265,7 +282,8 @@ fn page_icon(page: Page, backend: Option<Backend>) -> AnyElement {
 		Page::Queue => IconName::GalleryVerticalEnd,
 		Page::Build => IconName::SquareTerminal,
 		Page::Settings => IconName::Settings,
-		Page::VersionControl => return logo::vcs_logo(backend, px(16.)),
+		Page::Nixos => IconName::Settings,
+		Page::VersionControl => return logo::vcs_logo(backend, rems(1.)),
 	};
 	Icon::new(icon).size_4().into_any_element()
 }

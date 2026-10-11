@@ -183,7 +183,7 @@ mod tests {
 
 	#[test]
 	fn commit_is_top_level_and_accepts_edit_and_review_flags() {
-		for binary in ["nixbox", "nixbox-cli"] {
+		for binary in ["nixbox", "nixbox-tui", "nixbox-cli"] {
 			let cli = Cli::try_parse_from([binary, "commit"]).unwrap();
 			assert!(matches!(
 				cli.command,

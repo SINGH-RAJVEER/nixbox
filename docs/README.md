@@ -5,7 +5,7 @@ The README is the short entry point. These documents describe the behavior that 
 ## User documentation
 
 - [User guide](USER_GUIDE.md) covers installation, startup, tabs, controls, settings, package operations, rebuild behavior, and shutdown.
-- [Desktop GUI](GUI.md) covers the nixbox-gui package, its pages, how system rebuilds ask for your password, and its limits.
+- [Desktop GUI](GUI.md) covers the default `nixbox` package, its pages, how system rebuilds ask for your password, and its limits.
 - [Command line interface](CLI.md) covers the non-interactive subcommands, their flags, the confirmation rules, resuming interrupted work, the nixbox-cli package, and the exit codes.
 - [Configuration and stored state](CONFIGURATION.md) lists every setting, default path, environment override, generated file, cache file, and recovery file.
 - [Package search](SEARCH.md) explains catalog creation, revision pinning, invalidation, ranking, live fallback, resource limits, and measured performance.
@@ -19,7 +19,8 @@ The README is the short entry point. These documents describe the behavior that 
 - [Architecture](ARCHITECTURE.md) describes crate ownership, dependencies, the asynchronous event loop, state transitions, data flow, and module boundaries.
 - [Development and testing](DEVELOPMENT.md) covers the pinned environment, commands, Cargo features, tests, lint rules, Nix packaging, Jujutsu usage, and release preparation.
 - [Release notes](RELEASE_NOTES.md) records published changes and the work planned for the next release from `dev`.
+- [NixOS settings tab plan](NIXOS_SETTINGS_PLAN.md) records the implemented read-only browser and the remaining phases for complete option discovery, staged editing, validation, and system application.
 
 ## Source of truth
 
-The Rust implementation remains authoritative when documentation and behavior disagree. Settings live in `nixbox-config`, Nix-facing mutations live in `nixbox-nix`, the engine and the queue-and-rebuild `Session` live in `nixbox-core`, the terminal and desktop front-ends live in `nixbox-tui` and `nixbox-gui`, and `crates/nixbox` only starts the application.
+The Rust implementation remains authoritative when documentation and behavior disagree. Settings live in `nixbox-config`, Nix-facing mutations live in `nixbox-nix`, the engine and the queue-and-rebuild `Session` live in `nixbox-core`, the command tree every binary shares lives in `nixbox-cmd`, and the desktop and terminal front-ends live in `nixbox` and `nixbox-tui`.

@@ -2,9 +2,28 @@
 //!
 //! `default` follows the desktop appearance. Named themes use the same
 //! characteristic colors as the TUI, with surfaces for GUI controls.
+//!
+//! Zoom scales the theme's text sizes, which set the window's rem size, so
+//! everything sized in rems grows and shrinks with the text.
 
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Hsla, Window, rgb};
+use gpui_kit::{App, Global, Hsla, Pixels, Window, rgb};
+
+/// The zoom a fresh window starts at, as a percentage of the theme's text size.
+pub const DEFAULT_ZOOM: u16 = 100;
+/// How far one Ctrl-+ or Ctrl-- moves the zoom.
+pub const ZOOM_STEP: u16 = 10;
+const MIN_ZOOM: u16 = 50;
+const MAX_ZOOM: u16 = 200;
+
+/// The current zoom and the unzoomed text sizes it scales.
+struct Zoom {
+	percent: u16,
+	font_size: Pixels,
+	mono_font_size: Pixels,
+}
+
+impl Global for Zoom {}
 
 struct Palette {
 	name: &'static str,
@@ -77,11 +96,62 @@ const PALETTES: [Palette; 5] = [
 ];
 
 /// Applies the theme called `name`, falling back to the desktop appearance.
-pub fn apply(name: &str, window: Option<&mut Window>, cx: &mut App) {
-	let Some(palette) = PALETTES.iter().find(|palette| palette.name == name) else {
-		Theme::sync_system_appearance(window, cx);
+pub fn apply(name: &str, mut window: Option<&mut Window>, cx: &mut App) {
+	match PALETTES.iter().find(|palette| palette.name == name) {
+		Some(palette) => paint(palette, cx),
+		None => Theme::sync_system_appearance(window.as_deref_mut(), cx),
+	}
+	scale_text(cx);
+	Theme::sync_base(cx);
+	if let Some(window) = window {
+		window.refresh();
+	}
+}
+
+/// The current zoom, as a percentage of the theme's text size.
+pub fn zoom(cx: &App) -> u16 {
+	cx.try_global::<Zoom>()
+		.map_or(DEFAULT_ZOOM, |zoom| zoom.percent)
+}
+
+/// Sets the zoom, clamped to 50-200%, and redraws every window.
+pub fn set_zoom(percent: u16, cx: &mut App) {
+	let percent = percent.clamp(MIN_ZOOM, MAX_ZOOM);
+	if percent == zoom(cx) {
 		return;
-	};
+	}
+	zoom_state(cx).percent = percent;
+	scale_text(cx);
+	Theme::sync_base(cx);
+	cx.refresh_windows();
+}
+
+/// The zoom state, recording the theme's text sizes the first time.
+fn zoom_state(cx: &mut App) -> &mut Zoom {
+	if !cx.has_global::<Zoom>() {
+		let theme = Theme::global(cx);
+		let zoom = Zoom {
+			percent: DEFAULT_ZOOM,
+			font_size: theme.font_size,
+			mono_font_size: theme.mono_font_size,
+		};
+		cx.set_global(zoom);
+	}
+	cx.global_mut::<Zoom>()
+}
+
+/// Sets the theme's text sizes from the unzoomed ones and the zoom.
+fn scale_text(cx: &mut App) {
+	let zoom = zoom_state(cx);
+	let scale = f32::from(zoom.percent) / 100.;
+	let font_size = zoom.font_size * scale;
+	let mono_font_size = zoom.mono_font_size * scale;
+	let theme = Theme::global_mut(cx);
+	theme.font_size = font_size;
+	theme.mono_font_size = mono_font_size;
+}
+
+fn paint(palette: &Palette, cx: &mut App) {
 	Theme::change(ThemeMode::Dark, None, cx);
 	let background = color(palette.background);
 	let surface = color(palette.surface);
@@ -146,10 +216,6 @@ pub fn apply(name: &str, window: Option<&mut Window>, cx: &mut App) {
 	theme.scrollbar_thumb = border;
 	theme.scrollbar_thumb_hover = accent;
 	theme.tokens = (&theme.colors).into();
-	Theme::sync_base(cx);
-	if let Some(window) = window {
-		window.refresh();
-	}
 }
 
 fn color(value: u32) -> Hsla {

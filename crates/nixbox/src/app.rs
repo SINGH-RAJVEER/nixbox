@@ -13,8 +13,8 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Root, WindowExt as _};
 use gpui_kit::{
-	App, AppContext as _, Context, Entity, KeyBinding, PathPromptOptions, SharedString,
-	Subscription, Task, UniformListScrollHandle, Window, actions,
+	App, AppContext as _, Context, Entity, PathPromptOptions, SharedString, Subscription, Task,
+	UniformListScrollHandle, Window, actions,
 };
 use nixbox_config::{TabLabels, Target, config_dir_from_env};
 use nixbox_core::search::{catalog_cache_path, search_packages};
@@ -33,7 +33,7 @@ use crate::model::target_of;
 use crate::options::OptionsView;
 use crate::theme;
 
-actions!(nixbox, [Quit, FocusSearch]);
+actions!(nixbox, [Quit, FocusSearch, ZoomIn, ZoomOut, ResetZoom]);
 
 /// Expands a leading `~` the way a shell would, for typed paths.
 fn expand_home(path: &str) -> PathBuf {
@@ -48,11 +48,12 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 pub fn bind_keys(cx: &mut App) {
-	cx.bind_keys([
-		KeyBinding::new("ctrl-q", Quit, None),
-		KeyBinding::new("ctrl-f", FocusSearch, None),
-	]);
 	cx.on_action(|_: &Quit, cx| cx.quit());
+	cx.on_action(|_: &ZoomIn, cx| theme::set_zoom(theme::zoom(cx) + theme::ZOOM_STEP, cx));
+	cx.on_action(|_: &ZoomOut, cx| {
+		theme::set_zoom(theme::zoom(cx).saturating_sub(theme::ZOOM_STEP), cx);
+	});
+	cx.on_action(|_: &ResetZoom, cx| theme::set_zoom(theme::DEFAULT_ZOOM, cx));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,8 @@ pub enum Page {
 	Installed,
 	/// One installed package's options, opened from the Installed page.
 	Options,
+	/// Host-wide NixOS option discovery, independent of the install target.
+	Nixos,
 	Queue,
 	Build,
 	VersionControl,
@@ -69,6 +72,8 @@ pub enum Page {
 }
 
 pub struct NixboxApp {
+	pub keyboard: crate::keyboard::Keyboard,
+	pub keyboard_previous_page: Page,
 	pub repository: crate::repository::RepositoryControls,
 	pub session: Session,
 	pub page: Page,
@@ -105,6 +110,8 @@ pub struct NixboxApp {
 	pub options_filter: Entity<InputState>,
 	/// The value field for the selected option's text editor.
 	pub option_input: Entity<InputState>,
+	pub nixos: crate::nixos::NixosView,
+	pub nixos_filter: Entity<InputState>,
 	/// The configuration directory field on the Settings page.
 	pub config_dir_input: Entity<InputState>,
 
@@ -131,17 +138,26 @@ impl NixboxApp {
 			cx.new(|cx| InputState::new(window, cx).placeholder("Filter installed packages"));
 		let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
 		let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
+		let nixos_filter = cx.new(|cx| {
+			InputState::new(window, cx).placeholder("Search NixOS option paths and descriptions")
+		});
 		let config_dir_input = cx.new(|cx| {
 			let mut input =
 				InputState::new(window, cx).placeholder("Path to your configuration flake");
 			input.set_value(session.config_dir().display().to_string(), window, cx);
 			input
 		});
+		let keyboard = crate::keyboard::Keyboard::new(&session.engine.config, window, cx);
 		let mut repository = crate::repository::RepositoryControls::new(window, cx);
 		repository.backend = crate::repository::nearest_backend(&session.config_dir());
 		search_input.update(cx, |input, cx| input.focus(window, cx));
 
-		let subscriptions = vec![
+		let mut subscriptions = vec![
+			cx.subscribe_in(&nixos_filter, window, |this, _, event, _, cx| {
+				if let InputEvent::Change = event {
+					this.refresh_nixos_filter(cx);
+				}
+			}),
 			cx.subscribe_in(&repository.branch, window, |_, _, _: &InputEvent, _, cx| {
 				cx.notify()
 			}),
@@ -169,13 +185,15 @@ impl NixboxApp {
 					this.schedule_flake_search(cx);
 				}
 			}),
-			cx.subscribe_in(&installed_input, window, |_, _, event, _, cx| {
+			cx.subscribe_in(&installed_input, window, |this, _, event, _, cx| {
 				if let InputEvent::Change = event {
+					this.keyboard.selected = 0;
 					cx.notify();
 				}
 			}),
-			cx.subscribe_in(&options_filter, window, |_, _, event, _, cx| {
+			cx.subscribe_in(&options_filter, window, |this, _, event, _, cx| {
 				if let InputEvent::Change = event {
+					this.keyboard.selected = 0;
 					cx.notify();
 				}
 			}),
@@ -200,6 +218,25 @@ impl NixboxApp {
 			}),
 		];
 
+		for (&id, input) in &keyboard.inputs {
+			subscriptions.push(cx.subscribe_in(
+				input,
+				window,
+				move |this, _, event, window, cx| {
+					if let InputEvent::PressEnter { .. } = event {
+						this.save_shortcut(id, false, window, cx);
+					}
+				},
+			));
+		}
+		let handle = window.window_handle();
+		let listener = cx.listener(NixboxApp::handle_key);
+		subscriptions.push(cx.intercept_keystrokes(move |event, window, cx| {
+			if window.window_handle() == handle {
+				listener(event, window, cx);
+			}
+		}));
+
 		let build_events = cx.spawn_in(window, async move |this, cx| {
 			while let Some(event) = build_rx.recv().await {
 				let updated = this.update_in(cx, |this, window, cx| {
@@ -214,6 +251,8 @@ impl NixboxApp {
 		let managed = session.engine.managed_packages().len();
 		let external = session.engine.external_packages.len();
 		let mut app = Self {
+			keyboard,
+			keyboard_previous_page: Page::Packages,
 			repository,
 			session,
 			page: Page::Packages,
@@ -245,6 +284,8 @@ impl NixboxApp {
 			options_task: None,
 			options_filter,
 			option_input,
+			nixos: crate::nixos::NixosView::default(),
+			nixos_filter,
 			config_dir_input,
 			_build_events: build_events,
 			_subscriptions: subscriptions,
@@ -276,12 +317,26 @@ impl NixboxApp {
 	}
 
 	pub fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+		if page == Page::Settings && self.page != Page::Settings {
+			self.keyboard_previous_page = self.page;
+		}
 		self.page = page;
+		self.keyboard
+			.reset_mode(self.session.engine.config.input_mode);
+		self.keyboard.selected = 0;
+		self.keyboard.choice = 0;
+		if page == Page::Settings {
+			self.keyboard
+				.settings_scroll
+				.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)));
+		}
+		self.keyboard.focus.focus(window, cx);
 		let input = match page {
 			Page::Packages => Some(&self.search_input),
 			Page::Flakes => Some(&self.flake_input),
 			Page::Installed => Some(&self.installed_input),
 			Page::Options => Some(&self.options_filter),
+			Page::Nixos => Some(&self.nixos_filter),
 			Page::Queue | Page::Build | Page::VersionControl | Page::Settings => None,
 		};
 		if let Some(input) = input {
@@ -289,6 +344,9 @@ impl NixboxApp {
 		}
 		if page == Page::Build {
 			self.scroll_log_to_end();
+		}
+		if page == Page::Nixos && !self.nixos.initialized {
+			self.reload_nixos(cx);
 		}
 		if page == Page::VersionControl && !self.repository_pending_writes() {
 			self.refresh_repository(window, cx);
@@ -298,7 +356,7 @@ impl NixboxApp {
 
 	pub fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
 		let page = match self.page {
-			Page::Flakes | Page::Installed => self.page,
+			Page::Flakes | Page::Installed | Page::Options | Page::Nixos => self.page,
 			_ => Page::Packages,
 		};
 		self.set_page(page, window, cx);
@@ -414,6 +472,7 @@ impl NixboxApp {
 							format!("{} matches for `{label}`.", hits.len())
 						}
 						.into();
+						this.keyboard.selected = 0;
 						this.results = hits;
 					}
 					Err(error) => {
@@ -502,6 +561,7 @@ impl NixboxApp {
 	pub fn select_flake(&mut self, index: usize, cx: &mut Context<Self>) {
 		self.flake_epoch = self.flake_epoch.wrapping_add(1);
 		self.flake_picker_open = false;
+		self.keyboard.choice = 0;
 		let Some(hit) = self.flake_results.get(index).cloned() else {
 			self.flake_selected = None;
 			return;
@@ -808,6 +868,7 @@ impl NixboxApp {
 		window.push_notification(note, cx);
 		self.set_status(status, cx);
 		self.options_after_build(cx);
+		self.nixos_after_build(cx);
 		self.repository.review = None;
 		if self.page == Page::VersionControl && !self.repository_pending_writes() {
 			self.refresh_repository(window, cx);
@@ -950,6 +1011,7 @@ impl NixboxApp {
 		self.options_cache.clear();
 		self.options = None;
 		self.options_task = None;
+		self.nixos.reset();
 		if self.page == Page::Options {
 			self.page = Page::Installed;
 		}
@@ -961,7 +1023,7 @@ impl NixboxApp {
 		self.save_config(done, cx);
 	}
 
-	fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
+	pub(crate) fn save_config(&mut self, done: String, cx: &mut Context<Self>) {
 		let status = match self.session.engine.config.save() {
 			Ok(()) => done,
 			Err(error) => format!("Saving settings failed: {error}"),
@@ -1073,6 +1135,61 @@ mod tests {
 	}
 
 	#[gpui_kit::test]
+	async fn zoom_keys_scale_the_window_and_survive_theme_changes(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		cx.update(super::bind_keys);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			Root::new(view, window, cx)
+		});
+		let window = handle.into();
+		let rem = |cx: &mut TestAppContext| {
+			cx.update_window(window, |_, window, cx| {
+				window.render_frame(cx);
+				window.rem_size()
+			})
+			.expect("window")
+		};
+		let base = rem(cx);
+		let assert_zoom = |rem: gpui_kit::Pixels, percent: f32| {
+			let expected = base * (percent / 100.);
+			assert!(
+				(rem - expected).abs() < px(0.01),
+				"{rem:?} is not {percent}% of {base:?}"
+			);
+		};
+
+		cx.simulate_keystrokes(window, "ctrl-= ctrl-+");
+		assert_zoom(rem(cx), 120.);
+
+		cx.update_window(window, |_, window, cx| {
+			crate::theme::apply("dracula", Some(window), cx)
+		})
+		.expect("window");
+		assert_zoom(rem(cx), 120.);
+
+		cx.simulate_keystrokes(window, &["ctrl--"; 10].join(" "));
+		assert_zoom(rem(cx), 50.);
+
+		cx.simulate_keystrokes(window, "ctrl-0");
+		assert_zoom(rem(cx), 100.);
+	}
+
+	#[gpui_kit::test]
 	async fn every_page_renders_with_data_and_while_building(cx: &mut TestAppContext) {
 		cx.update(gpui_kit::init);
 		let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1131,6 +1248,7 @@ mod tests {
 			Page::Flakes,
 			Page::Installed,
 			Page::Options,
+			Page::Nixos,
 			Page::Queue,
 			Page::Build,
 			Page::VersionControl,
@@ -1139,7 +1257,7 @@ mod tests {
 			cx.update_window(handle.into(), |_, window, cx| {
 				window.render_frame(cx);
 				let first = window.within("page-tabs").find(0_usize).bounds();
-				let last = window.within("page-tabs").find(6_usize).bounds();
+				let last = window.within("page-tabs").find(7_usize).bounds();
 				assert_eq!(first.top(), last.top(), "Tabs must share a horizontal row");
 				assert!(last.left() > first.right());
 				assert!(first.bottom() < px(120.), "Navigation must stay at the top");
@@ -1148,10 +1266,11 @@ mod tests {
 					Page::Flakes => Some(1),
 					Page::Installed => Some(2),
 					Page::Options => None,
-					Page::Queue => Some(3),
-					Page::Build => Some(4),
-					Page::VersionControl => Some(5),
-					Page::Settings => Some(6),
+					Page::Nixos => Some(3),
+					Page::Queue => Some(4),
+					Page::Build => Some(5),
+					Page::VersionControl => Some(6),
+					Page::Settings => Some(7),
 				};
 				if let Some(index) = index {
 					window.within("page-tabs").click(index, cx);
@@ -1296,7 +1415,7 @@ mod tests {
 				});
 				window.render_frame(cx);
 				let first = window.within("page-tabs").find(0_usize).bounds();
-				let last = window.within("page-tabs").find(6_usize).bounds();
+				let last = window.within("page-tabs").find(7_usize).bounds();
 				assert_eq!(first.top(), last.top(), "{labels:?} tabs share a row");
 				widths.push(first.size.width);
 			})
@@ -1310,7 +1429,7 @@ mod tests {
 		cx.update_window(handle.into(), |_, window, cx| {
 			window.render_frame(cx);
 			let first = window.within("page-tabs").find(0_usize).bounds();
-			let last = window.within("page-tabs").find(6_usize).bounds();
+			let last = window.within("page-tabs").find(7_usize).bounds();
 			let center = (first.left() + last.right()) / 2.;
 			assert!(
 				(center - px(590.)).abs() < px(8.),

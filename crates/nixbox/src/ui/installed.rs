@@ -4,13 +4,15 @@
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{Disableable as _, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+	ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::{
 	AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
 	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 
-use super::{empty, muted, page_header, row, section};
+use super::{empty, hover_row, muted, page_header, section};
 use crate::app::NixboxApp;
 use crate::model::{InstalledRows, target_of};
 
@@ -42,17 +44,28 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		),
 		cx,
 	);
-	let filter = div().px_6().pb_2().child(
-		Input::new(&app.installed_input)
-			.prefix(IconName::Search)
-			.cleanable(true),
-	);
+	let filter = div()
+		.on_mouse_down(
+			gpui_kit::MouseButton::Left,
+			cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
+		)
+		.px_6()
+		.pb_2()
+		.child(
+			Input::new(&app.installed_input)
+				.readonly(app.filter_readonly())
+				.prefix(IconName::Search)
+				.cleanable(true),
+		);
 
+	let managed_count = rows.managed.len();
+	let flake_count = rows.flakes.len();
 	let body = if rows.is_empty() {
 		empty("Nothing installed matches.", cx).into_any_element()
 	} else {
 		v_flex()
 			.id("installed")
+			.track_scroll(&app.keyboard.list_scroll)
 			.size_full()
 			.overflow_y_scroll()
 			.pb_4()
@@ -65,7 +78,14 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						let name = package.name.clone();
 						let scope = package.scope;
 						let options_name = name.clone();
-						row(cx)
+						hover_row(cx)
+							.id(("installed-row", index))
+							.on_click(cx.listener(move |this, _, window, cx| {
+								this.select_row(index, window, cx)
+							}))
+							.when(app.keyboard.selected == index, |row| {
+								row.bg(cx.theme().list_active)
+							})
 							.child(name_cell(&package.name))
 							.child(Tag::secondary().xsmall().child(scope.tag()))
 							.child(
@@ -98,7 +118,14 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				);
 				let repo = flake.repo.clone().unwrap_or_else(|| flake.input.clone());
 				let removable = flake.removable;
-				row(cx)
+				hover_row(cx)
+					.id(("installed-row", managed_count + index))
+					.on_click(cx.listener(move |this, _, window, cx| {
+						this.select_row(managed_count + index, window, cx)
+					}))
+					.when(app.keyboard.selected == managed_count + index, |row| {
+						row.bg(cx.theme().list_active)
+					})
 					.child(
 						v_flex()
 							.flex_1()
@@ -145,7 +172,15 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						let migratable = package.migratable;
 						let options_name = package.name.clone();
 						let scope = target_of(package.scope);
-						row(cx)
+						hover_row(cx)
+							.id(("installed-row", managed_count + flake_count + index))
+							.on_click(cx.listener(move |this, _, window, cx| {
+								this.select_row(managed_count + flake_count + index, window, cx)
+							}))
+							.when(
+								app.keyboard.selected == managed_count + flake_count + index,
+								|row| row.bg(cx.theme().list_active),
+							)
 							.child(
 								v_flex()
 									.flex_1()
