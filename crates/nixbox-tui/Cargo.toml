@@ -18,10 +18,10 @@ name = "nixbox-tui"
 path = "src/main.rs"
 
 [dependencies]
-nixbox-cmd = { path = "../nixbox-cmd", version = "0.3.5" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.3.5" }
-nixbox-core = { path = "../nixbox-core", version = "0.3.5" }
-nixbox-config = { path = "../nixbox-config", version = "0.3.5" }
+nixbox-cmd = { path = "../nixbox-cmd", version = "0.3.6" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.3.6" }
+nixbox-core = { path = "../nixbox-core", version = "0.3.6" }
+nixbox-config = { path = "../nixbox-config", version = "0.3.6" }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -34,4 +34,4 @@ serde_json = { workspace = true }
 directories = { workspace = true }
 
 [dev-dependencies]
-nixbox-core = { path = "../nixbox-core", version = "0.3.5", features = ["test-util"] }
+nixbox-core = { path = "../nixbox-core", version = "0.3.6", features = ["test-util"] }
