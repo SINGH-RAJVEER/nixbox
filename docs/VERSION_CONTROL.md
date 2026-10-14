@@ -12,9 +12,21 @@ Detection finds the nearest repository. A colocated JJ repository uses JJ contro
 
 Open the **Version control** tab in the GUI or the **VCS** tab in the TUI. `Ctrl-R` selects the TUI tab, and `Tab` / `Shift-Tab` cycles through it alongside the other tabs. Initialize with Git or colocated JJ if no repository exists. From the CLI, use Git or JJ directly for initialization, inspection, remotes, bookmarks, and pushing. NixBox exposes only `nixbox commit`, with no `vcs` subcommand.
 
-Review the full status and diff before committing. The proposed message starts with `nixbox: update configuration` and sorts descriptions of successful app operations since the last app commit. Descriptions include targets and package or flake identifiers; option values are omitted. You can edit the message before approval. Manual-only changes use the default subject. The journal records operations rather than calculating a net semantic diff, so opposite edits can both appear in the message.
+Review the full status and diff before committing. The proposed message uses an action-specific subject for one operation, or the affected targets and operation count for several, followed by a numbered list in application order. Every applied package install, removal, migration, flake package or module change, and option set or unset appears individually. Repeated and reversed operations stay in the list. Versions, exact flake outputs, and targets are included; option values are omitted from both the message and journal. You can edit the message before approval. Manual-only changes use `nixbox: update configuration` because their operation history is unknown.
 
-The backend rejects a blank message, an empty diff, or a review that no longer matches the files, revision, and journal. A successful commit clears the pending journal even if a later push fails. Retry push separately; do not create another commit just to retry publication. External commits do not clear NixBox's journal.
+```text
+nixbox: update NixOS configuration (4 operations)
+
+Operations in application order:
+1. Install package ripgrep version 15.2.0 for NixOS.
+2. Set option programs.git.lfs.enable for NixOS.
+3. Remove package ripgrep from NixOS.
+4. Install package ripgrep version 15.2.0 for NixOS.
+```
+
+The list describes successful configuration writes, including writes followed by a failed or canceled rebuild. Queued changes, canceled edits, failed writes, and applies that change no files do not become journal entries. Package and option batches preserve their supplied order; the history reflects the order writes were applied, which can differ from queue insertion order when targets are batched. It is not a net semantic diff, so opposing operations remain visible. Legacy entries retain their original descriptions and available detail. See [Commit messages](COMMIT_MESSAGES.md) for the design and implementation references.
+
+The backend rejects a blank message, an empty diff, or a review that no longer matches the files, revision, and journal. A successful app commit clears the reviewed journal even if a later push fails. Retry push separately; do not create another commit just to retry publication. Git HEAD and JJ's working change and parent set track the commit boundary; JJ snapshots alone do not reset history. An external commit reconciles the journal only when history advances and the whole configuration is clean, with all recorded paths inside the root. Partial commits, unrelated branches, rewritten history, and external paths retain uncertain records for review rather than silently dropping them. Journals from older releases have no boundary and are adopted without discarding their entries on the next successful write.
 
 Git and JJ need your configured name and email. NixBox does not supply an identity or change your identity settings.
 

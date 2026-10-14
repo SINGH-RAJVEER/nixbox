@@ -56,7 +56,7 @@ Writing happens before the rebuild. If a rebuild fails, the files already reflec
 | --- | --- |
 | `nixbox commit [--edit]` | Generate the message, print the exact status, full diff, and final message, then ask for approval. Commit that same review. |
 
-The default message is generated deterministically from the shared backend's journal of successful operations. Descriptions are sorted and omit option values. With no recorded operations, the message is `nixbox: update configuration`.
+The default message is generated deterministically from the shared backend's journal of successful configuration writes. It uses an action-specific subject or target summary, then numbers every applied action in order. Repetitions, reversals, individual option edits, and migrated packages remain visible; option values are omitted. With no recorded operations, the message is `nixbox: update configuration`. See [Version control](VERSION_CONTROL.md#review-and-commit) for an example and external-commit handling.
 
 `commit` accepts `--yes` / `-y` and `--dry-run`. It always shows the full review before confirmation, including with `--yes`. A non-terminal stdin requires `--yes`. A dry run skips confirmation and mutation even with `--yes`. JJ commit dry runs are refused before review because the shared backend's review API snapshots the working copy. Ordinary JJ commit reviews can update snapshot metadata.
 
