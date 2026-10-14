@@ -27,6 +27,9 @@ pub const ASKPASS_ENV: &str = "NIXBOX_ASKPASS";
 /// needs the path back.
 pub const ASKPASS_LIBRARY_PATH_ENV: &str = "NIXBOX_LD_LIBRARY_PATH";
 
+/// When set, build a VM runner at this output link instead of switching NixOS.
+pub const VM_BUILD_ENV: &str = "NIXBOX_VM_BUILD";
+
 /// How a rebuild that needs root gets it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Escalation {
@@ -97,7 +100,11 @@ impl RebuildCommand {
 ///
 /// For [`Target::HomeManager`] this evaluates the flake to decide between
 /// `home-manager switch` and `nixos-rebuild switch`.
+/// [`VM_BUILD_ENV`] routes both targets to a VM build without activation.
 pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
+	if std::env::var_os(VM_BUILD_ENV).is_some() {
+		return nixos(config_dir);
+	}
 	match scope {
 		Target::NixosSystem => nixos(config_dir),
 		Target::HomeManager => {
@@ -119,14 +126,37 @@ pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
 	}
 }
 
-/// The `nixos-rebuild switch` invocation for `config_dir`, without evaluating
-/// anything.
+/// The NixOS switch or, with [`VM_BUILD_ENV`], VM build for `config_dir`,
+/// without evaluating anything.
 #[must_use]
 pub fn nixos(config_dir: &Path) -> RebuildCommand {
+	if let Some(output) = std::env::var_os(VM_BUILD_ENV) {
+		return vm_build(config_dir, Path::new(&output));
+	}
 	let (program, args) = nixos_rebuild_switch_cmd(config_dir);
 	RebuildCommand {
 		program,
 		args,
+		envs: Vec::new(),
+		via_nixos_fallback: false,
+	}
+}
+
+/// Builds the selected configuration's VM without activation or escalation.
+#[must_use]
+fn vm_build(config_dir: &Path, output: &Path) -> RebuildCommand {
+	RebuildCommand {
+		program: "nix".into(),
+		args: vec![
+			"build".into(),
+			"--print-build-logs".into(),
+			"--out-link".into(),
+			output.display().to_string(),
+			format!(
+				"{}#nixosConfigurations.nixos.config.system.build.vm",
+				config_dir.display()
+			),
+		],
 		envs: Vec::new(),
 		via_nixos_fallback: false,
 	}
@@ -172,7 +202,7 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
-	use super::{Escalation, RebuildCommand, nixos};
+	use super::{Escalation, RebuildCommand, nixos, vm_build};
 	use std::path::{Path, PathBuf};
 
 	#[test]
@@ -182,6 +212,42 @@ mod tests {
 		assert!(!cmd.via_nixos_fallback);
 		assert!(cmd.display().contains("/tmp/nixos"));
 		assert_eq!(cmd.arg_refs().len(), cmd.args.len());
+	}
+
+	#[test]
+	fn vm_build_targets_the_configuration_without_sudo() {
+		let cmd = vm_build(Path::new("/tmp/vm config"), Path::new("/tmp/vm result"));
+		assert_eq!(cmd.program, "nix");
+		assert_eq!(
+			cmd.args,
+			[
+				"build",
+				"--print-build-logs",
+				"--out-link",
+				"/tmp/vm result",
+				"/tmp/vm config#nixosConfigurations.nixos.config.system.build.vm",
+			]
+		);
+		assert!(!cmd.via_nixos_fallback);
+		assert_eq!(
+			cmd.clone()
+				.escalated(&Escalation::Askpass(PathBuf::from("/bin/helper"))),
+			cmd
+		);
+	}
+
+	#[tokio::test]
+	async fn vm_environment_routes_both_scopes_to_a_build() {
+		// Nextest runs each test in its own process.
+		unsafe { std::env::set_var(super::VM_BUILD_ENV, "/tmp/vm-result") };
+		let expected = vm_build(Path::new("/tmp/nixos"), Path::new("/tmp/vm-result"));
+		for scope in [
+			nixbox_config::Target::NixosSystem,
+			nixbox_config::Target::HomeManager,
+		] {
+			let cmd = super::resolve(Path::new("/tmp/nixos"), scope).await;
+			assert_eq!(cmd, expected);
+		}
 	}
 
 	#[test]

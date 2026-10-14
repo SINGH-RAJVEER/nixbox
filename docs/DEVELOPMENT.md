@@ -153,6 +153,25 @@ The project does not contain end-to-end terminal snapshot tests. Unit tests cann
 
 ## Testing in a VM
 
+Run the checkout's front-ends on your Linux host against one isolated VM configuration:
+
+```sh
+just vm-gui                      # open the native desktop GUI
+just vm-tui                      # open the terminal UI
+just vm-cli                      # show CLI help
+just vm-cli install ripgrep --yes # edit the configuration and build its VM
+just vm-preview-build            # build without opening a front-end
+just vm-preview                  # build and boot the edited configuration
+```
+
+These recipes seed `.vm/nixos` once from `vm/seed` and `vm/guest.nix`, using the repository's locked nixpkgs revision and the host's Linux architecture. They run the current checkout's binaries with the NixOS target. GUI, TUI, and CLI share that configuration, with separate preferences, recovery state, VCS journals, and caches under `.vm`. Later launches preserve your edits and settings. `.vm` is ignored by version control.
+
+Apply writes the managed files and runs `nix build <configuration>#nixosConfigurations.nixos.config.system.build.vm`, producing `.vm/result`. It needs no sudo. Boot with `just vm-preview`; stop and restart the guest after another Apply to load the rebuilt system. The preview keeps its disk at `.vm/nixos.qcow2`. The NixOS settings browser remains read-only; package installs, package options, and flake modules use the usual apply workflow. This seeded configuration has no Home Manager module.
+
+The launchers set `NIXBOX_CONFIG_DIR` and the XDG configuration, cache, data, and state directories. They also set `NIXBOX_VM_BUILD` to the absolute output-link path, so every shared rebuild path, including Home Manager fallback and recovery, builds this VM. See [Configuration](CONFIGURATION.md) for the environment variable.
+
+The existing guest-side workflow is separate:
+
 NixBox edits a NixOS configuration and runs rebuilds, so the useful way to try a change is against a throwaway machine rather than your own:
 
 ```sh

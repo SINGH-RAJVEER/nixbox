@@ -57,6 +57,8 @@ If `<root>/configuration.nix` does not exist and `nixos_main_file` is unset, Nix
 
 `NIXBOX_CONFIG_DIR` does not move `settings.json`, `state.json`, or the package catalog cache.
 
+For host-side VM development, `NIXBOX_VM_BUILD=<absolute-output-link>` replaces rebuilds with `nix build <root>#nixosConfigurations.nixos.config.system.build.vm --out-link <absolute-output-link>`. It applies to both targets and recovery, builds without sudo, and leaves activation to a later VM boot. The `just vm-gui`, `just vm-tui`, and `just vm-cli` recipes set it together with isolated XDG directories. See [Development](DEVELOPMENT.md#testing-in-a-vm) for launch and boot commands.
+
 ## Version control journal
 
 Repository controls use the configuration root above, not the directory containing NixBox's own settings. Successful operations that change files are recorded in `$XDG_CONFIG_HOME/nixbox/vcs-journal/<root-hash>.json`. The hash is stable for a canonical root path, and each journal also stores that full path to verify its scope. The journal stores operation descriptions and changed paths, not option values.
