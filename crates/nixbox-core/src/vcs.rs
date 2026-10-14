@@ -1806,6 +1806,13 @@ mod tests {
 				],
 			)
 			.unwrap();
+		} else {
+			for (key, value) in [
+				("user.name", "NixBox test"),
+				("user.email", "test@nixbox.invalid"),
+			] {
+				run(&temp.vcs.root, "git", &["config", "--local", key, value]).unwrap();
+			}
 		}
 		fs::write(
 			temp.vcs.root.join("configuration.nix"),
