@@ -1,6 +1,7 @@
 mod app;
 mod handlers;
 mod nav;
+mod nixos;
 mod ops;
 mod options;
 mod repository;

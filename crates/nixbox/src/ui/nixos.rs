@@ -1,114 +1,45 @@
-//! Flat, virtualized schema browser with lazy option inspection.
+//! The NixOS page: a branded header with the host picker, one search row,
+//! then categories, the virtualized option list, and the selected option's
+//! details side by side. Narrow windows fold categories into a wrapped row
+//! and open details as a full-width subpage.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{
 	ActiveTheme as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::{
-	AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-	StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
-	prelude::FluentBuilder as _, px, uniform_list,
+	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+	SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
+	prelude::FluentBuilder as _, px, rems, uniform_list,
 };
 use nixbox_core::options::plain_markdown;
+use nixbox_core::system_options::{Category, access_note, option_tags, partial_note, value_text};
 use nixbox_nix::settings::option_path_display;
-use nixbox_nix::system_options::{InspectedValue, format_preview};
 
-use super::{empty, muted, page_header};
+use super::logo::nixos_logo;
+use super::{empty, muted};
 use crate::app::NixboxApp;
-use crate::nixos::Category;
+
+/// Below this width categories wrap above the list and details replace it.
+const NARROW: f32 = 900.;
+const SIDEBAR_WIDTH: f32 = 240.;
 
 pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>) -> AnyElement {
-	let header = page_header(
-		"NixOS",
-		format!(
-			"Inspect system settings in {}. System settings are read-only in this version.",
-			app.session.config_dir().display()
-		),
-		Some(
-			Button::new("nixos-reload")
-				.ghost()
-				.label("Reload")
-				.on_click(cx.listener(|this, _, _, cx| this.reload_nixos(cx)))
-				.into_any_element(),
-		),
-		cx,
-	);
-	let hosts = h_flex()
-		.px_6()
-		.pb_3()
-		.gap_2()
-		.flex_wrap()
-		.items_center()
-		.child(muted("Host", cx))
-		.children(app.nixos.hosts.iter().enumerate().map(|(index, host)| {
-			let selected = app
-				.nixos
-				.configuration
-				.as_ref()
-				.is_some_and(|configuration| &configuration.host == host);
-			let host = host.clone();
-			Button::new(("nixos-host", index))
-				.outline()
-				.small()
-				.label(host.clone())
-				.selected(selected)
-				.on_click(cx.listener(move |this, _, _, cx| this.select_nixos_host(&host, cx)))
-		}));
-	let filters = h_flex()
-		.px_6()
-		.pb_3()
-		.gap_3()
-		.items_center()
-		.child(
-			div()
-				.flex_1()
-				.min_w_0()
-				.on_mouse_down(
-					gpui_kit::MouseButton::Left,
-					cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
-				)
-				.child(
-					Input::new(&app.nixos_filter)
-						.readonly(app.filter_readonly())
-						.prefix(IconName::Search)
-						.cleanable(true),
-				),
-		)
-		.child(
-			Switch::new("nixos-diagnostic")
-				.label("Diagnostic options")
-				.checked(app.nixos.show_diagnostic)
-				.on_click(cx.listener(|this, checked: &bool, _, cx| {
-					this.nixos.show_diagnostic = *checked;
-					this.refresh_nixos_filter(cx);
-				})),
-		);
-	let categories = h_flex().px_6().pb_3().gap_1().flex_wrap().children(
-		Category::ALL
-			.into_iter()
-			.enumerate()
-			.map(|(index, category)| {
-				Button::new(("nixos-category", index))
-					.ghost()
-					.xsmall()
-					.label(category.label())
-					.selected(app.nixos.category == category)
-					.on_click(cx.listener(move |this, _, _, cx| {
-						this.nixos.category = category;
-						this.refresh_nixos_filter(cx);
-					}))
-			}),
-	);
-	let count = format!(
-		"{} matching / {} schema entries",
-		app.nixos.visible.len(),
-		app.nixos.options.len()
-	);
+	let narrow = window.viewport_size().width < px(NARROW);
+	let ready =
+		!app.nixos.loading && app.nixos.error.is_none() && app.nixos.configuration.is_some();
 	let body = if app.nixos.loading {
-		empty("Reading the selected host's option schema...", cx).into_any_element()
+		v_flex()
+			.size_full()
+			.items_center()
+			.justify_center()
+			.gap_3()
+			.child(Spinner::new())
+			.child(muted("Reading the selected host's option schema...", cx))
+			.into_any_element()
 	} else if let Some(error) = &app.nixos.error {
 		v_flex()
 			.id("nixos-error")
@@ -125,35 +56,57 @@ pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>)
 			.child(muted(error.clone(), cx))
 			.into_any_element()
 	} else if app.nixos.hosts.is_empty() {
-		empty("This flake has no nixosConfigurations outputs. Select a NixOS configuration directory in Settings.", cx).into_any_element()
-	} else if app.nixos.configuration.is_none() {
 		empty(
-			"Choose the host to inspect. This does not change the package install target.",
+			"This flake has no nixosConfigurations outputs. Select a NixOS configuration directory in Settings.",
 			cx,
 		)
 		.into_any_element()
-	} else if window.viewport_size().width < px(900.) {
+	} else if app.nixos.configuration.is_none() {
+		empty(
+			"Choose a host above. This does not change the package install target.",
+			cx,
+		)
+		.into_any_element()
+	} else if narrow {
 		if app.nixos.selected.is_some() {
 			v_flex()
 				.size_full()
 				.child(
-					Button::new("nixos-back")
-						.ghost()
-						.label("Back to options")
-						.on_click(cx.listener(|this, _, _, cx| {
-							this.nixos.selected = None;
-							cx.notify();
-						})),
+					div().px_4().py_2().child(
+						Button::new("nixos-back")
+							.ghost()
+							.icon(IconName::ArrowLeft)
+							.label("Back to options")
+							.on_click(cx.listener(|this, _, _, cx| {
+								this.nixos.selected = None;
+								cx.notify();
+							})),
+					),
 				)
 				.child(div().flex_1().min_h_0().child(details(app, cx)))
 				.into_any_element()
 		} else {
-			option_list(app, cx)
+			option_column(app, cx)
 		}
 	} else {
 		h_flex()
 			.size_full()
-			.child(div().w_1_2().h_full().min_w_0().child(option_list(app, cx)))
+			.child(
+				div()
+					.w(px(SIDEBAR_WIDTH))
+					.h_full()
+					.flex_shrink_0()
+					.border_r_1()
+					.border_color(cx.theme().border)
+					.child(category_list(app, cx)),
+			)
+			.child(
+				div()
+					.flex_1()
+					.h_full()
+					.min_w_0()
+					.child(option_column(app, cx)),
+			)
 			.child(
 				div()
 					.flex_1()
@@ -167,11 +120,9 @@ pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>)
 	};
 	v_flex()
 		.size_full()
-		.child(header)
-		.child(hosts)
-		.child(filters)
-		.child(categories)
-		.child(div().px_6().pb_3().child(muted(count, cx)))
+		.child(header(app, cx))
+		.child(toolbar(app, cx))
+		.when(ready && narrow, |page| page.child(category_chips(app, cx)))
 		.child(
 			div()
 				.flex_1()
@@ -180,6 +131,201 @@ pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>)
 				.border_color(cx.theme().border)
 				.child(body),
 		)
+		.into_any_element()
+}
+
+/// Logo, title, what is being inspected, the host picker, and reload.
+fn header(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	let host = app
+		.nixos
+		.configuration
+		.as_ref()
+		.map(|configuration| configuration.host.clone());
+	let subtitle = match &host {
+		Some(host) => format!(
+			"Host {host} in {}. Read-only in this version.",
+			app.session.config_dir().display()
+		),
+		None => format!(
+			"System settings in {}. Read-only in this version.",
+			app.session.config_dir().display()
+		),
+	};
+	let hosts = (app.nixos.hosts.len() > 1 || host.is_none()) && !app.nixos.hosts.is_empty();
+	h_flex()
+		.px_6()
+		.pt_5()
+		.pb_4()
+		.gap_4()
+		.items_center()
+		.child(nixos_logo(rems(2.75)))
+		.child(
+			v_flex()
+				.flex_1()
+				.min_w_0()
+				.gap_0p5()
+				.child(
+					div()
+						.text_xl()
+						.font_weight(FontWeight::SEMIBOLD)
+						.text_color(cx.theme().link)
+						.child("NixOS"),
+				)
+				.child(muted(subtitle, cx).truncate()),
+		)
+		.when(hosts, |row| {
+			row.child(
+				ButtonGroup::new("nixos-hosts")
+					.outline()
+					.small()
+					.children(app.nixos.hosts.iter().enumerate().map(|(index, name)| {
+						Button::new(("nixos-host", index))
+							.label(name.clone())
+							.selected(host.as_ref() == Some(name))
+					}))
+					.on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+						let host = clicked
+							.first()
+							.and_then(|index| this.nixos.hosts.get(*index))
+							.cloned();
+						if let Some(host) = host {
+							this.select_nixos_host(&host, cx);
+						}
+					})),
+			)
+		})
+		.child(
+			Button::new("nixos-reload")
+				.ghost()
+				.icon(IconName::RotateCw)
+				.label("Reload")
+				.on_click(cx.listener(|this, _, _, cx| this.reload_nixos(cx))),
+		)
+}
+
+fn toolbar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	h_flex()
+		.px_6()
+		.pb_3()
+		.gap_4()
+		.items_center()
+		.child(
+			div()
+				.flex_1()
+				.min_w_0()
+				.on_mouse_down(
+					gpui_kit::MouseButton::Left,
+					cx.listener(|this, _, window, cx| this.enter_insert(window, cx)),
+				)
+				.child(super::cursor::filter_input(
+					app,
+					&app.nixos_filter,
+					IconName::Search,
+				)),
+		)
+		.child(
+			Switch::new("nixos-diagnostic")
+				.label("Diagnostic options")
+				.checked(app.nixos.show_diagnostic)
+				.on_click(cx.listener(|this, checked: &bool, _, cx| {
+					this.nixos.show_diagnostic = *checked;
+					this.refresh_nixos_filter(cx);
+				})),
+		)
+}
+
+fn choose_category(this: &mut NixboxApp, category: Category, cx: &mut Context<NixboxApp>) {
+	this.nixos.category = category;
+	this.refresh_nixos_filter(cx);
+}
+
+/// The wide layout's category column: one row per category with its count.
+fn category_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	v_flex()
+		.id("nixos-categories")
+		.size_full()
+		.overflow_y_scroll()
+		.py_2()
+		.children(Category::ALL.into_iter().map(|category| {
+			let selected = app.nixos.category == category;
+			let count = app.nixos.counts[category.index()];
+			let hover = cx.theme().list_hover;
+			h_flex()
+				.id(("nixos-category", category.index()))
+				.px_4()
+				.py_1p5()
+				.gap_2()
+				.items_center()
+				.text_sm()
+				.cursor_pointer()
+				.when(selected, |row| {
+					row.bg(cx.theme().list_active)
+						.font_weight(FontWeight::MEDIUM)
+				})
+				.when(!selected, |row| row.hover(move |row| row.bg(hover)))
+				.when(count == 0 && !selected, |row| {
+					row.text_color(cx.theme().muted_foreground)
+				})
+				.on_click(cx.listener(move |this, _, _, cx| choose_category(this, category, cx)))
+				.child(div().flex_1().min_w_0().truncate().child(category.label()))
+				.child(
+					div()
+						.text_xs()
+						.text_color(cx.theme().muted_foreground)
+						.child(count.to_string()),
+				)
+		}))
+}
+
+/// The narrow layout's categories, wrapped above the list.
+fn category_chips(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	h_flex()
+		.px_6()
+		.pb_3()
+		.gap_1()
+		.flex_wrap()
+		.children(Category::ALL.into_iter().map(|category| {
+			Button::new(("nixos-category", category.index()))
+				.ghost()
+				.xsmall()
+				.label(format!(
+					"{} {}",
+					category.label(),
+					app.nixos.counts[category.index()]
+				))
+				.selected(app.nixos.category == category)
+				.on_click(cx.listener(move |this, _, _, cx| choose_category(this, category, cx)))
+		}))
+}
+
+/// The match count over the virtualized option rows.
+fn option_column(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
+	let summary = format!(
+		"{} of {} options",
+		app.nixos.visible.len(),
+		app.nixos.options.len()
+	);
+	v_flex()
+		.size_full()
+		.child(
+			h_flex()
+				.px_6()
+				.py_2()
+				.gap_2()
+				.border_b_1()
+				.border_color(cx.theme().border)
+				.text_xs()
+				.text_color(cx.theme().muted_foreground)
+				.child(
+					div()
+						.flex_1()
+						.truncate()
+						.font_weight(FontWeight::SEMIBOLD)
+						.child(app.nixos.category.label().to_uppercase()),
+				)
+				.child(summary),
+		)
+		.child(div().flex_1().min_h_0().child(option_list(app, cx)))
 		.into_any_element()
 }
 
@@ -224,15 +370,11 @@ fn option_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 									)
 									.child(muted(option.type_description.clone(), cx).truncate()),
 							)
-							.when(option.nested, |row| {
-								row.child(Tag::secondary().xsmall().child("schema"))
-							})
-							.when(option.read_only, |row| {
-								row.child(Tag::secondary().xsmall().child("read-only"))
-							})
-							.when(
-								option.children_truncated || option.children_unavailable,
-								|row| row.child(Tag::secondary().xsmall().child("partial")),
+							.children(
+								option_tags(option)
+									.into_iter()
+									.filter(|tag| *tag != "diagnostic")
+									.map(|tag| Tag::secondary().xsmall().child(tag)),
 							)
 							.test_support(),
 					)
@@ -246,63 +388,86 @@ fn option_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 
 fn details(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let Some(option) = app.nixos.selected_option() else {
-		return empty("Select an option to inspect its value and declaration.", cx)
+		return v_flex()
+			.size_full()
+			.items_center()
+			.justify_center()
+			.gap_3()
+			.px_6()
+			.child(div().opacity(0.35).child(nixos_logo(rems(3.5))))
+			.child(muted(
+				"Select an option to inspect its value and where it is defined.",
+				cx,
+			))
 			.into_any_element();
 	};
+	let tags = option_tags(option);
 	let mut body = v_flex()
 		.id("nixos-details")
 		.size_full()
 		.overflow_y_scroll()
 		.px_6()
 		.py_4()
-		.gap_3()
+		.gap_4()
 		.child(
-			div()
-				.font_weight(FontWeight::SEMIBOLD)
-				.child(option_path_display(&option.path)),
-		)
-		.child(muted(option.type_description.clone(), cx))
-		.child(muted(
-			if option.read_only {
-				"Declared read-only. This setting cannot be changed here."
-			} else {
-				"Inspection only. Editing system settings is not available in this version."
-			},
-			cx,
-		));
+			v_flex()
+				.gap_1()
+				.child(
+					div()
+						.text_lg()
+						.font_weight(FontWeight::SEMIBOLD)
+						.font_family(cx.theme().mono_font_family.clone())
+						.child(option_path_display(&option.path)),
+				)
+				.child(
+					h_flex()
+						.gap_2()
+						.flex_wrap()
+						.items_center()
+						.child(muted(option.type_description.clone(), cx))
+						.children(
+							tags.into_iter()
+								.map(|tag| Tag::secondary().xsmall().child(tag)),
+						),
+				),
+		);
 	if let Some(description) = &option.description {
 		body = body.child(div().text_sm().child(plain_markdown(description)));
 	}
-	if option.children_unavailable || option.children_truncated {
-		body = body.child(muted(if option.children_unavailable { "This submodule's child schema could not be evaluated. Its declaration files remain available below." }
-			else { "This branch embeds a complete system or exceeds the four-submodule expansion limit. Its deeper fields are not indexed; consult the declaration files below." }, cx));
+	body = body.child(muted(access_note(option), cx));
+	if let Some(note) = partial_note(option) {
+		body = body.child(muted(note, cx));
 	}
+
+	let mut value = v_flex().gap_3().child(heading("Value", cx));
 	if app.nixos.inspecting {
-		body = body.child(muted("Reading value and definition locations...", cx));
+		value = value.child(
+			h_flex()
+				.gap_2()
+				.items_center()
+				.child(Spinner::new().small())
+				.child(muted("Reading value and definition locations...", cx)),
+		);
 	}
 	if let Some(error) = &app.nixos.detail_error {
-		body = body.child(muted(error.clone(), cx));
+		value = value.child(
+			div()
+				.text_sm()
+				.text_color(cx.theme().danger)
+				.child(error.clone()),
+		);
 	}
+	let mut source = v_flex().gap_3().child(heading("Source", cx));
 	if let Some(details) = &app.nixos.details {
-		let value = match &details.value {
-			InspectedValue::Available(value) => format_preview(value),
-			InspectedValue::Unavailable => "Unavailable. This value could not be evaluated.".into(),
-			InspectedValue::Sensitive => {
-				"Withheld. Credential values and their defaults are not evaluated.".into()
-			}
-			InspectedValue::Template => {
-				"Nested schema. Concrete instance inspection is not implemented yet.".into()
-			}
-		};
-		body = body.child(field("Effective value", value, cx));
-		if let Some(value) = &details.default {
-			body = body.child(field("Default", value.clone(), cx));
+		value = value.child(field("Effective", value_text(&details.value), cx));
+		if let Some(text) = &details.default {
+			value = value.child(field("Default", text.clone(), cx));
 		}
-		if let Some(value) = &details.example {
-			body = body.child(field("Example", value.clone(), cx));
+		if let Some(text) = &details.example {
+			value = value.child(field("Example", text.clone(), cx));
 		}
 		if let Some(files) = &details.definitions {
-			body = body.child(field(
+			source = source.child(field(
 				"Defined in",
 				if files.is_empty() {
 					"No definitions.".into()
@@ -313,14 +478,31 @@ fn details(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			));
 		}
 	}
-	body.child(field("Declared in", option.declarations.join("\n"), cx))
+	source = source.child(field("Declared in", option.declarations.join("\n"), cx));
+	body.child(value)
+		.child(source)
 		.test_support()
 		.into_any_element()
 }
 
-fn field(label: &'static str, value: String, cx: &Context<NixboxApp>) -> impl IntoElement {
-	v_flex()
-		.gap_1()
-		.child(muted(label, cx))
-		.child(div().text_sm().child(value))
+/// A small uppercase label that opens a group of fields.
+fn heading(title: &'static str, cx: &App) -> impl IntoElement {
+	div()
+		.pt_1()
+		.pb_1()
+		.border_b_1()
+		.border_color(cx.theme().border)
+		.text_xs()
+		.font_weight(FontWeight::SEMIBOLD)
+		.text_color(cx.theme().muted_foreground)
+		.child(title.to_uppercase())
+}
+
+fn field(label: &'static str, value: impl Into<SharedString>, cx: &App) -> impl IntoElement {
+	v_flex().gap_1().child(muted(label, cx)).child(
+		div()
+			.text_sm()
+			.font_family(cx.theme().mono_font_family.clone())
+			.child(value.into()),
+	)
 }

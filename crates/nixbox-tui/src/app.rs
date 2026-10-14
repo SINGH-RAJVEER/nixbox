@@ -61,6 +61,7 @@ pub(crate) enum Tab {
 	Search,
 	Flakes,
 	Installed,
+	Nixos,
 	Vcs,
 	Building,
 	Queue,
@@ -72,6 +73,7 @@ impl Tab {
 			Tab::Search => "nixpkgs",
 			Tab::Flakes => "Flakes",
 			Tab::Installed => "Installed",
+			Tab::Nixos => "NixOS",
 			Tab::Vcs => "VCS",
 			Tab::Building => "Building",
 			Tab::Queue => "Queue",
@@ -82,6 +84,7 @@ impl Tab {
 #[derive(Debug, Clone)]
 pub(crate) enum AppEvent {
 	Repository(std::result::Result<crate::repository::Outcome, String>),
+	Nixos(crate::nixos::Event),
 	SearchDone {
 		epoch: u64,
 		hits: Vec<SearchHit>,
@@ -150,6 +153,9 @@ pub(crate) struct App {
 	pub(crate) flake_detail_task: Option<JoinHandle<()>>,
 	pub(crate) installed_input: VimInput,
 	pub(crate) installed_selected: usize,
+	pub(crate) nixos_input: VimInput,
+	/// The NixOS settings browser.
+	pub(crate) nixos: crate::nixos::Panel,
 	pub(crate) status: String,
 	pub(crate) mode: Mode,
 	pub(crate) tab: Tab,
@@ -208,10 +214,12 @@ impl App {
 		let mut input = VimInput::default();
 		let mut flake_input = VimInput::default();
 		let mut installed_input = VimInput::default();
+		let mut nixos_input = VimInput::default();
 		if input_mode == InputMode::Normal {
 			input.enter_insert_before();
 			flake_input.enter_insert_before();
 			installed_input.enter_insert_before();
+			nixos_input.enter_insert_before();
 		}
 		Self {
 			repository: crate::repository::Panel::default(),
@@ -234,6 +242,8 @@ impl App {
 			flake_detail_task: None,
 			installed_input,
 			installed_selected: 0,
+			nixos_input,
+			nixos: crate::nixos::Panel::default(),
 			status,
 			mode: Mode::Browsing,
 			tab: Tab::Search,
@@ -257,7 +267,13 @@ impl App {
 	}
 
 	pub(crate) fn visible_tabs(&self) -> Vec<Tab> {
-		let mut tabs = vec![Tab::Search, Tab::Flakes, Tab::Installed, Tab::Vcs];
+		let mut tabs = vec![
+			Tab::Search,
+			Tab::Flakes,
+			Tab::Installed,
+			Tab::Nixos,
+			Tab::Vcs,
+		];
 		if self.session.is_building() || !self.session.log.is_empty() {
 			tabs.push(Tab::Building);
 		}
@@ -292,10 +308,12 @@ impl App {
 			InputMode::Vim => {
 				self.input.enter_normal();
 				self.installed_input.enter_normal();
+				self.nixos_input.enter_normal();
 			}
 			InputMode::Normal => {
 				self.input.enter_insert_before();
 				self.installed_input.enter_insert_before();
+				self.nixos_input.enter_insert_before();
 			}
 		}
 	}
@@ -464,6 +482,7 @@ async fn event_loop(
 			if let Some(task) = app.options_task.take() {
 				task.abort();
 			}
+			app.nixos.abort();
 			break;
 		}
 
@@ -477,7 +496,7 @@ async fn event_loop(
 			Some(build_ev) = build_rx.recv() => {
 				handle_app_event(&mut app, &tx, AppEvent::Build(build_ev));
 			}
-			_ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.options_loading() || app.session.is_building() => {
+			_ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.nixos.loading || app.nixos.inspecting || app.options_loading() || app.session.is_building() => {
 				app.spinner_frame = app.spinner_frame.wrapping_add(1);
 			}
 		}
@@ -497,6 +516,7 @@ async fn event_loop(
 	if let Some(handle) = app.options_task.take() {
 		handle.abort();
 	}
+	app.nixos.abort();
 	Ok(())
 }
 
@@ -538,7 +558,13 @@ mod tests {
 		assert_eq!(app.manifest_for(Target::NixosSystem).packages.len(), 0);
 		assert_eq!(
 			app.visible_tabs(),
-			vec![Tab::Search, Tab::Flakes, Tab::Installed, Tab::Vcs]
+			vec![
+				Tab::Search,
+				Tab::Flakes,
+				Tab::Installed,
+				Tab::Nixos,
+				Tab::Vcs
+			]
 		);
 	}
 
@@ -571,6 +597,7 @@ mod tests {
 				Tab::Search,
 				Tab::Flakes,
 				Tab::Installed,
+				Tab::Nixos,
 				Tab::Vcs,
 				Tab::Building
 			]
@@ -586,6 +613,7 @@ mod tests {
 				Tab::Search,
 				Tab::Flakes,
 				Tab::Installed,
+				Tab::Nixos,
 				Tab::Vcs,
 				Tab::Building,
 				Tab::Queue

@@ -2,7 +2,6 @@
 //! declared by hand that can be moved into a managed file.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{
 	ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
@@ -51,12 +50,11 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		)
 		.px_6()
 		.pb_2()
-		.child(
-			Input::new(&app.installed_input)
-				.readonly(app.filter_readonly())
-				.prefix(IconName::Search)
-				.cleanable(true),
-		);
+		.child(super::cursor::filter_input(
+			app,
+			&app.installed_input,
+			IconName::Search,
+		));
 
 	let managed_count = rows.managed.len();
 	let flake_count = rows.flakes.len();

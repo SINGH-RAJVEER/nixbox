@@ -34,7 +34,7 @@ The workspace uses Rust edition 2024 and contains seven crates. The dependency d
 | --- | --- | --- |
 | `nixbox-config` | Settings types, defaults, path resolution, JSON loading, JSON saving, and the list of theme names. | None. |
 | `nixbox-nix` | Package search, package catalog, generated manifests, source scanning and migration, flake discovery and installation, rebuild command selection, output streaming, and cancellation. | None. |
-| `nixbox-core` | The headless engine: the `Op` every front-end queues, the persisted `state.json` format, manifest mutation, import wiring, external-package scanning, flake input and output installation, rebuild command selection and privilege escalation, and the `Session` that drives queued ops through rebuilds for the interactive front-ends. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
+| `nixbox-core` | The headless engine: the `Op` every front-end queues, the persisted `state.json` format, manifest mutation, import wiring, external-package scanning, flake input and output installation, rebuild command selection and privilege escalation, the NixOS settings browser's shared categories and search, and the `Session` that drives queued ops through rebuilds for the interactive front-ends. Reports progress through a `Reporter` rather than writing to a terminal. | `nixbox-config`, `nixbox-nix`. |
 | `nixbox-cmd` | Clap command tree, the non-interactive commands, output rendering, and tracing setup. `run` takes an optional `Frontend` and opens it when no subcommand is given. Shared by all three binaries. | `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
 | `nixbox-tui` | The `nixbox-tui` binary, which passes its terminal front-end to `nixbox_cmd::run`, and that front-end: terminal lifecycle, event handling, search scheduling, Vim input behavior, navigation, themes, and rendering. The queue and rebuilds are the `Session`'s. | `nixbox-cmd`, `nixbox-config`, `nixbox-core`, `nixbox-nix`. |
 | `nixbox-cli` | The `nixbox-cli` binary: `nixbox_cmd::run` with no front-end. | `nixbox-cmd`. |
@@ -143,6 +143,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `rebuild.rs` selects the rebuild command for a target, reports when a Home Manager rebuild falls back to `nixos-rebuild`, applies the `Escalation` (plain `sudo`, or `sudo -A` with an askpass helper), and `run` resolves and runs the rebuild, racing the cancel signal. The CLI and the `Session` both use `run`.
 - `session.rs` owns `Session`, the operation pipeline behind the TUI and the GUI: deduplicated enqueueing, merging of waiting `SetOptions` ops per scope, per-target batching, one rebuild at a time, cancellation, the capped build log, `state.json` persistence, and restoring an interrupted run. Rebuilds are spawned on a tokio runtime handle, so a front-end whose own loop is not tokio can still drive it.
 - `search.rs` searches the package catalog when it is ready and falls back to live `nix search`, and names the catalog cache path.
+- `system_options.rs` is the NixOS settings browser's shared policy: the `Category` taxonomy, `filter_options` (path and description search, exact paths first, with per-category counts), `default_host`, and the text both front-ends show for inspected values, read-only options, and partial schema branches.
 - `report.rs` defines the `Reporter` trait plus a silent and a log-collecting implementation, which is how the same engine feeds the TUI's log pane and the CLI's stderr.
 
 ### `nixbox-cmd`
@@ -167,10 +168,11 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `handlers.rs` translates key presses and `AppEvent` values into state changes.
 - `ops.rs` schedules searches, prepares the package catalog, turns the selected row into an `Op`, and reports what the `Session` did with it.
 - `state.rs` turns what `Session::restore` picked up into the starting tab and status line.
-- `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command. Its shared event handler owns text editing for the nixpkgs, Flakes, and Installed fields; `handlers.rs` handles result navigation, tab actions, and refreshing results after edits.
+- `vim.rs` implements Unicode-aware cursor movement, Vim word and WORD motions, selection, deletion, and the two-key `dd` command. Its shared event handler owns text editing for the nixpkgs, Flakes, Installed, and NixOS fields; `handlers.rs` handles result navigation, tab actions, and refreshing results after edits.
+- `nixos.rs` holds the NixOS tab: host and schema discovery on first visit, inspection on `Enter`, epoch-guarded results, and invalidation after a rebuild. It never queues work.
 - `nav.rs` handles wrapped row selection, tab movement, and settings entry.
 - `theme.rs` defines the Ratatui styles for the six palettes named in `nixbox-config::THEMES`, with a test asserting the two lists match.
-- `ui/` renders the shared bars, package search, flake search and detail panel, installed list, build log, queue, and settings popup.
+- `ui/` renders the shared bars, package search, flake search and detail panel, installed list, NixOS browser, build log, queue, and settings popup. The NixOS browser builds only the option rows on screen.
 
 ### `nixbox`
 
@@ -180,10 +182,10 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - `askpass.rs` is that prompt: it prints the password to stdout for sudo, or exits non-zero on cancel so the rebuild stops.
 - `app.rs` owns `NixboxApp`, the window state. Searches and flake lookups run on the tokio runtime; gpui tasks await their join handles, debounce input, and discard stale results by epoch, as the TUI does. A gpui task feeds `BuildEvent`s to the `Session` and raises notifications when a rebuild ends.
 - `options.rs` holds the Options page's state (`OptionsView`): the package and scope, the evaluated options, the selected option, and staged edits, plus the actions that load, stage, unset, discard, and apply them. Evaluations run on the tokio runtime and are cached per scope and package until a rebuild ends, as in the TUI.
-- `nixos.rs` holds the separate read-only `NixosView`, with hosts, schema, filtered indices, selected option, and lazy inspection tasks. It aborts superseded Tokio jobs as well as rejecting stale results by epoch. Build completion and configuration-directory changes invalidate it. It never enqueues a mutation, and its host selection never redirects package work. Edits to source files outside the application need explicit Reload.
+- `nixos.rs` holds the separate read-only `NixosView`, with hosts, schema, filtered indices, per-category counts, selected option, and lazy inspection tasks. It aborts superseded Tokio jobs as well as rejecting stale results by epoch. Build completion and configuration-directory changes invalidate it. It never enqueues a mutation, and its host selection never redirects package work. Edits to source files outside the application need explicit Reload.
 - `model.rs` computes the Installed page's filtered sections and a search hit's installed scopes without gpui, so they are unit tested.
 - `theme.rs` maps the theme names in `nixbox-config::THEMES` onto gpui-component: `default` follows the desktop appearance, the others are dark with the TUI palette's background and accent.
-- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, NixOS, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules. `ui/nixos.rs` virtualizes schema rows and switches to full-width details in small windows.
+- `ui/` renders the horizontal top tabs, status line, and the nixpkgs, Flakes, Installed, Options, NixOS, Queue, Build, Version control, and Settings pages with GPUI Kit components, as flat lists separated by rules. `ui/nixos.rs` lays out the logo header, category sidebar, virtualized schema rows, and details, and switches to wrapped categories and full-width details in small windows. `ui/logo.rs` holds the brand logos, and `ui/cursor.rs` draws the Vim Normal block and Visual outline cursors over the filter inputs, whose own line caret serves Insert mode.
 
 ## Design constraints
 

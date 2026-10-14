@@ -2,6 +2,8 @@
 
 `nixbox` is the default NixBox package: a desktop window over the same engine as the terminal UI. Run with a subcommand, it is the same command line as `nixbox-cli` instead. It reads and writes the same settings, the same managed files, and the same `state.json`, so work queued in one front-end can be resumed in another.
 
+The package installs both `nixbox` and its short command `nb`. Both open the GUI without a subcommand and run the full CLI without opening a window when given a subcommand. Installing the GUI provides the CLI automatically.
+
 ## Installing
 
 The GUI is Linux only for now. Install it from the repository flake to get its native libraries and runtime wrapper without setting up a build environment:
@@ -53,13 +55,15 @@ Zoom scales text and layout together, carries across theme changes, and resets w
 
 ## NixOS settings browser
 
-Open **NixOS** to inspect settings across the system without opening an installed package. Host names come from the configuration flake's `nixosConfigurations` outputs. The browser selects `nixos` when available, or the only host when there is one. Otherwise choose a host. This choice only affects inspection; it does not change the install target or the host used by existing package operations.
+Open **NixOS** to inspect settings across the system without opening an installed package. The tab's icon and page header show the NixOS logo. The header names the selected host and configuration directory, with the host picker and Reload on the right. Below it are the search field and the Diagnostic options switch, then three columns: categories with their match counts, the matching options, and the selected option's details. Details group the effective value, default, and example under Value, and the definition and declaration files under Source.
+
+Host names come from the configuration flake's `nixosConfigurations` outputs. The browser selects `nixos` when available, or the only host when there is one. Otherwise choose a host. The host picker appears when there is more than one host or none is selected yet. This choice only affects inspection; it does not change the install target or the host used by existing package operations.
 
 Categories group the selected host's declarations, including disabled services and imported custom modules. All options includes uncategorized namespaces. Search matches full paths and descriptions, with exact paths first. Diagnostic options includes internal or hidden declarations. Select an option to fetch its effective value, default, example, and definition locations separately from schema discovery. Unavailable values, null, nested templates, and withheld credential fields have different statuses. Previews limit nested depth, collection length, and long strings; sensitive attribute names are also withheld inside structured previews.
 
 Nested schema entries describe fields such as `users.users.<name>.shell`, but concrete instance inspection is not available yet. Expansions deeper than four submodules and embedded full-system configurations have a partial marker instead of silently disappearing. Their declarations remain visible. The tab currently offers inspection only. Editing, review, validation, and host-specific writes are the next implementation work; see the [implementation plan](NIXOS_SETTINGS_PLAN.md).
 
-Reload discovers hosts and options again. Switching hosts cancels older evaluations, and stale results cannot replace the current selection. Search, category, and inspection state survive tab switches. A finished rebuild invalidates the schema, including failed or cancelled rebuilds; changing the configuration directory resets it. Source edits and lock changes made outside NixBox need an explicit Reload. On smaller windows, selection opens details as a full-width page with Back to options.
+Reload discovers hosts and options again. Switching hosts cancels older evaluations, and stale results cannot replace the current selection. Search, category, and inspection state survive tab switches. A finished rebuild invalidates the schema, including failed or cancelled rebuilds; changing the configuration directory resets it. Source edits and lock changes made outside NixBox need an explicit Reload. In windows narrower than 900 pixels, categories wrap above the list and selecting an option opens its details as a full-width page with Back to options.
 
 The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
 
@@ -67,7 +71,7 @@ Installing, removing, migrating, and applying option changes all queue an op. Op
 
 ## Keyboard
 
-Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
+Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. The cursor shape follows the mode: a block over the character in Normal mode, a line in Insert mode, and an outlined box around the moving end of the selection in Visual mode. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
 
 | Default shortcut | Action |
 | --- | --- |

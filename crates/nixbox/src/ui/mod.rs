@@ -1,6 +1,7 @@
 //! Rendering. The window has top tabs, one page, and a status line; pages
 //! are flat lists separated by rules rather than nested panels.
 
+mod cursor;
 mod flakes;
 mod installed;
 mod logo;
@@ -282,7 +283,7 @@ fn page_icon(page: Page, backend: Option<Backend>) -> AnyElement {
 		Page::Queue => IconName::GalleryVerticalEnd,
 		Page::Build => IconName::SquareTerminal,
 		Page::Settings => IconName::Settings,
-		Page::Nixos => IconName::Settings,
+		Page::Nixos => return logo::nixos_logo(rems(1.)),
 		Page::VersionControl => return logo::vcs_logo(backend, rems(1.)),
 	};
 	Icon::new(icon).size_4().into_any_element()

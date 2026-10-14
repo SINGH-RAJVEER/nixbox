@@ -390,6 +390,11 @@ impl NixboxApp {
 		cx.notify();
 	}
 
+	/// The character a visual selection last moved to.
+	pub fn vim_cursor(&self) -> usize {
+		self.keyboard.cursor
+	}
+
 	pub fn filter_readonly(&self) -> bool {
 		self.session.engine.config.input_mode == InputMode::Vim
 			&& self.keyboard.mode != Mode::Insert

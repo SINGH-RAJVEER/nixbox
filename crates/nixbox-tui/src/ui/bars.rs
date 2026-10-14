@@ -20,6 +20,10 @@ pub(super) fn draw_search_bar(f: &mut Frame, area: Rect, app: &App) {
 		},
 		Tab::Flakes => (&app.flake_input, "search GitHub flake contents"),
 		Tab::Installed => (&app.installed_input, "search installed applications"),
+		Tab::Nixos => (
+			&app.nixos_input,
+			"search NixOS options by path or description",
+		),
 		_ => (&app.input, "search nixpkgs"),
 	};
 	let (mode_label, mode_style) = match (app.session.engine.config.input_mode, input.mode()) {
@@ -200,6 +204,9 @@ fn context_keys(app: &App) -> &'static str {
 				Tab::Installed => {
 					"type to filter  ↑↓ results  ↵ options  tab/shift-tab tabs  ctrl-s settings"
 				}
+				Tab::Nixos => {
+					"type to search  ↑↓ move  ↵ inspect  alt-←→ category  ctrl-t host  ctrl-d diagnostic"
+				}
 				Tab::Building if app.session.is_building() => {
 					"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 				}
@@ -236,6 +243,17 @@ fn context_keys(app: &App) -> &'static str {
 				}
 				VimMode::Normal => {
 					"i/a filter  dd clear  j/k results  ↵ options  Del uninstall  m migrate"
+				}
+				VimMode::Visual => {
+					"h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
+				}
+			},
+			Tab::Nixos => match app.nixos_input.mode() {
+				VimMode::Insert => {
+					"type to search  ↑↓ move  ↵ inspect  alt-←→ category  esc normal"
+				}
+				VimMode::Normal => {
+					"j/k move  ↵ inspect  [ ] category  ctrl-t host  ctrl-d diagnostic  r reload  i search"
 				}
 				VimMode::Visual => {
 					"h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"

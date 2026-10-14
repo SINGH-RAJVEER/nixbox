@@ -356,14 +356,19 @@ fn text_lines(text: &str) -> Vec<String> {
 	lines
 }
 
-fn push_block(lines: &mut Vec<Line<'static>>, label: &'static str, body: Vec<String>, dim: Style) {
+pub(super) fn push_block(
+	lines: &mut Vec<Line<'static>>,
+	label: &'static str,
+	body: Vec<String>,
+	dim: Style,
+) {
 	for (index, text) in body.into_iter().enumerate() {
 		let prefix = if index == 0 { label } else { "         " };
 		lines.push(Line::from(vec![Span::styled(prefix, dim), Span::raw(text)]));
 	}
 }
 
-fn pad(text: &str, width: usize) -> String {
+pub(super) fn pad(text: &str, width: usize) -> String {
 	let count = text.chars().count();
 	if count >= width {
 		let mut cut: String = text.chars().take(width.saturating_sub(1)).collect();

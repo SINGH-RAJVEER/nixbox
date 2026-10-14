@@ -2,6 +2,13 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Added `nb` as a short command for `nixbox` in the GUI package's Nix and Cargo installations. Both names accept every CLI subcommand without opening a window and open the GUI when run without a subcommand.
+- Redesigned the GUI's NixOS page. The NixOS logo now appears on the tab and in a header that names the host and configuration directory. The page has a category sidebar with match counts, the option list, and details grouped into Value and Source.
+- Added a matching read-only NixOS tab to the terminal UI, with the same categories, search, host choice, and on-demand inspection.
+- Gave the GUI's search fields Vim cursor shapes: a block in Normal mode, a line in Insert mode, and an outlined box in Visual mode.
+
 ## 0.3.5 - 2026-10-11
 
 - Made the desktop GUI the default NixBox. The `nixbox` crate, flake package, and command are now the GUI, which `nixbox-gui` used to be; `cargo install nixbox` installs its Nix-backed launcher, and `nix profile install github:SINGH-RAJVEER/nixbox` installs it with its desktop entry, now `nixbox.desktop`. On macOS, where the GUI is not packaged, the flake's default package and the launcher run the terminal UI.

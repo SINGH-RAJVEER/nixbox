@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use gpui_kit::{Context, Task};
+use nixbox_core::system_options::{Category, default_host, filter_options};
 use nixbox_nix::settings::OptionPath;
 use nixbox_nix::system_options::{
 	NixosConfiguration, SystemOption, SystemOptionDetails, discover_hosts, discover_options,
@@ -14,95 +15,6 @@ use crate::app::{NixboxApp, Page};
 
 const EVALUATION_LIMIT: Duration = Duration::from_secs(120);
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Category {
-	#[default]
-	All,
-	General,
-	Network,
-	Desktop,
-	Hardware,
-	Users,
-	Storage,
-	Programs,
-	Services,
-	Virtualization,
-	Nix,
-	System,
-}
-
-impl Category {
-	pub const ALL: [Self; 12] = [
-		Self::All,
-		Self::General,
-		Self::Network,
-		Self::Desktop,
-		Self::Hardware,
-		Self::Users,
-		Self::Storage,
-		Self::Programs,
-		Self::Services,
-		Self::Virtualization,
-		Self::Nix,
-		Self::System,
-	];
-
-	pub const fn label(self) -> &'static str {
-		match self {
-			Self::All => "All options",
-			Self::General => "General and region",
-			Self::Network => "Network",
-			Self::Desktop => "Desktop and login",
-			Self::Hardware => "Hardware and audio",
-			Self::Users => "Users and security",
-			Self::Storage => "Boot and storage",
-			Self::Programs => "Programs and environment",
-			Self::Services => "Services and scheduling",
-			Self::Virtualization => "Virtualization",
-			Self::Nix => "Nix and maintenance",
-			Self::System => "System and custom",
-		}
-	}
-
-	fn for_option(option: &SystemOption) -> Self {
-		let first = option.path.first().map(String::as_str);
-		let second = option.path.get(1).map(String::as_str);
-		match (first, second) {
-			(Some("networking"), Some("hostName"))
-			| (Some("time" | "i18n" | "console" | "fonts" | "documentation"), _) => Self::General,
-			(Some("networking"), _)
-			| (Some("systemd"), Some("network"))
-			| (Some("services"), Some("resolved" | "openssh")) => Self::Network,
-			(Some("xdg"), _)
-			| (
-				Some("services"),
-				Some("xserver" | "desktopManager" | "displayManager" | "printing"),
-			) => Self::Desktop,
-			(Some("hardware" | "powerManagement"), _)
-			| (
-				Some("services"),
-				Some(
-					"pipewire"
-					| "pulseaudio"
-					| "blueman"
-					| "udev"
-					| "tlp"
-					| "power-profiles-daemon",
-				),
-			) => Self::Hardware,
-			(Some("users" | "security"), _) => Self::Users,
-			(Some("boot" | "fileSystems" | "swapDevices"), _)
-			| (Some("systemd"), Some("mounts" | "automounts"))
-			| (Some("services"), Some("fstrim")) => Self::Storage,
-			(Some("programs" | "environment"), _) => Self::Programs,
-			(Some("services" | "systemd"), _) => Self::Services,
-			(Some("virtualisation" | "containers"), _) => Self::Virtualization,
-			(Some("nix" | "nixpkgs"), _) | (Some("system"), Some("autoUpgrade")) => Self::Nix,
-			_ => Self::System,
-		}
-	}
-}
-
 #[derive(Default)]
 pub struct NixosView {
 	pub initialized: bool,
@@ -110,6 +22,8 @@ pub struct NixosView {
 	pub configuration: Option<NixosConfiguration>,
 	pub options: Vec<SystemOption>,
 	pub visible: Vec<usize>,
+	/// Matches per category for the current search, in [`Category::ALL`] order.
+	pub counts: [usize; Category::ALL.len()],
 	pub category: Category,
 	pub show_diagnostic: bool,
 	pub selected: Option<OptionPath>,
@@ -157,33 +71,15 @@ impl NixosView {
 		self.loading = false;
 		self.options.clear();
 		self.visible.clear();
+		self.counts = Default::default();
 		self.selected = None;
 		self.error = None;
 	}
 
 	pub fn filter(&mut self, text: &str) {
-		let text = text.trim().to_lowercase();
-		let mut matches: Vec<(usize, bool)> = self
-			.options
-			.iter()
-			.enumerate()
-			.filter(|(_, option)| self.show_diagnostic || !option.diagnostic)
-			.filter(|(_, option)| {
-				self.category == Category::All || Category::for_option(option) == self.category
-			})
-			.filter_map(|(index, option)| {
-				let path = option.path.join(".").to_lowercase();
-				let matches = text.is_empty()
-					|| path.contains(&text)
-					|| option
-						.description
-						.as_ref()
-						.is_some_and(|description| description.to_lowercase().contains(&text));
-				matches.then_some((index, path == text))
-			})
-			.collect();
-		matches.sort_by_key(|(_, exact)| !exact);
-		self.visible = matches.into_iter().map(|(index, _)| index).collect();
+		let filtered = filter_options(&self.options, text, self.category, self.show_diagnostic);
+		self.visible = filtered.visible;
+		self.counts = filtered.counts;
 	}
 
 	pub fn selected_option(&self) -> Option<&SystemOption> {
@@ -196,17 +92,6 @@ impl Drop for NixosView {
 	fn drop(&mut self) {
 		self.cancel();
 	}
-}
-
-fn default_host(hosts: &[String], previous: Option<&str>) -> Option<String> {
-	previous
-		.and_then(|host| hosts.iter().find(|candidate| candidate.as_str() == host))
-		.cloned()
-		.or_else(|| hosts.iter().find(|host| host.as_str() == "nixos").cloned())
-		.or_else(|| match hosts {
-			[host] => Some(host.clone()),
-			_ => None,
-		})
 }
 
 impl NixboxApp {
@@ -222,6 +107,7 @@ impl NixboxApp {
 		self.nixos.error = None;
 		self.nixos.options.clear();
 		self.nixos.visible.clear();
+		self.nixos.counts = Default::default();
 		self.nixos.selected = None;
 		self.nixos.hosts.clear();
 		self.nixos.configuration = None;
@@ -272,6 +158,7 @@ impl NixboxApp {
 		self.nixos.error = None;
 		self.nixos.options.clear();
 		self.nixos.visible.clear();
+		self.nixos.counts = Default::default();
 		self.nixos.selected = None;
 		let epoch = self.nixos.catalog_epoch;
 		let job = self
@@ -378,53 +265,6 @@ mod tests {
 			children_unavailable: false,
 			children_truncated: false,
 		}
-	}
-
-	#[test]
-	fn host_selection_preserves_a_valid_choice_and_requires_ambiguous_choice() {
-		let hosts = vec!["laptop".into(), "workstation".into()];
-		assert_eq!(default_host(&hosts, None), None);
-		assert_eq!(default_host(&hosts, Some("deleted")), None);
-		assert_eq!(
-			default_host(&hosts, Some("workstation")),
-			Some("workstation".into())
-		);
-		assert_eq!(
-			default_host(&["laptop".into()], None),
-			Some("laptop".into())
-		);
-		assert_eq!(
-			default_host(&["laptop".into(), "nixos".into()], None),
-			Some("nixos".into())
-		);
-	}
-
-	#[test]
-	fn search_includes_descriptions_custom_namespaces_and_diagnostic_options() {
-		let mut view = NixosView::default();
-		view.options = vec![
-			option(
-				"services.pipewire.enable",
-				"custom.welcome configures greetings",
-				false,
-			),
-			option("custom.welcome", "Welcome message", false),
-			option("custom.debug", "Internal welcome behavior", true),
-		];
-		view.filter("CUSTOM.WELCOME");
-		assert_eq!(
-			view.visible,
-			[1, 0],
-			"Exact paths precede description matches"
-		);
-		view.filter("welcome");
-		assert_eq!(view.visible, [0, 1]);
-		view.show_diagnostic = true;
-		view.filter("welcome");
-		assert_eq!(view.visible, [0, 1, 2]);
-		view.category = Category::System;
-		view.filter("");
-		assert_eq!(view.visible, [1, 2], "Custom options remain discoverable");
 	}
 
 	#[gpui_kit::test]
