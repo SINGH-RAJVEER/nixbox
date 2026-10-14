@@ -1,12 +1,8 @@
 use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode};
 
-/// The flake app this launcher stands in for. The GUI is Linux only, so
-/// elsewhere it runs the terminal UI, which takes the same subcommands.
-#[cfg(target_os = "linux")]
-const PACKAGE: &str = env!("CARGO_BIN_NAME");
-#[cfg(not(target_os = "linux"))]
-const PACKAGE: &str = "nixbox-tui";
+/// The independently installed desktop GUI flake package.
+const PACKAGE: &str = "nixbox";
 
 #[rustfmt::skip]
 fn flake_ref() -> String {

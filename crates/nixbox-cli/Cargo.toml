@@ -1,5 +1,6 @@
 [package]
 name = "nixbox-cli"
+default-run = "nixbox-cli"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -12,10 +13,16 @@ categories.workspace = true
 description = "Command-line package manager for NixOS and Home Manager, with no user interface"
 
 [[bin]]
-# Deliberately not `nixbox`: that name belongs to the desktop `nixbox` crate,
-# and two packages installing the same executable would overwrite each other.
 name = "nixbox-cli"
 path = "src/main.rs"
+
+[[bin]]
+name = "nixbox"
+path = "src/nixbox.rs"
+
+[[bin]]
+name = "nb"
+path = "src/nb.rs"
 
 [dependencies]
 # Only the command tree: no front-end is passed to it, so neither ratatui nor

@@ -4455,8 +4455,8 @@ name = "nixbox"
 version = "0.3.5"
 dependencies = [
  "anyhow",
+ "clap",
  "gpui-kit",
- "nixbox-cmd",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
@@ -4536,10 +4536,10 @@ name = "nixbox-tui"
 version = "0.3.5"
 dependencies = [
  "anyhow",
+ "clap",
  "crossterm",
  "directories",
  "futures",
- "nixbox-cmd",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
@@ -4548,6 +4548,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "tui-input",
 ]
 

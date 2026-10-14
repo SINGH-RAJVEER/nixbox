@@ -20,13 +20,13 @@ NixBox is a desktop package manager for NixOS and Home Manager, with a terminal 
 
 ## Install
 
-NixBox comes as three packages with the same subcommands. They install under different names, so one machine can have any combination:
+NixBox has three independently installed interfaces. Each package installs only its own interface:
 
 | Package | Command | Run without a subcommand |
 | ------- | ------- | ------------------------ |
-| `nixbox` | `nixbox`, `nb` | opens the desktop GUI (Linux) |
+| `nixbox` | `nixbox-gui` | opens the desktop GUI |
 | `nixbox-tui` | `nixbox-tui` | opens the terminal UI |
-| `nixbox-cli` | `nixbox-cli` | prints help |
+| `nixbox-cli` | `nixbox`, `nb`, `nixbox-cli` | `nixbox` and `nb` show help |
 
 On Linux, install the desktop GUI from the flake to get its native libraries and runtime wrapper without configuring a build environment. The package includes a desktop entry and icon for application menus:
 
@@ -34,7 +34,7 @@ On Linux, install the desktop GUI from the flake to get its native libraries and
 nix profile install github:SINGH-RAJVEER/nixbox
 ```
 
-The GUI package includes the full CLI. Both `nixbox command ...` and `nb command ...` run subcommands without opening a window, for example `nixbox search firefox` or `nb search firefox`. Both Nix and Cargo installations of `nixbox` provide the two command names.
+The CLI is a separate installation. Installing the GUI or TUI does not provide `nixbox` or `nb`, include CLI subcommands, or intercept terminal commands. The GUI's Settings > Terminal applications shows flake installation commands for the TUI and CLI. See [Terminal applications](docs/TERMINAL_APPS.md).
 
 The GUI is also published to crates.io. Its default Cargo installation is a small launcher that runs the matching flake package, so it needs Nix with flakes enabled but no graphics development libraries:
 
@@ -98,10 +98,10 @@ Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch6
 ## Run
 
 ```sh
-nixbox
+nixbox-gui
 ```
 
-With no subcommand this opens the desktop GUI; `nixbox-tui` opens the terminal UI instead. Every operation either interface performs is also a subcommand, so the same work can be scripted or run over SSH. `nixbox-cli` has those subcommands and no interface, and running it bare prints help.
+Run `nixbox-gui` or use the desktop entry for the GUI, and `nixbox-tui` for the terminal UI. Install `nixbox-cli` separately for `nixbox command ...` and `nb command ...`. All interfaces share the engine, settings, and managed files.
 
 ## First run
 
@@ -125,7 +125,7 @@ Installing a package writes a generated module before the rebuild starts. NixBox
 
 ## CLI
 
-Running `nixbox` with no arguments opens the desktop GUI, and `nixbox-tui` the terminal UI. Every subcommand does the same work headlessly, against the same managed files.
+Install the CLI separately with `nix profile add github:SINGH-RAJVEER/nixbox#nixbox-cli`. `nixbox` and `nb` show help without arguments and never open a GUI or TUI. Neither has a `--gui` or `--tui` option.
 
 ```sh
 nixbox search ripgrep            # search the configured channel
@@ -176,7 +176,7 @@ The configuration is always written before the rebuild starts. If a rebuild fail
 
 Every front-end shares `~/.config/nixbox/state.json`. `nixbox resume` picks up a rebuild that was killed partway, or applies a batch you queued in an interface and never ran; `--dry-run` shows it first and `--discard` throws it away.
 
-Every command above works the same under `nixbox-tui` and `nixbox-cli`.
+Every command above also works under `nb` and `nixbox-cli`. The independently installed GUI and TUI do not accept CLI subcommands.
 
 ### Exit codes
 

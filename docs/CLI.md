@@ -1,8 +1,12 @@
 # Command line interface
 
-Running `nixbox` with no subcommand opens the desktop GUI, and `nixbox-tui` the terminal UI. Package operations are also available as subcommands, so they can be scripted, run over SSH, or put in a shell alias.
+The CLI is installed independently of the GUI and TUI:
 
-The GUI package ships the full CLI under both `nixbox` and `nb`, including with `cargo install nixbox`. Use either name for every command, such as `nixbox search firefox` or `nb search firefox`; subcommands do not open a window. A bare `nb` behaves like a bare `nixbox`. On Linux, `nix run github:SINGH-RAJVEER/nixbox#nb -- search firefox` runs the short command directly.
+```sh
+nix profile add github:SINGH-RAJVEER/nixbox#nixbox-cli
+```
+
+That package provides `nixbox`, `nb`, and the compatibility name `nixbox-cli`. Bare `nixbox` and `nb` show help and exit successfully. They never launch either interface and have no `--gui` or `--tui` switches. GUI-only and TUI-only installations do not provide these commands or detect terminal invocations. See [Terminal applications](TERMINAL_APPS.md) for profile and declarative flake installation steps.
 
 Every front-end goes through `nixbox-core`. A package installed from the command line and the same package installed in either interface take the identical code path, read the same catalog, and produce the identical files. They also share `state.json`, so a queue built in either interface can be finished with `nixbox resume`, and a rebuild the CLI started and lost can be picked up by either.
 
@@ -109,29 +113,17 @@ Without `--output`, `flake add` installs the flake's first package on the Home M
 
 ## Three packages
 
-NixBox publishes three packages. They share the same subcommands and differ in what a bare invocation opens:
+Each package installs its own interface, with no executable-name collisions:
 
-| Install | Command | Run without a subcommand |
+| Install | Executables | Bare invocation |
 | --- | --- | --- |
-| `cargo install nixbox` | `nixbox`, `nb` | opens the desktop GUI |
+| `cargo install nixbox` | `nixbox-gui` | opens the desktop GUI |
 | `cargo install nixbox-tui` | `nixbox-tui` | opens the terminal UI |
-| `cargo install nixbox-cli` | `nixbox-cli` | prints help and exits `1` |
+| `cargo install nixbox-cli` | `nixbox`, `nb`, `nixbox-cli` | the aliases show help; `nixbox-cli` prints help and exits `1` |
 
-`nixbox-cli` exists for machines that will never run a UI: servers, CI, containers, and anything reached over SSH. It leaves out `ratatui`, `crossterm`, `tui-input`, and gpui entirely.
+The GUI and TUI depend on the shared engine, not `nixbox-cmd`, and do not include CLI commands. Install `nixbox-cli` separately when you want the CLI, with or without either interface. The CLI leaves out Ratatui, Crossterm, gpui, and both front-end crates.
 
-The three install under different names, so one machine can have any combination. Everything else is identical, including `nixbox config set theme`, because the theme names live in `nixbox-config` rather than in a UI. A subcommand never opens an interface, so `nixbox` works over SSH as well as `nixbox-cli` does.
-
-Help text, generated completions, and hints like "run `nixbox-cli apply`" all use whichever name you installed.
-
-The Nix flake exposes all three:
-
-```sh
-nix profile install github:SINGH-RAJVEER/nixbox#nixbox
-nix profile install github:SINGH-RAJVEER/nixbox#nixbox-tui
-nix profile install github:SINGH-RAJVEER/nixbox#nixbox-cli
-```
-
-Examples in this document say `nixbox`; use `nb` for the short command, or substitute `nixbox-tui` or `nixbox-cli` if that is what you installed. The separate TUI and CLI packages retain their own executable names.
+Help, generated completions, and recovery hints use the executable name you ran. All examples here use `nixbox`; `nb` and `nixbox-cli` accept the same commands.
 
 ## Exit codes
 

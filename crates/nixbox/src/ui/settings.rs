@@ -100,6 +100,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			}
 		}));
 	let shortcuts = keyboard_settings(app, cx);
+	let terminal_apps = super::terminal_apps::render(cx);
 	v_flex()
 		.size_full()
 		.child(page_header(
@@ -115,6 +116,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				.flex_1()
 				.min_h_0()
 				.overflow_y_scroll()
+				.child(terminal_apps)
 				.child(setting(
 					"Input mode",
 					"Normal types directly. Vim adds Normal, Insert and Visual modes to search and filter fields. Shared with the TUI.",

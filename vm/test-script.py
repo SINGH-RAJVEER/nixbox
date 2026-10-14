@@ -13,11 +13,11 @@ machine.wait_for_unit("multi-user.target")
 
 
 def nixbox(args: str) -> str:
-	return machine.succeed("su -l tester -c 'nixbox-tui " + args + "'")
+	return machine.succeed("su -l tester -c 'nixbox-cli " + args + "'")
 
 
 def nixbox_fails(args: str) -> str:
-	return machine.fail("su -l tester -c 'nixbox-tui " + args + "'")
+	return machine.fail("su -l tester -c 'nixbox-cli " + args + "'")
 
 
 def managed() -> str:
@@ -66,7 +66,7 @@ with subtest("the managed file is imported and tracked by git"):
 
 with subtest("list reports what was migrated, as text and as json"):
 	assert "hello" in nixbox("list")
-	parsed = machine.succeed("su -l tester -c 'nixbox-tui list --json' | jq -r '.[0].name'")
+	parsed = machine.succeed("su -l tester -c 'nixbox-cli list --json' | jq -r '.[0].name'")
 	assert parsed.strip() == "hello", parsed
 
 with subtest("a change without a terminal needs --yes"):
@@ -143,9 +143,9 @@ with subtest("resume applies a queue the TUI could have left behind"):
 	machine.fail("test -f /home/tester/.config/nixbox/state.json")
 	nixbox("remove hello --no-rebuild --yes")
 
-with subtest("nixbox-cli is the same program without the UI"):
+with subtest("the separately installed CLI owns terminal commands"):
 	# Both binaries are on PATH, so this compares them on one machine rather
-	# than trusting that the shared command tree behaves the same.
+	# than assuming the independently installed interfaces include commands.
 	cli = machine.succeed("su -l tester -c 'nixbox-cli --help'")
 	assert "Usage: nixbox-cli" in cli, cli
 	assert "no user interface" in cli, cli
@@ -262,7 +262,7 @@ with subtest("a queued flake package is wired in as a person would write it"):
 with subtest("flake list reports the managed package, as text and as json"):
 	listed = nixbox("flake list")
 	assert REPO in listed and "package" in listed and "default" in listed, listed
-	kind = machine.succeed("su -l tester -c 'nixbox-tui flake list --json' | jq -r '.[0].kind'")
+	kind = machine.succeed("su -l tester -c 'nixbox-cli flake list --json' | jq -r '.[0].kind'")
 	assert kind.strip() == "package", kind
 
 with subtest("a second package from the same flake sits next to the first"):

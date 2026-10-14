@@ -430,7 +430,11 @@ impl App {
 }
 
 pub async fn run() -> Result<()> {
-	let engine = Engine::load()?;
+	run_with_config(nixbox_config::Config::load_or_default()?).await
+}
+
+pub async fn run_with_config(config: nixbox_config::Config) -> Result<()> {
+	let engine = Engine::with_config(config)?;
 
 	enable_raw_mode()?;
 	let mut stdout = io::stdout();

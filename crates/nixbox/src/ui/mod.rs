@@ -11,6 +11,7 @@ mod packages;
 mod queue;
 mod repository;
 mod settings;
+mod terminal_apps;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::spinner::Spinner;

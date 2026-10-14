@@ -1,8 +1,8 @@
 # Desktop GUI
 
-`nixbox` is the default NixBox package: a desktop window over the same engine as the terminal UI. Run with a subcommand, it is the same command line as `nixbox-cli` instead. It reads and writes the same settings, the same managed files, and the same `state.json`, so work queued in one front-end can be resumed in another.
+The `nixbox` package installs `nixbox-gui`, a desktop window over the shared NixBox engine. It contains no CLI commands and does not install `nixbox` or `nb`. Its settings and managed files are shared with the independently installed CLI and TUI.
 
-The package installs both `nixbox` and its short command `nb`. Both open the GUI without a subcommand and run the full CLI without opening a window when given a subcommand. Installing the GUI provides the CLI automatically.
+Open Settings > Terminal applications for step-by-step flake installation commands for the terminal UI and CLI, with a copy button for each command. Nothing is installed automatically. See [Terminal applications](TERMINAL_APPS.md).
 
 ## Installing
 
@@ -24,12 +24,12 @@ The crates.io package installs a small launcher that runs the matching tagged fl
 
 ```sh
 cargo install nixbox
-nixbox
+nixbox-gui
 ```
 
 To compile and run the native GUI from a checkout, use `just gui`. This command enters the pinned devenv shell automatically, including when invoked from an older shell. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
 
-The equivalent command is `devenv shell -- cargo run -p nixbox --features native`. Without `--features native`, Cargo builds the launcher for the tagged release, so it runs the published GUI rather than the checkout's code.
+The equivalent command is `devenv shell -- cargo run -p nixbox --features native`. Without `--features native`, Cargo builds the launcher for the tagged release, so it runs the published code rather than the checkout's code.
 
 If startup fails with `No GPU adapters found`, run `VK_LOADER_DEBUG=error,warn just gui` to see the Vulkan loader's errors. A `GLIBC_` version error from Mesa or LLVM means the GUI's runtime libraries are older than the host driver requires. For checkout builds, update `devenv update nixpkgs rust-overlay`, enter a fresh shell, and rebuild with `just gui`. The tagged release has its own pinned libraries; updating devenv does not change them. Use the native checkout build to bypass an incompatible release. Do not add another glibc to `LD_LIBRARY_PATH`.
 
@@ -136,5 +136,5 @@ A Home Manager rebuild with no standalone `homeConfigurations` output falls back
 ## Limits
 
 - Running the GUI and the TUI at the same time is not supported. Both write `state.json` and the managed files, and nothing coordinates them.
-- The subcommands `nixbox` accepts never open a window, so `nixbox resume` and scripts work over SSH. A bare `nixbox` always opens the GUI; use `nixbox-tui` for an interface in a terminal.
-- macOS is not packaged yet. There, the flake's default package and the `cargo install nixbox` launcher run the terminal UI instead.
+- `nixbox-gui` only opens the GUI. CLI commands belong to the separately installed `nixbox-cli` package and are invoked as `nixbox`, `nb`, or `nixbox-cli`.
+- The GUI is Linux only. On macOS the flake's default package remains the independently installed terminal UI; the GUI Cargo launcher does not fall back to another interface.

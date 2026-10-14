@@ -13,17 +13,15 @@ use crate::commands;
 /// one that failed outright.
 pub const EXIT_FAILURE: u8 = 1;
 
-/// What `--help` says for `nixbox-cli`. A binary with an interface replaces
-/// both through its [`crate::Frontend`].
+/// Help shared by the CLI package's three executable names.
 const ABOUT: &str = "Command-line package manager for NixOS and Home Manager";
 
 const LONG_ABOUT: &str = "Search nixpkgs, and let nixbox write the result into your home-manager \
                           or NixOS configuration and rebuild. This build has no user interface; \
-                          `nixbox` adds the desktop GUI and `nixbox-tui` the terminal UI.";
+                          Install the desktop GUI or nixbox-tui separately for an interactive interface.";
 
 /// Printed after the help when `nixbox-cli` runs without a subcommand.
-const NO_INTERFACE: &str =
-	"This is nixbox-cli. Install `nixbox` for the desktop GUI or `nixbox-tui` for the terminal UI.";
+const NO_INTERFACE: &str = "This is nixbox-cli. Install the separate GUI package or nixbox-tui for an interactive interface.";
 
 // `name` is overridden at runtime with the installed binary name, because one
 // crate backs `nixbox`, `nixbox-tui`, and `nixbox-cli`. The literal here is

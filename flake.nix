@@ -20,16 +20,15 @@
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       # `nixbox` is the desktop front-end, Linux only for now, and the only
       # one that needs the graphics stack. `nixbox-tui` adds the terminal UI
-      # and `nixbox-cli` no interface at all; all three share one command
-      # tree and install under their own names, so they can sit in one
-      # profile without overwriting each other.
+      # and only `nixbox-cli` includes CLI commands. The interfaces share
+      # the engine and install different executables, so each is optional.
       mkNixbox =
         {
           pkgs,
           package ? "nixbox",
         }:
         let
-          binary = package;
+          binary = if gui then "nixbox-gui" else package;
           gui = package == "nixbox";
           # Loaded at runtime rather than linked, so they go on the library
           # path through the wrapper.
@@ -107,7 +106,7 @@
           );
 
           postInstall = ''
-				for executable in ${binary}${pkgs.lib.optionalString gui " nb"}; do
+				for executable in ${binary}${pkgs.lib.optionalString (package == "nixbox-cli") " nixbox nb"}; do
 					wrapProgram $out/bin/$executable \
 						--prefix PATH : ${
 							pkgs.lib.makeBinPath [
@@ -122,7 +121,7 @@
               install -Dm644 ${./assets/nixbox.svg} "$out/share/icons/hicolor/scalable/apps/nixbox.svg"
               install -Dm644 ${./assets/nixbox.desktop.in} "$out/share/applications/nixbox.desktop"
               substituteInPlace "$out/share/applications/nixbox.desktop" \
-                --replace-fail '@NIXBOX_EXEC@' "$out/bin/nixbox"
+                --replace-fail '@NIXBOX_EXEC@' "$out/bin/nixbox-gui"
               desktop-file-validate "$out/share/applications/nixbox.desktop"
             ''}
           '';
@@ -179,14 +178,14 @@
           default = app "default" "Run NixBox";
           nixbox-tui = app "nixbox-tui" "Run the NixBox terminal UI";
           nixbox-cli = app "nixbox-cli" "Run the NixBox command line";
+			nb = {
+				type = "app";
+				program = nixpkgs.lib.getExe' self.packages.${system}.nixbox-cli "nb";
+				meta.description = "Run the separately installed NixBox CLI";
+			};
         }
         // nixpkgs.lib.optionalAttrs (isLinux system) {
           nixbox = app "nixbox" "Run the NixBox desktop GUI";
-			nb = {
-				type = "app";
-				program = nixpkgs.lib.getExe' self.packages.${system}.nixbox "nb";
-				meta.description = "Run NixBox using its short command";
-			};
         }
       );
 

@@ -1,6 +1,6 @@
 [package]
 name = "nixbox"
-default-run = "nixbox"
+default-run = "nixbox-gui"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -18,7 +18,7 @@ default = []
 # the matching tagged flake release, so `cargo install nixbox` needs no
 # graphics development libraries.
 native = [
-	"dep:nixbox-cmd",
+	"dep:clap",
 	"dep:nixbox-core",
 	"dep:nixbox-config",
 	"dep:nixbox-nix",
@@ -33,17 +33,11 @@ native = [
 ]
 
 [[bin]]
-name = "nixbox"
+name = "nixbox-gui"
 path = "src/main.rs"
 
-[[bin]]
-name = "nb"
-path = "src/nb.rs"
-# Both entry points include the same modules; run their tests only once.
-test = false
-
 [dependencies]
-nixbox-cmd = { path = "../nixbox-cmd", version = "0.3.5", optional = true }
+clap = { workspace = true, optional = true }
 nixbox-core = { path = "../nixbox-core", version = "0.3.5", optional = true }
 nixbox-config = { path = "../nixbox-config", version = "0.3.5", optional = true }
 nixbox-nix = { path = "../nixbox-nix", version = "0.3.5", optional = true }

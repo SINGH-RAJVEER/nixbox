@@ -72,7 +72,7 @@ jobs:
           fi
           grep -q 'This is nixbox-cli' bare.log
 
-      - name: Check dependency-free GUI launchers
+      - name: Check dependency-free GUI launcher
         run: |
           set -euo pipefail
           cargo build -p nixbox --locked
@@ -84,12 +84,9 @@ jobs:
           SH
           chmod +x "$fake_dir/nix"
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          for binary in nixbox nb; do
-            test -x "target/debug/$binary"
-            output="$(PATH="$fake_dir:$PATH" "target/debug/$binary" search 'two words' --json)"
-            expected="$(printf '<run>\n<github:SINGH-RAJVEER/nixbox/v%s#%s>\n<-->\n<search>\n<two words>\n<--json>' "$version" "$binary")"
-            test "$output" = "$expected"
-          done
+          output="$(PATH="$fake_dir:$PATH" target/debug/nixbox-gui --target nixos)"
+          expected="$(printf '<run>\n<github:SINGH-RAJVEER/nixbox/v%s#nixbox>\n<-->\n<--target>\n<nixos>' "$version")"
+          test "$output" = "$expected"
 
   gui:
     name: Desktop GUI

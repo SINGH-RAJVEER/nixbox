@@ -1326,6 +1326,28 @@ mod tests {
 					}
 				});
 				window.render_frame(cx);
+				if page == Page::Settings {
+					for (id, command) in [
+						(
+							"copy-terminal-tui",
+							"nix profile add github:SINGH-RAJVEER/nixbox#nixbox-tui",
+						),
+						(
+							"copy-terminal-cli",
+							"nix profile add github:SINGH-RAJVEER/nixbox#nixbox-cli",
+						),
+					] {
+						assert!(
+							window.find(id).visible(),
+							"Installation instructions must be visible"
+						);
+						window.click(id, cx);
+						assert_eq!(
+							cx.read_from_clipboard().and_then(|item| item.text()),
+							Some(command.to_owned())
+						);
+					}
+				}
 				if page == Page::Packages {
 					assert!(
 						window.find(("install", 0_usize)).visible(),
