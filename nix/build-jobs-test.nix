@@ -15,7 +15,8 @@ let
 					''
 						(
 							export NIX_BUILD_CORES=${toString cores}
-							export CARGO_BUILD_JOBS=24
+							unset CARGO_BUILD_JOBS
+							CARGO_BUILD_JOBS=24
 							${configured.${phase}}
 							test "$NIX_BUILD_CORES" = ${expected}
 							test "$CARGO_BUILD_JOBS" = ${expected}
