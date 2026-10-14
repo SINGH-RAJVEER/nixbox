@@ -223,10 +223,10 @@ The repository flake exports:
 - `packages.<system>.nixbox`, the desktop GUI, on Linux systems only. Its wrapper also puts the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`, and it installs a desktop entry and icon.
 - `packages.<system>.nixbox-tui` and `packages.<system>.nixbox-cli`.
 - `packages.<system>.default`, which is `nixbox` on Linux and `nixbox-tui` on macOS.
-- `apps.<system>.default`, plus an app for each package.
+- `apps.<system>.default`, plus an app for each package and `apps.<system>.nb` on Linux for the short command bundled with the GUI.
 - `overlays.default`, which adds `pkgs.nixbox`, `pkgs.nixbox-tui`, and `pkgs.nixbox-cli`.
 
-Supported systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. Each package builds only its own binary target; `nixbox-tui` runs the workspace tests except the GUI's, `nixbox` runs the GUI's with `native`, and `nixbox-cli` runs its own and `nixbox-cmd`'s. The source set includes Cargo metadata, the license, README, and all crates. Every installed executable is wrapped with `gh`, `git`, and `nix` on `PATH`. The test VM and `checks.<system>.cli` use `nixbox-tui`, since the VM has no display.
+Supported systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. Each package builds its own binary targets; the GUI package installs both `nixbox` and `nb` from the same entry point. `nixbox-tui` runs the workspace tests except the GUI's, `nixbox` runs the GUI's with `native`, and `nixbox-cli` runs its own and `nixbox-cmd`'s. The source set includes Cargo metadata, the license, README, and all crates. Every installed executable is wrapped with `gh`, `git`, and `nix` on `PATH`. The test VM and `checks.<system>.cli` use `nixbox-tui`, since the VM has no display.
 
 Useful checks are:
 
@@ -271,7 +271,7 @@ Published crates must use one version across the workspace. Before merging a rel
 
 `.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains three jobs.
 
-The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox --all-targets --locked -- -D warnings`, and `cargo nextest run --workspace --exclude nixbox --locked`, followed by a step that builds `nixbox-tui` and `nixbox-cli` and checks their names, help, and that a bare `nixbox-cli` prints help and fails, and a dependency-free build and argument-forwarding check for the `nixbox` launcher. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
+The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox --all-targets --locked -- -D warnings`, and `cargo nextest run --workspace --exclude nixbox --locked`, followed by a step that builds `nixbox-tui` and `nixbox-cli` and checks their names, help, and that a bare `nixbox-cli` prints help and fails, and a dependency-free build and argument-forwarding check for both `nixbox` and `nb` launchers. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
 
 The `publish` job declares `needs: [test, gui]` and is restricted to `push` events, so it never runs from a pull request and never starts unless both checks succeeded. It installs the graphics development libraries, checks the locked workspace including the GUI, creates the `v<version>` tag for the flake launcher, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-cmd`, `nixbox-tui`, `nixbox-cli`, and `nixbox` in dependency order. A later push at the same version does not move the tag or republish. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
 

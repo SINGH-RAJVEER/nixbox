@@ -2,6 +2,8 @@
 
 Running `nixbox` with no subcommand opens the desktop GUI, and `nixbox-tui` the terminal UI. Package operations are also available as subcommands, so they can be scripted, run over SSH, or put in a shell alias.
 
+The GUI package ships the full CLI under both `nixbox` and `nb`, including with `cargo install nixbox`. Use either name for every command, such as `nixbox search firefox` or `nb search firefox`; subcommands do not open a window. A bare `nb` behaves like a bare `nixbox`. On Linux, `nix run github:SINGH-RAJVEER/nixbox#nb -- search firefox` runs the short command directly.
+
 Every front-end goes through `nixbox-core`. A package installed from the command line and the same package installed in either interface take the identical code path, read the same catalog, and produce the identical files. They also share `state.json`, so a queue built in either interface can be finished with `nixbox resume`, and a rebuild the CLI started and lost can be picked up by either.
 
 Neither interface is required. See [Three packages](#three-packages) for the build that is only the command line.
@@ -107,11 +109,11 @@ Without `--output`, `flake add` installs the flake's first package on the Home M
 
 ## Three packages
 
-NixBox publishes three binaries. They are the same program with the same subcommands, and differ only in what a bare invocation opens:
+NixBox publishes three packages. They share the same subcommands and differ in what a bare invocation opens:
 
 | Install | Command | Run without a subcommand |
 | --- | --- | --- |
-| `cargo install nixbox` | `nixbox` | opens the desktop GUI |
+| `cargo install nixbox` | `nixbox`, `nb` | opens the desktop GUI |
 | `cargo install nixbox-tui` | `nixbox-tui` | opens the terminal UI |
 | `cargo install nixbox-cli` | `nixbox-cli` | prints help and exits `1` |
 
@@ -129,7 +131,7 @@ nix profile install github:SINGH-RAJVEER/nixbox#nixbox-tui
 nix profile install github:SINGH-RAJVEER/nixbox#nixbox-cli
 ```
 
-Examples in this document say `nixbox`; substitute `nixbox-tui` or `nixbox-cli` if that is what you installed.
+Examples in this document say `nixbox`; use `nb` for the short command, or substitute `nixbox-tui` or `nixbox-cli` if that is what you installed. The separate TUI and CLI packages retain their own executable names.
 
 ## Exit codes
 

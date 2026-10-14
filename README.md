@@ -24,7 +24,7 @@ NixBox comes as three packages with the same subcommands. They install under dif
 
 | Package | Command | Run without a subcommand |
 | ------- | ------- | ------------------------ |
-| `nixbox` | `nixbox` | opens the desktop GUI (Linux) |
+| `nixbox` | `nixbox`, `nb` | opens the desktop GUI (Linux) |
 | `nixbox-tui` | `nixbox-tui` | opens the terminal UI |
 | `nixbox-cli` | `nixbox-cli` | prints help |
 
@@ -33,6 +33,8 @@ On Linux, install the desktop GUI from the flake to get its native libraries and
 ```sh
 nix profile install github:SINGH-RAJVEER/nixbox
 ```
+
+The GUI package includes the full CLI. Both `nixbox command ...` and `nb command ...` run subcommands without opening a window, for example `nixbox search firefox` or `nb search firefox`. Both Nix and Cargo installations of `nixbox` provide the two command names.
 
 The GUI is also published to crates.io. Its default Cargo installation is a small launcher that runs the matching flake package, so it needs Nix with flakes enabled but no graphics development libraries:
 

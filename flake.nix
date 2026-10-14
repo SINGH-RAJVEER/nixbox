@@ -107,15 +107,17 @@
           );
 
           postInstall = ''
-            wrapProgram $out/bin/${binary} \
-              --prefix PATH : ${
-                pkgs.lib.makeBinPath [
-                  pkgs.gh
-                  pkgs.git
-					pkgs.jujutsu
-                  pkgs.nix
-                ]
-              }${pkgs.lib.optionalString gui " --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibraries}"}
+				for executable in ${binary}${pkgs.lib.optionalString gui " nb"}; do
+					wrapProgram $out/bin/$executable \
+						--prefix PATH : ${
+							pkgs.lib.makeBinPath [
+								pkgs.gh
+								pkgs.git
+								pkgs.jujutsu
+								pkgs.nix
+							]
+						}${pkgs.lib.optionalString gui " --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibraries}"}
+				done
             ${pkgs.lib.optionalString gui ''
               install -Dm644 ${./assets/nixbox.svg} "$out/share/icons/hicolor/scalable/apps/nixbox.svg"
               install -Dm644 ${./assets/nixbox.desktop.in} "$out/share/applications/nixbox.desktop"
@@ -180,6 +182,11 @@
         }
         // nixpkgs.lib.optionalAttrs (isLinux system) {
           nixbox = app "nixbox" "Run the NixBox desktop GUI";
+			nb = {
+				type = "app";
+				program = nixpkgs.lib.getExe' self.packages.${system}.nixbox "nb";
+				meta.description = "Run NixBox using its short command";
+			};
         }
       );
 

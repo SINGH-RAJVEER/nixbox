@@ -1,10 +1,10 @@
 use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode};
 
-/// The flake package this launcher stands in for. The GUI is Linux only, so
+/// The flake app this launcher stands in for. The GUI is Linux only, so
 /// elsewhere it runs the terminal UI, which takes the same subcommands.
 #[cfg(target_os = "linux")]
-const PACKAGE: &str = "nixbox";
+const PACKAGE: &str = env!("CARGO_BIN_NAME");
 #[cfg(not(target_os = "linux"))]
 const PACKAGE: &str = "nixbox-tui";
 
@@ -24,6 +24,6 @@ pub(crate) fn main() -> ExitCode {
 		.arg("--")
 		.args(std::env::args_os().skip(1))
 		.exec();
-	eprintln!("nixbox: could not run Nix package: {error}");
+	eprintln!("{}: could not run Nix package: {error}", env!("CARGO_BIN_NAME"));
 	ExitCode::FAILURE
 }

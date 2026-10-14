@@ -11,10 +11,6 @@ on:
 permissions:
   contents: read
 
-# Publishing is not idempotent across concurrent runs: two pushes racing up
-# the seven-crate chain can each see a version as unpublished and both try to
-# upload it. Never cancel one in flight, though, or the chain is left half
-# published.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
@@ -47,18 +43,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-      # --all-targets so tests and examples are linted too, not just the
-      # library and binary targets.
-      # The desktop front-end needs the graphics stack; the gui job covers it.
       - name: Lint
         run: cargo clippy --workspace --exclude nixbox --all-targets --locked -- -D warnings
 
       - name: Test
         run: cargo nextest run --workspace --exclude nixbox --locked
 
-      # The two terminal packages are meant to produce two differently named
-      # binaries that both work. A rename should fail here rather than after
-      # publishing.
       - name: Check both terminal binaries
         run: |
           set -euo pipefail
@@ -71,23 +61,18 @@ jobs:
           target/debug/nixbox-tui --version
           target/debug/nixbox-cli --version
 
-          # Captured rather than piped into `grep -q`: these binaries restore
-          # the default SIGPIPE disposition on purpose, so an early-closing
-          # reader kills them and `pipefail` reports the whole line as failed.
           help="$(target/debug/nixbox-tui --help)"
           grep -q 'Usage: nixbox-tui' <<<"$help"
           help="$(target/debug/nixbox-cli --help)"
           grep -q 'Usage: nixbox-cli' <<<"$help"
 
-          # A bare run prints help and exits non-zero rather than silently.
           if target/debug/nixbox-cli >/dev/null 2>bare.log; then
             echo "bare nixbox-cli exited successfully" >&2
             exit 1
           fi
           grep -q 'This is nixbox-cli' bare.log
 
-      # `cargo install nixbox` builds this launcher, not the native GUI.
-      - name: Check dependency-free GUI launcher
+      - name: Check dependency-free GUI launchers
         run: |
           set -euo pipefail
           cargo build -p nixbox --locked
@@ -99,9 +84,12 @@ jobs:
           SH
           chmod +x "$fake_dir/nix"
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          output="$(PATH="$fake_dir:$PATH" target/debug/nixbox --probe)"
-          expected="$(printf '<run>\n<github:SINGH-RAJVEER/nixbox/v%s#nixbox>\n<-->\n<--probe>' "$version")"
-          test "$output" = "$expected"
+          for binary in nixbox nb; do
+            test -x "target/debug/$binary"
+            output="$(PATH="$fake_dir:$PATH" "target/debug/$binary" search 'two words' --json)"
+            expected="$(printf '<run>\n<github:SINGH-RAJVEER/nixbox/v%s#%s>\n<-->\n<search>\n<two words>\n<--json>' "$version" "$binary")"
+            test "$output" = "$expected"
+          done
 
   gui:
     name: Desktop GUI
@@ -191,13 +179,7 @@ jobs:
           set -euo pipefail
 
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          # Dependency order: nixbox-core sits on the two leaf libraries,
-          # nixbox-cmd sits on nixbox-core, and the three binaries, the
-          # terminal UI, the bare CLI, and the desktop GUI, all sit on
-          # nixbox-cmd.
-          # Each crate depends on the published version of the one before it,
-          # so the order is load-bearing. cargo waits for the index after
-          # each upload, which is what makes the next one resolvable.
+ 
           crates=(nixbox-config nixbox-nix nixbox-core nixbox-cmd nixbox-tui nixbox-cli nixbox)
 
           for crate in "${crates[@]}"; do
@@ -208,9 +190,6 @@ jobs:
               continue
             fi
 
-            # A re-run after a partial failure, or a push that did not bump
-            # the version, finds crates already uploaded. That is success.
-            # cargo has worded this several ways, so match loosely.
             if grep -qiE 'already (exists|uploaded)|crate version .* is already' publish.log; then
               echo "${crate} ${version} is already on crates.io; skipping"
               echo "::endgroup::"
