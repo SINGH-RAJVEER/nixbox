@@ -11,6 +11,41 @@ devenv shell -- just ci
 
 If the command succeeds there and fails with plain Cargo, the host Rust toolchain or environment is the likely cause.
 
+## Builds use too much memory
+
+NixBox's flake packages limit each package's build and test compilation to two compiler jobs by default. They preserve a lower `NIX_BUILD_CORES` allowance from Nix. This applies to the GUI, TUI, and CLI on every supported build platform, including a remote builder. It also applies when the Cargo-installed launcher runs the matching flake release.
+
+Choose a positive integer `buildJobs` for the machine doing the build. For example, a larger machine can raise the package ceiling:
+
+```nix
+home.packages = [
+	(nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+		buildJobs = 8;
+	})
+];
+```
+
+With the overlay, use `pkgs.nixbox.override { buildJobs = 8; }`. The TUI and CLI packages accept the same override. Set `buildJobs = 1` for a lower ceiling. The effective concurrency is the smaller of this ceiling and Nix's `cores` allowance, so a larger override also needs a sufficient allowance from Nix.
+
+The package ceiling does not limit other packages that Nix builds at the same time. Nix's `max-jobs` controls simultaneous package builds, and `cores` supplies the per-package allowance. Configure those for the build machine's RAM and workload. The launcher inherits these settings and does not replace them. A compiler job or linker can still use substantial memory, so a job limit is not a memory ceiling.
+
+For direct Cargo installations, supply the standard Cargo job limit:
+
+```sh
+cargo install nixbox --features native --locked --jobs 2
+cargo install nixbox-tui --locked --jobs 2
+cargo install nixbox-cli --locked --jobs 2
+```
+
+The native GUI command requires graphics development libraries. The default `cargo install nixbox` builds a small launcher instead. Cargo registry installs do not read this repository's `.cargo/config.toml`; use `--jobs` or `CARGO_BUILD_JOBS` to select their concurrency.
+
+Checkout builds default to two jobs through `.cargo/config.toml`. An explicit `--jobs` or `CARGO_BUILD_JOBS` overrides that default, including for the `just` recipes:
+
+```sh
+CARGO_BUILD_JOBS=1 devenv shell -- just ci
+CARGO_BUILD_JOBS=8 devenv shell -- just gui
+```
+
 ## Rust linker wrapper points to a missing Nix store path
 
 An error such as `ld.lld: ... /nix/store/.../nix-support/ld-wrapper.sh: No such file or directory` means the active Rustup toolchain contains a linker wrapper tied to a Nix store path that no longer exists. It is not a Rust source or NixBox linker-flag error when the same build succeeds in devenv.
