@@ -103,6 +103,14 @@ pub enum Op {
 		names: Vec<String>,
 		scope: Target,
 	},
+	/// Moves hand-declared packages out of `from`'s main file into the
+	/// managed file of the other target, `scope`. Only `scope` rebuilds; the
+	/// package leaves `from` on that target's next rebuild.
+	MigrateAcross {
+		names: Vec<String>,
+		from: Target,
+		scope: Target,
+	},
 	/// Moves a hand-declared flake package into nixbox's generated module.
 	MigrateFlakePackage {
 		input: String,
@@ -131,6 +139,7 @@ impl Op {
 			| Op::UninstallFlakeOutput { scope, .. }
 			| Op::Uninstall { scope, .. }
 			| Op::Migrate { scope, .. }
+			| Op::MigrateAcross { scope, .. }
 			| Op::MigrateFlakePackage { scope, .. }
 			| Op::SetOptions { scope, .. } => *scope,
 		}
@@ -183,7 +192,8 @@ impl Op {
 					..
 				},
 			) => a_input == b_input && a_output == b_output,
-			(Op::Migrate { names: a, .. }, Op::Migrate { names: b, .. }) => {
+			(Op::Migrate { names: a, .. }, Op::Migrate { names: b, .. })
+			| (Op::MigrateAcross { names: a, .. }, Op::MigrateAcross { names: b, .. }) => {
 				a.iter().any(|name| b.contains(name))
 			}
 			(
@@ -267,6 +277,13 @@ impl Op {
 				[only] => format!("migrate {} [{}]", only, tag),
 				rest => format!("migrate {} packages [{}]", rest.len(), tag),
 			},
+			Op::MigrateAcross { names, from, .. } => {
+				let from = from.tag();
+				match names.as_slice() {
+					[only] => format!("migrate {only} [{from} -> {tag}]"),
+					rest => format!("migrate {} packages [{from} -> {tag}]", rest.len()),
+				}
+			}
 			Op::MigrateFlakePackage { input, package, .. } => {
 				format!("migrate {input}#{package} [{tag}]")
 			}
@@ -370,6 +387,19 @@ mod tests {
 			}
 			.label(),
 			"migrate 2 packages [hm]"
+		);
+	}
+
+	#[test]
+	fn cross_target_migrate_labels_name_both_targets() {
+		assert_eq!(
+			Op::MigrateAcross {
+				names: vec!["fira-code".into()],
+				from: Target::HomeManager,
+				scope: Target::NixosSystem,
+			}
+			.label(),
+			"migrate fira-code [hm -> nixos]"
 		);
 	}
 

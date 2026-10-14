@@ -112,7 +112,7 @@ sequenceDiagram
 		T->>Q: Persist state and continue next target when allowed
 ```
 
-The queue contains `Install`, `InstallFlake`, `InstallFlakePackage`, `UninstallFlake`, `UninstallFlakeOutput`, `Uninstall`, and `Migrate` variants. `Session::enqueue` skips an op when the same work is already waiting (`Op::duplicates`). `Session::drain` takes the target from the first queued operation, removes every queued operation for that target, applies them in their existing order, and launches one rebuild. Operations for the other target remain queued.
+The queue contains `Install`, `InstallFlake`, `InstallFlakePackage`, `UninstallFlake`, `UninstallFlakeOutput`, `Uninstall`, `Migrate`, `MigrateAcross`, `MigrateFlakePackage`, and `SetOptions` variants. `MigrateAcross` belongs to its destination target even though it also edits the source target's main file. `Session::enqueue` skips an op when the same work is already waiting (`Op::duplicates`). `Session::drain` takes the target from the first queued operation, removes every queued operation for that target, applies them in their existing order, and launches one rebuild. Operations for the other target remain queued.
 
 File mutation happens before the rebuild. A failed rebuild does not restore previous files. This matches the recovery model: an interrupted rebuild can run again because the generated files already represent the requested state.
 

@@ -49,10 +49,7 @@ pub(super) fn render(entries: &[JournalEntry]) -> String {
 
 pub(super) fn entries(op: &Op, changed_files: &[PathBuf]) -> Vec<JournalEntry> {
 	let target = op.scope();
-	let scope = match target {
-		Target::NixosSystem => "NixOS",
-		Target::HomeManager => "Home Manager",
-	};
+	let scope = target.title();
 	let mut descriptions = match op {
 		Op::Install { hit, .. } => vec![(
 			format!("install {} for {scope}", hit.attr),
@@ -100,6 +97,20 @@ pub(super) fn entries(op: &Op, changed_files: &[PathBuf]) -> Vec<JournalEntry> {
 				)
 			})
 			.collect(),
+		Op::MigrateAcross { names, from, .. } => {
+			let from = from.title();
+			names
+				.iter()
+				.map(|name| {
+					(
+						format!("move declared package {name} from {from} to {scope}"),
+						format!(
+							"Move declared package {name} from {from} into NixBox management for {scope}."
+						),
+					)
+				})
+				.collect()
+		}
 		Op::MigrateFlakePackage { input, package, .. } => vec![(
 			format!("manage declared package {input}#{package} for {scope}"),
 			format!(
@@ -226,6 +237,22 @@ mod tests {
 				"Move declared package z into NixBox management for Home Manager.",
 				"Move declared package a into NixBox management for Home Manager.",
 			]
+		);
+	}
+
+	#[test]
+	fn cross_target_migration_names_both_targets() {
+		let operations = entries(
+			&Op::MigrateAcross {
+				names: vec!["fira-code".into()],
+				from: Target::HomeManager,
+				scope: Target::NixosSystem,
+			},
+			&[],
+		);
+		assert_eq!(
+			render(&operations),
+			"nixbox: move declared package fira-code from Home Manager to NixOS\n\nOperations in application order:\n1. Move declared package fira-code from Home Manager into NixBox management for NixOS."
 		);
 	}
 }

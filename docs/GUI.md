@@ -43,7 +43,7 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | --- | --- |
 | nixpkgs | Searches the package catalog for your locked nixpkgs revision, falling back to live `nix search` while the catalog is built. Each hit shows where it is already installed and has an Install button. |
 | Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs. Clicking a hit with multiple installable outputs opens a list of exact package and compatible module paths; clicking a path installs that output. A single compatible output can be installed directly. |
-| Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
+| Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Hovering a hand-declared package's Migrate button opens a bubble that migrates it to the other target instead, for example a font declared for Home Manager into the NixOS system packages. Options on a managed or hand-declared package opens its Options page. |
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | NixOS | A read-only browser of the selected host's option schema, with categories, search by path and description, nested templates, and on-demand values and declaration locations. |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
@@ -81,7 +81,7 @@ Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types
 | Ctrl-F | Focus search/filter on nixpkgs, Flakes, Installed, Options, or NixOS; open nixpkgs search from other pages. |
 | Up / Down, j / k in Vim Normal mode | Select a result, option, output choice, or queued operation. The selected row stays visible. |
 | Enter | Install a search result or flake output, open an installed package's options, or focus an option value editor. |
-| Delete, m, M in Installed | Remove the selected managed package/flake, migrate a declaration, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
+| Delete, m, o, M in Installed | Remove the selected managed package/flake, migrate a declaration, migrate a declaration to the other target, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
 | Ctrl-W / w, Ctrl-U / u, Ctrl-Z / U, r in Options | Apply, unset, discard, or reload. Plain letters act in Vim Normal mode. |
 | c in Build | Cancel the running build. |
 | Ctrl-Enter / Delete in Queue | Apply the queue / drop its selected operation. |

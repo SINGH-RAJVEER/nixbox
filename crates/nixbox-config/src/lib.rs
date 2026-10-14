@@ -88,6 +88,23 @@ impl Target {
 			Target::NixosSystem => "nixos",
 		}
 	}
+
+	/// Display name for prose and buttons.
+	pub fn title(self) -> &'static str {
+		match self {
+			Target::HomeManager => "Home Manager",
+			Target::NixosSystem => "NixOS",
+		}
+	}
+
+	/// The target a package can be moved across to.
+	#[must_use]
+	pub fn other(self) -> Self {
+		match self {
+			Target::HomeManager => Target::NixosSystem,
+			Target::NixosSystem => Target::HomeManager,
+		}
+	}
 }
 
 const MAX_RECENT_SEARCHES: usize = 20;

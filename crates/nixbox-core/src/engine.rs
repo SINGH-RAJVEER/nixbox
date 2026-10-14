@@ -153,6 +153,13 @@ impl Engine {
 		self.manifest_for(scope).packages.contains(name)
 	}
 
+	/// Whether `scope` has a main config file, which a package migrated
+	/// across into it needs to be imported from.
+	#[must_use]
+	pub fn has_main_file(&self, scope: Target) -> bool {
+		self.config.main_file_for(scope).exists()
+	}
+
 	/// Reports whether `scope`'s managed file is imported, without writing
 	/// anything — [`Engine::apply`] is what repairs a missing import.
 	#[must_use]
@@ -241,6 +248,31 @@ impl Engine {
 				// Drop any externals that just moved into the manifest.
 				self.external_packages
 					.retain(|ep| !(scope_matches(ep.scope, scope) && removed.contains(&ep.name)));
+			}
+			Op::MigrateAcross { names, from, .. } => {
+				// Wire the destination up before the source loses its lines,
+				// so a host without that target keeps its declaration.
+				let destination = self.config.main_file_for(scope);
+				if ensure_imported(&destination, &self.config.managed_file_for(scope))?
+					== ImportStatus::MainFileMissing
+				{
+					anyhow::bail!(
+						"{} not found; {} is not configured on this machine",
+						destination.display(),
+						scope.title()
+					);
+				}
+				let source = self.config.main_file_for(*from);
+				let removed = remove_from_source(&source, scan_target(*from), names)?;
+				for name in &removed {
+					self.manifest_for_mut(scope).add(name);
+				}
+				self.external_packages
+					.retain(|ep| !(scope_matches(ep.scope, *from) && removed.contains(&ep.name)));
+				// The shared tail only tracks the destination's main file.
+				if source.exists() {
+					git_track(&source, reporter);
+				}
 			}
 			Op::MigrateFlakePackage { input, package, .. } => {
 				return self.migrate_flake_package(input, package, scope, reporter);
@@ -506,6 +538,79 @@ mod tests {
 			.expect("managed file written");
 		assert!(written.contains("ripgrep"));
 		assert!(!written.contains("fd"));
+		drop(dir);
+	}
+
+	#[test]
+	fn migrating_across_moves_a_declaration_into_the_other_target() {
+		let dir = crate::tests::temp_dir("apply-migrate-across");
+		let config = dir.config();
+		let home = config.main_file_for(Target::HomeManager);
+		std::fs::write(
+			&home,
+			"{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    ripgrep\n    fira-code\n  ];\n}\n",
+		)
+		.expect("write home.nix");
+		let system = config.main_file_for(Target::NixosSystem);
+		std::fs::write(&system, "{ pkgs, ... }:\n{\n}\n").expect("write configuration.nix");
+		let externals = super::scan_externals(&config, &Manifest::default(), &Manifest::default());
+		let mut engine =
+			Engine::from_parts(config, Manifest::default(), Manifest::default(), externals);
+
+		engine
+			.apply(
+				&Op::MigrateAcross {
+					names: vec!["fira-code".into()],
+					from: Target::HomeManager,
+					scope: Target::NixosSystem,
+				},
+				&mut SilentReporter,
+			)
+			.expect("apply migrate across");
+
+		assert_eq!(
+			engine.import_state(Target::NixosSystem),
+			super::ImportState::Imported
+		);
+		assert!(engine.is_tracked("fira-code", Target::NixosSystem));
+		assert!(!engine.is_tracked("fira-code", Target::HomeManager));
+		let source = std::fs::read_to_string(&home).expect("read home.nix");
+		assert!(source.contains("ripgrep"));
+		assert!(!source.contains("fira-code"));
+		let names: Vec<_> = engine
+			.external_packages
+			.iter()
+			.map(|ep| ep.name.as_str())
+			.collect();
+		assert_eq!(names, ["ripgrep"]);
+		drop(dir);
+	}
+
+	#[test]
+	fn migrating_across_to_a_missing_target_keeps_the_declaration() {
+		let dir = crate::tests::temp_dir("apply-migrate-across-missing");
+		let config = dir.config();
+		let home = config.main_file_for(Target::HomeManager);
+		let source = "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    fira-code\n  ];\n}\n";
+		std::fs::write(&home, source).expect("write home.nix");
+		let mut engine =
+			Engine::from_parts(config, Manifest::default(), Manifest::default(), Vec::new());
+
+		let result = engine.apply(
+			&Op::MigrateAcross {
+				names: vec!["fira-code".into()],
+				from: Target::HomeManager,
+				scope: Target::NixosSystem,
+			},
+			&mut SilentReporter,
+		);
+
+		assert!(result.is_err());
+		assert!(!engine.is_tracked("fira-code", Target::NixosSystem));
+		assert_eq!(
+			std::fs::read_to_string(&home).expect("read home.nix"),
+			source
+		);
 		drop(dir);
 	}
 }

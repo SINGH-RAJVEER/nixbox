@@ -8,6 +8,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 - Redesigned the GUI's NixOS page. The NixOS logo now appears on the tab and in a header that names the host and configuration directory. The page has a category sidebar with match counts, the option list, and details grouped into Value and Source.
 - Added a matching read-only NixOS tab to the terminal UI, with the same categories, search, host choice, and on-demand inspection.
 - Gave the GUI's search fields Vim cursor shapes: a block in Normal mode, a line in Insert mode, and an outlined box in Visual mode.
+- Added migration of a hand-declared package to the other target. In the GUI, hovering a migratable package's Migrate button opens a bubble offering the opposite target, so a font declared for Home Manager can move straight into the NixOS system packages. The TUI and GUI bind it to `o` in the Installed tab, and the TUI footer names the destination while a migratable package is selected. Only the destination rebuilds; the source target drops the package on its next rebuild.
 
 ## 0.3.5 - 2026-10-11
 

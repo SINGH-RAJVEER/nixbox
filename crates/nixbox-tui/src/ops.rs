@@ -243,6 +243,46 @@ pub(crate) async fn migrate_selected(app: &mut App, _tx: &mpsc::Sender<AppEvent>
 	Ok(())
 }
 
+/// Moves the selected hand-declared package into the other target's managed
+/// file, e.g. a font declared in home.nix into the NixOS system packages.
+pub(crate) fn migrate_selected_across(app: &mut App) {
+	let Some(InstalledCursor::External(ep)) = app.installed_cursor() else {
+		app.status = "Only packages declared in your config can move to the other target.".into();
+		return;
+	};
+	if !ep.migratable {
+		app.status = format!(
+			"{} is on a same-line list in {}; remove it manually.",
+			ep.name, ep.source_attr,
+		);
+		return;
+	}
+	let from = match ep.scope {
+		ScanTarget::HomeManager => Target::HomeManager,
+		ScanTarget::Nixos => Target::NixosSystem,
+	};
+	let scope = from.other();
+	if !app.session.engine.has_main_file(scope) {
+		app.status = format!("{} is not configured on this machine.", scope.label());
+		return;
+	}
+	let name = ep.name;
+	enqueue(
+		app,
+		QueuedOp::MigrateAcross {
+			names: vec![name.clone()],
+			from,
+			scope,
+		},
+		format!(
+			"Queued migrate: {name} [{} -> {}].",
+			from.tag(),
+			scope.tag()
+		),
+		format!("{name} already queued for migration."),
+	);
+}
+
 pub(crate) async fn migrate_all(app: &mut App, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
 	let ops = app.session.migrate_all_ops();
 	if ops.is_empty() {

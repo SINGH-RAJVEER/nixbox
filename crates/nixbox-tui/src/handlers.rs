@@ -12,8 +12,8 @@ use crate::nav::{
 };
 use crate::ops::{
 	cancel_build, confirm_flake_choice, install_selected, install_selected_flake, migrate_all,
-	migrate_selected, schedule_flake_details, schedule_flake_search, schedule_search,
-	uninstall_selected,
+	migrate_selected, migrate_selected_across, schedule_flake_details, schedule_flake_search,
+	schedule_search, uninstall_selected,
 };
 use crate::options::{
 	handle_panel_key, on_build_ended, on_options_failed, on_options_loaded, open_options_panel,
@@ -200,6 +200,9 @@ async fn handle_key_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: CtEven
 		}
 		KeyCode::Char('M') if app.tab == Tab::Installed && normal => {
 			migrate_all(app, tx).await?;
+		}
+		KeyCode::Char('o') if app.tab == Tab::Installed && normal => {
+			migrate_selected_across(app);
 		}
 		_ => {
 			if let Some(input) = active_input(app)

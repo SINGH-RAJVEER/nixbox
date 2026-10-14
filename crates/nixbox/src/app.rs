@@ -703,12 +703,8 @@ impl NixboxApp {
 		);
 	}
 
-	pub fn migrate(
-		&mut self,
-		package: ExternalPackage,
-		window: &mut Window,
-		cx: &mut Context<Self>,
-	) {
+	/// Reports and returns true when `package` cannot be moved automatically.
+	fn reject_unmigratable(&mut self, package: &ExternalPackage, cx: &mut Context<Self>) -> bool {
 		if !package.migratable {
 			self.set_status(
 				format!(
@@ -717,6 +713,17 @@ impl NixboxApp {
 				),
 				cx,
 			);
+		}
+		!package.migratable
+	}
+
+	pub fn migrate(
+		&mut self,
+		package: ExternalPackage,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		if self.reject_unmigratable(&package, cx) {
 			return;
 		}
 		let name = package.name;
@@ -724,6 +731,38 @@ impl NixboxApp {
 			Op::Migrate {
 				names: vec![name.clone()],
 				scope: target_of(package.scope),
+			},
+			format!("{name} is already queued for migration."),
+			window,
+			cx,
+		);
+	}
+
+	/// Moves a hand-declared package into the other target's managed file.
+	pub fn migrate_across(
+		&mut self,
+		package: ExternalPackage,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		if self.reject_unmigratable(&package, cx) {
+			return;
+		}
+		let from = target_of(package.scope);
+		let scope = from.other();
+		if !self.session.engine.has_main_file(scope) {
+			self.set_status(
+				format!("{} is not configured on this machine.", scope.title()),
+				cx,
+			);
+			return;
+		}
+		let name = package.name;
+		self.enqueue(
+			Op::MigrateAcross {
+				names: vec![name.clone()],
+				from,
+				scope,
 			},
 			format!("{name} is already queued for migration."),
 			window,
