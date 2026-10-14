@@ -199,6 +199,8 @@ The current code has limited tracing calls, so the TUI status line and Building 
 
 ## Nix package
 
+Checkout Cargo builds default to two compiler jobs through `.cargo/config.toml`. Use `--jobs` or `CARGO_BUILD_JOBS` to choose another limit. This configuration stays outside the flake's source set, so it cannot override the Nix package's separate job policy.
+
 The repository flake exports:
 
 - `packages.<system>.nixbox`, the desktop GUI, on Linux systems only. Its wrapper also puts the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`, and it installs a desktop entry and icon.
@@ -218,6 +220,8 @@ nix run . -- --version
 ```
 
 The Cargo-installed binary does not receive the Nix wrapper, so users must provide its external commands themselves.
+
+Each flake package defaults to `buildJobs = 2` and caps `NIX_BUILD_CORES` in both `preBuild` and `preCheck`, preserving a lower allowance. It also exports the capped value as `CARGO_BUILD_JOBS` because Nextest's `-j` controls test execution rather than test compilation. Override the ceiling with `package.override { buildJobs = 8; }`. The override must be a positive integer. The same policy applies to packages created through the overlay. `checks.<system>.build-jobs` exercises the actual hooks for the default and an eight-job override with one, two, and 24 allowed cores, and checks that invalid limits are rejected. Run it with `nix build .#checks.x86_64-linux.build-jobs`. See [build resource limits](TROUBLESHOOTING.md#builds-use-too-much-memory) for installation and machine-wide settings.
 
 ## Version control
 
@@ -250,11 +254,13 @@ Published crates must use one version across the workspace. Before merging a rel
 6. Inspect the Jujutsu diff and commit only the intended release files.
 7. Merge the verified `dev` commit into `master` through the project's normal review workflow.
 
-`.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains three jobs.
+`.github/workflows/publish.yml` runs on pushes to `master` and on pull requests targeting `master`. It contains four jobs.
+
+The `nix` job installs Nix and builds the lightweight `checks.x86_64-linux.build-jobs` check against the locked nixpkgs revision.
 
 The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox --all-targets --locked -- -D warnings`, and `cargo nextest run --workspace --exclude nixbox --locked`, followed by a step that builds `nixbox-tui` and `nixbox-cli` and checks their names, help, and that a bare `nixbox-cli` prints help and fails, and a dependency-free build and argument-forwarding check for the `nixbox` launcher. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
 
-The `publish` job declares `needs: [test, gui]` and is restricted to `push` events, so it never runs from a pull request and never starts unless both checks succeeded. It installs the graphics development libraries, checks the locked workspace including the GUI, creates the `v<version>` tag for the flake launcher, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-cmd`, `nixbox-tui`, `nixbox-cli`, and `nixbox` in dependency order. A later push at the same version does not move the tag or republish. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
+The `publish` job declares `needs: [test, gui, nix]` and is restricted to `push` events, so it never runs from a pull request and never starts unless all three checks succeeded. It installs the graphics development libraries, checks the locked workspace including the GUI, creates the `v<version>` tag for the flake launcher, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-cmd`, `nixbox-tui`, `nixbox-cli`, and `nixbox` in dependency order. A later push at the same version does not move the tag or republish. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
 
 The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell and release workflow both run stable. The shell pins its toolchain through `devenv.lock`, so refresh the pinned inputs when CI advances to a newer stable release.
 

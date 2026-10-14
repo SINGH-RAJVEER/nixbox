@@ -2,6 +2,15 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+## 0.3.6 - 2026-10-15
+
+- Limited each NixBox flake package to two compiler jobs by default, including test compilation. A lower Nix core allowance is preserved; a positive `buildJobs` package override lets users tune the ceiling for their build machine. The GUI, TUI, CLI, and overlay packages share this policy.
+- Limited checkout Cargo builds to two jobs by default, with standard `--jobs` and `CARGO_BUILD_JOBS` overrides. Documented explicit limits for native Cargo installations and the separate machine-wide Nix build settings.
+- Added package-hook checks for default limits, lower Nix allowances, larger overrides, exported compiler limits, and invalid values. The Cargo launcher continues to inherit the user's Nix settings.
+- Updated all workspace crates and internal dependencies to 0.3.6.
+
 ## 0.3.5 - 2026-10-11
 
 - Made the desktop GUI the default NixBox. The `nixbox` crate, flake package, and command are now the GUI, which `nixbox-gui` used to be; `cargo install nixbox` installs its Nix-backed launcher, and `nix profile install github:SINGH-RAJVEER/nixbox` installs it with its desktop entry, now `nixbox.desktop`. On macOS, where the GUI is not packaged, the flake's default package and the launcher run the terminal UI.
