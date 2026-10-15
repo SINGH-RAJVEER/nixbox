@@ -526,7 +526,8 @@ mod tests {
 		assert_eq!(group.len(), 2, "Undeclared paths are left out");
 		assert_eq!(group[0].entry.kind, OptionKind::Bool);
 		assert_eq!(group[0].entry.value, Some(Value::Bool(false)));
-		assert!(group[0].entry.defined_in.is_empty());
+		// A default declared in the local flake has that flake as its source too.
+		assert_eq!(group[0].entry.defined_in, ["flake.nix"]);
 		assert_eq!(group[1].entry.kind, OptionKind::Str);
 		assert_eq!(group[1].entry.defined_in, ["flake.nix"]);
 		let configuration = NixosConfiguration {
