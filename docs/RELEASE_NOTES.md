@@ -4,11 +4,15 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+## 0.3.7 - 2026-10-15
+
 - Separated interface installations. The GUI package installs only `nixbox-gui`, the TUI only `nixbox-tui`, and the CLI package owns `nixbox`, `nb`, and `nixbox-cli`. GUI and TUI no longer include CLI commands. Bare CLI aliases show help; interface-launch switches and terminal detection are removed. Added copyable TUI/CLI flake installation steps to GUI Settings.
 - Redesigned the GUI's NixOS page. The NixOS logo now appears on the tab and in a header that names the host and configuration directory. The page has a category sidebar with match counts, the option list, and details grouped into Value and Source.
 - Added a matching read-only NixOS tab to the terminal UI, with the same categories, search, host choice, and on-demand inspection.
 - Gave the GUI's search fields Vim cursor shapes: a block in Normal mode, a line in Insert mode, and an outlined box in Visual mode.
 - Added migration of a hand-declared package to the other target. In the GUI, hovering a migratable package's Migrate button opens a bubble offering the opposite target, so a font declared for Home Manager can move straight into the NixOS system packages. The TUI and GUI bind it to `o` in the Installed tab, and the TUI footer names the destination while a migratable package is selected. Only the destination rebuilds; the source target drops the package on its next rebuild.
+
+- Updated all workspace crates and internal dependencies to 0.3.7.
 
 ## 0.3.6 - 2026-10-15
 
