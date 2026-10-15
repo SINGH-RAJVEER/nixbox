@@ -1,6 +1,7 @@
 pub mod build;
 pub mod flakes;
 pub mod manifest;
+pub mod nix_log;
 pub mod options;
 pub mod scan;
 pub mod search;

@@ -11,6 +11,7 @@ pub mod engine;
 pub mod flakes;
 pub mod op;
 pub mod options;
+pub mod progress;
 pub mod rebuild;
 pub mod report;
 pub mod search;

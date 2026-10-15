@@ -17,6 +17,7 @@ use gpui_kit::{
 	UniformListScrollHandle, Window, actions,
 };
 use nixbox_config::{TabLabels, Target, config_dir_from_env};
+use nixbox_core::progress::{StepKind, StepState};
 use nixbox_core::search::{catalog_cache_path, search_packages};
 use nixbox_core::{
 	BuildEnded, Engine, Enqueued, InstalledFlake, Op, Restored, Session, flake_choices,
@@ -54,6 +55,17 @@ pub fn bind_keys(cx: &mut App) {
 		theme::set_zoom(theme::zoom(cx).saturating_sub(theme::ZOOM_STEP), cx);
 	});
 	cx.on_action(|_: &ResetZoom, cx| theme::set_zoom(theme::DEFAULT_ZOOM, cx));
+}
+
+/// Which step of the Build page shows its log.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BuildFocus {
+	/// The step the rebuild is in, or the one it failed in.
+	#[default]
+	Follow,
+	Step(StepKind),
+	/// Every step collapsed.
+	None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +114,9 @@ pub struct NixboxApp {
 
 	pub installed_input: Entity<InputState>,
 	pub log_scroll: UniformListScrollHandle,
+	/// The Build page's open step, for the rebuild numbered `build_focus_run`.
+	pub build_focus: BuildFocus,
+	pub build_focus_run: u64,
 
 	pub options: Option<OptionsView>,
 	pub(crate) options_cache: HashMap<(Target, String), Arc<OptionSet>>,
@@ -116,6 +131,7 @@ pub struct NixboxApp {
 	pub config_dir_input: Entity<InputState>,
 
 	_build_events: Task<()>,
+	_build_clock: Task<()>,
 	_subscriptions: Vec<Subscription>,
 }
 
@@ -239,10 +255,33 @@ impl NixboxApp {
 
 		let build_events = cx.spawn_in(window, async move |this, cx| {
 			while let Some(event) = build_rx.recv().await {
+				// Nix's structured log can send thousands of events a second;
+				// fold everything waiting into one update.
+				let mut batch = vec![event];
+				while let Ok(event) = build_rx.try_recv() {
+					batch.push(event);
+				}
 				let updated = this.update_in(cx, |this, window, cx| {
-					this.on_build_event(event, window, cx);
+					for event in batch {
+						this.on_build_event(event, window, cx);
+					}
 				});
 				if updated.is_err() {
+					break;
+				}
+			}
+		});
+
+		// Step durations count up even while nix is quiet.
+		let build_clock = cx.spawn(async move |this, cx| {
+			loop {
+				cx.background_executor().timer(Duration::from_secs(1)).await;
+				let ticked = this.update(cx, |this, cx| {
+					if this.page == Page::Build && this.session.progress.is_running() {
+						cx.notify();
+					}
+				});
+				if ticked.is_err() {
 					break;
 				}
 			}
@@ -278,6 +317,8 @@ impl NixboxApp {
 			flake_detail_task: None,
 			installed_input,
 			log_scroll: UniformListScrollHandle::new(),
+			build_focus: BuildFocus::Follow,
+			build_focus_run: 0,
 			options: None,
 			options_cache: HashMap::new(),
 			options_epoch: 0,
@@ -288,6 +329,7 @@ impl NixboxApp {
 			nixos_filter,
 			config_dir_input,
 			_build_events: build_events,
+			_build_clock: build_clock,
 			_subscriptions: subscriptions,
 		};
 		app.restore();
@@ -877,7 +919,7 @@ impl NixboxApp {
 
 	fn on_build_event(&mut self, event: BuildEvent, window: &mut Window, cx: &mut Context<Self>) {
 		let Some(ended) = self.session.on_build_event(event) else {
-			if self.page == Page::Build {
+			if self.page == Page::Build && self.following_build() {
 				self.scroll_log_to_end();
 			}
 			cx.notify();
@@ -915,10 +957,72 @@ impl NixboxApp {
 	}
 
 	fn scroll_log_to_end(&self) {
-		if let Some(last) = self.session.log.len().checked_sub(1) {
+		let len = match self.expanded_step() {
+			Some(kind) => self
+				.session
+				.progress
+				.step(kind)
+				.map_or(0, |step| step.lines.len()),
+			None if self.session.progress.is_empty() => self.session.log.len(),
+			None => 0,
+		};
+		if let Some(last) = len.checked_sub(1) {
 			self.log_scroll
 				.scroll_to_item(last, gpui_kit::ScrollStrategy::Bottom);
 		}
+	}
+
+	/// Whether new output should scroll the Build page: the open log is the
+	/// one output is going to.
+	fn following_build(&self) -> bool {
+		self.session.progress.is_empty()
+			|| self.expanded_step().is_some_and(|kind| {
+				self.session
+					.progress
+					.step(kind)
+					.is_some_and(|step| step.state == StepState::Running)
+			})
+	}
+
+	/// The step whose log the Build page shows.
+	pub fn expanded_step(&self) -> Option<StepKind> {
+		let progress = &self.session.progress;
+		let focus = if self.build_focus_run == progress.run {
+			self.build_focus
+		} else {
+			BuildFocus::Follow
+		};
+		match focus {
+			BuildFocus::Follow if progress.is_running() => progress.current(),
+			BuildFocus::Follow => progress.failed_step(),
+			BuildFocus::Step(kind) => Some(kind),
+			BuildFocus::None => None,
+		}
+	}
+
+	/// Opens `kind`'s log on the Build page, or closes it when open.
+	pub fn toggle_build_step(&mut self, kind: StepKind, cx: &mut Context<Self>) {
+		let open = self.expanded_step() != Some(kind);
+		self.build_focus = if open {
+			BuildFocus::Step(kind)
+		} else {
+			BuildFocus::None
+		};
+		self.build_focus_run = self.session.progress.run;
+		if open {
+			let running = self
+				.session
+				.progress
+				.step(kind)
+				.is_some_and(|step| step.state == StepState::Running);
+			if running {
+				self.scroll_log_to_end();
+			} else {
+				self.log_scroll
+					.scroll_to_item(0, gpui_kit::ScrollStrategy::Top);
+			}
+		}
+		cx.notify();
 	}
 
 	// ── settings ────────────────────────────────────────────────────────
@@ -1097,9 +1201,10 @@ mod tests {
 	use nixbox_nix::build::BuildEvent;
 	use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
 	use nixbox_nix::manifest::Manifest;
+	use nixbox_nix::nix_log::NixLog;
 	use nixbox_nix::search::SearchHit;
 
-	use super::{NixboxApp, Page, expand_home};
+	use super::{NixboxApp, Page, StepKind, expand_home};
 
 	#[test]
 	fn typed_paths_expand_a_leading_tilde() {
@@ -1278,8 +1383,18 @@ mod tests {
 			let _cancel = app
 				.session
 				.fake_build(Target::HomeManager, "apply 1 queued change(s)");
-			app.session
-				.on_build_event(BuildEvent::Line("building...".into()));
+			let nix = |line: &str| BuildEvent::Nix(NixLog::parse(line).expect("structured line"));
+			for event in [
+				BuildEvent::Line("$ home-manager switch".into()),
+				nix(r#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"","type":104}"#),
+				nix(r#"@nix {"action":"result","fields":[0,2,1,0],"id":1,"type":105}"#),
+				nix(
+					r#"@nix {"action":"start","fields":["/nix/store/z91qddwj7wi5cy096nqchdfy7a83gpjs-hello-2.12.drv","",1,1],"id":2,"level":3,"parent":0,"text":"building","type":105}"#,
+				),
+				nix(r#"@nix {"action":"result","fields":["compiling"],"id":2,"type":101}"#),
+			] {
+				app.session.on_build_event(event);
+			}
 		});
 
 		for page in [
@@ -1347,6 +1462,21 @@ mod tests {
 							Some(command.to_owned())
 						);
 					}
+				}
+				if page == Page::Build {
+					assert!(
+						window
+							.find(("build-step", StepKind::Build as usize))
+							.visible(),
+						"A step with work to do is listed"
+					);
+					assert!(
+						window.find("build-step-output").visible(),
+						"The running step shows its log"
+					);
+					window.click(("build-step", StepKind::Evaluate as usize), cx);
+					assert_eq!(app.read(cx).expanded_step(), Some(StepKind::Evaluate));
+					window.render_frame(cx);
 				}
 				if page == Page::Packages {
 					assert!(

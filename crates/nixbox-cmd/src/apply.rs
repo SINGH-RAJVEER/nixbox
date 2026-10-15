@@ -10,6 +10,7 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Args;
 use nixbox_config::Target;
+use nixbox_core::rebuild::LogFormat;
 use nixbox_core::{Engine, Escalation, InProgress, Op, PersistedState, Reporter, rebuild};
 use nixbox_nix::build::BuildEvent;
 use tokio::sync::{mpsc, oneshot};
@@ -142,6 +143,7 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 		engine.config.home_manager_dir(),
 		scope,
 		Escalation::Terminal,
+		LogFormat::Plain,
 		build_tx,
 		cancel_rx,
 	));
@@ -153,6 +155,11 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 			event = build_rx.recv() => {
 				match event {
 					Some(BuildEvent::Line(line)) => eprintln!("{line}"),
+					Some(BuildEvent::Nix(log)) => {
+						for line in log.plain_lines() {
+							eprintln!("{line}");
+						}
+					}
 					Some(BuildEvent::Finished(Ok(()))) => break,
 					Some(BuildEvent::Finished(Err(error))) => {
 						outcome = Outcome::Failed(error);

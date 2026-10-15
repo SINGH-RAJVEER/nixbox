@@ -69,6 +69,12 @@ The nixpkgs results list fills the available space below the search box and scro
 
 Installing, removing, migrating, and applying option changes all queue an op. Ops for one target are written and rebuilt together; the other target's ops wait until that rebuild ends. This is the same `Session` the TUI uses, so the behavior described in [Managed files and package operations](MANAGED_FILES.md) applies unchanged.
 
+## Build progress
+
+The Build page groups the latest rebuild into preparation, configuration evaluation, downloads, builds, and activation. Each step shows its state, elapsed time, and expandable output. Downloads and builds can run together. Counts, downloaded bytes, and determinate progress come from Nix's structured log; evaluation and activation show an indeterminate bar because Nix reports no completion count for them.
+
+The current step opens automatically. Click a step to inspect its output or collapse it. Output follows the running step while it is open; inspecting an earlier step keeps that view in place. A failed rebuild opens the failed step and shows its error. Each step retains its latest 5,000 log lines. Cancel stops the rebuild process group.
+
 ## Keyboard
 
 Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. The cursor shape follows the mode: a block over the character in Normal mode, a line in Insert mode, and an outlined box around the moving end of the selection in Visual mode. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
