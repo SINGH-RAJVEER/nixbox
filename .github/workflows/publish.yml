@@ -121,9 +121,23 @@ jobs:
           cargo clippy -p nixbox --features native --all-targets --locked -- -D warnings
           cargo nextest run -p nixbox --features native --locked
 
+  nix:
+    name: Nix build limits
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3c6342b75005b9cc7c7d4069c3e9179247c89012 # v31
+
+      - name: Check package build limits
+        run: nix build --no-link --print-build-logs --max-jobs 1 --cores 2 .#checks.x86_64-linux.build-jobs
+
   publish:
     name: Publish workspace crates
-    needs: [test, gui]
+    needs: [test, gui, nix]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

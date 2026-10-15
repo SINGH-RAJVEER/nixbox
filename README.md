@@ -95,6 +95,8 @@ environment.systemPackages = [ pkgs.nixbox ];
 
 Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The desktop GUI is built for the Linux systems only.
 
+NixBox's flake packages default to at most two compiler jobs per package, including test compilation. A lower Nix `cores` allowance is preserved. Change the package limit for your build machine with `(nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default.override { buildJobs = 8; })`, or `pkgs.nixbox.override { buildJobs = 8; }` when using the overlay. The Cargo launcher inherits your Nix settings. For direct native Cargo installs, use `cargo install nixbox --features native --locked --jobs 2`; the same `--jobs` option applies to `nixbox-tui` and `nixbox-cli`. See [build resource limits](docs/TROUBLESHOOTING.md#builds-use-too-much-memory) for tuning and the distinction between package and system-wide limits.
+
 ## Run
 
 ```sh

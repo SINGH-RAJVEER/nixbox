@@ -22,14 +22,22 @@
       # one that needs the graphics stack. `nixbox-tui` adds the terminal UI
       # and only `nixbox-cli` includes CLI commands. The interfaces share
       # the engine and install different executables, so each is optional.
-      mkNixbox =
+		mkNixbox = nixpkgs.lib.makeOverridable (
         {
           pkgs,
           package ? "nixbox",
+			buildJobs ? 2,
         }:
         let
           binary = if gui then "nixbox-gui" else package;
           gui = package == "nixbox";
+			limitBuildJobs = ''
+				if (( NIX_BUILD_CORES > ${toString buildJobs} )); then
+					export NIX_BUILD_CORES=${toString buildJobs}
+				fi
+				# Nextest's -j limits test execution, not test compilation.
+				export CARGO_BUILD_JOBS="$NIX_BUILD_CORES"
+			'';
           # Loaded at runtime rather than linked, so they go on the library
           # path through the wrapper.
           guiLibraries = [
@@ -40,9 +48,13 @@
             pkgs.libxcb
           ];
         in
+		assert pkgs.lib.assertMsg (builtins.isInt buildJobs && buildJobs > 0)
+			"NixBox buildJobs must be a positive integer";
         pkgs.rustPlatform.buildRustPackage {
           pname = package;
           version = cargoToml.workspace.package.version;
+			preBuild = limitBuildJobs;
+			preCheck = limitBuildJobs;
 
           src = pkgs.lib.fileset.toSource {
             root = ./.;
@@ -139,7 +151,8 @@
             mainProgram = binary;
             platforms = if gui then pkgs.lib.platforms.linux else pkgs.lib.platforms.unix;
           };
-        };
+        }
+		);
       isLinux = nixpkgs.lib.hasSuffix "-linux";
     in
     {
@@ -221,6 +234,10 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
+			build-jobs = import ./nix/build-jobs-test.nix {
+				inherit pkgs;
+				packages = self.packages.${system};
+			};
           cli = import ./vm/test.nix {
             nixboxTui = self.packages.${system}.nixbox-tui;
             nixboxCli = self.packages.${system}.nixbox-cli;
