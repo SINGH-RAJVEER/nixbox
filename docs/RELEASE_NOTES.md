@@ -12,6 +12,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 - Gave the GUI's search fields Vim cursor shapes: a block in Normal mode, a line in Insert mode, and an outlined box in Visual mode.
 - Added migration of a hand-declared package to the other target. In the GUI, hovering a migratable package's Migrate button opens a bubble offering the opposite target, so a font declared for Home Manager can move straight into the NixOS system packages. The TUI and GUI bind it to `o` in the Installed tab, and the TUI footer names the destination while a migratable package is selected. Only the destination rebuilds; the source target drops the package on its next rebuild.
 
+- Installed Jujutsu in CI so the repository integration tests run with their required executable available.
 - Updated all workspace crates and internal dependencies to 0.3.7.
 
 ## 0.3.6 - 2026-10-15

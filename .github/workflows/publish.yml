@@ -35,10 +35,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-nextest
+      - name: Install test tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest,jj-cli@0.45.1
 
       - name: Check formatting
         run: cargo fmt --all --check
