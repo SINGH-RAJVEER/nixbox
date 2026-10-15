@@ -138,6 +138,8 @@ Migration is not transactional across the source file and generated module. If r
 
 Flake-package migration records the existing GitHub input and package attribute in the generated flake module, adds its import, then removes the dedicated source line. It preserves the root input and other outputs. Inline entries, non-GitHub inputs, and hand-declared module imports are not migrated automatically. If a write fails between these steps, inspect both files before retrying.
 
+Migrating to the other target removes the dedicated lines from the source target's main file and adds the names to the other target's generated manifest, in one operation that belongs to the destination. NixBox imports the destination's generated module before it edits the source, and refuses the move when the destination has no main file, so a Home Manager-only machine never loses a declaration to a NixOS target it does not have. The GUI bubble and the TUI `o` hint only appear when the other target exists. Only the destination rebuilds. The source target keeps the package installed until its next rebuild, which picks up the removed lines.
+
 `M` queues separate Home Manager and NixOS migration operations. Queue batching produces at most one rebuild per affected target for that migration run.
 
 ## Queue and recovery

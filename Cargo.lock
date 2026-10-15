@@ -4452,11 +4452,11 @@ dependencies = [
 
 [[package]]
 name = "nixbox"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
+ "clap",
  "gpui-kit",
- "nixbox-cmd",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
@@ -4471,14 +4471,14 @@ dependencies = [
 
 [[package]]
 name = "nixbox-cli"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "nixbox-cmd",
 ]
 
 [[package]]
 name = "nixbox-cmd"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -4497,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-config"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "directories",
@@ -4507,7 +4507,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "directories",
@@ -4520,7 +4520,7 @@ dependencies = [
 
 [[package]]
 name = "nixbox-nix"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "libc",
@@ -4533,13 +4533,13 @@ dependencies = [
 
 [[package]]
 name = "nixbox-tui"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
+ "clap",
  "crossterm",
  "directories",
  "futures",
- "nixbox-cmd",
  "nixbox-config",
  "nixbox-core",
  "nixbox-nix",
@@ -4548,6 +4548,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "tui-input",
 ]
 

@@ -1,7 +1,7 @@
 //! Desktop front-end for nixbox.
 //!
-//! Run without a subcommand, `nixbox` opens the window; with one, it is the
-//! same command line as `nixbox-cli`. The binary is also sudo's askpass
+//! nixbox-gui opens the independently installed desktop window.
+//! The binary is also sudo's askpass
 //! helper: a system rebuild runs `sudo -A` with `SUDO_ASKPASS` pointing back
 //! here, and sudo starts this program with the password prompt as its only
 //! argument.
@@ -10,11 +10,12 @@ use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode};
 
 use anyhow::{Context as _, Result};
+use clap::Parser as _;
 use gpui_kit::component::Root;
 use gpui_kit::{
 	App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
-use nixbox_cmd::Frontend;
+use nixbox_config::{Config, Target};
 use nixbox_core::rebuild::{ASKPASS_ENV, ASKPASS_LIBRARY_PATH_ENV};
 use nixbox_core::{Engine, Escalation, Session};
 use tracing_subscriber::EnvFilter;
@@ -22,14 +23,18 @@ use tracing_subscriber::EnvFilter;
 use crate::app::{self, NixboxApp};
 use crate::askpass;
 
-const FRONTEND: Frontend = Frontend {
-	about: "Desktop package manager for NixOS and Home Manager",
-	long_about: "Search nixpkgs, and let nixbox write the result into your home-manager or \
-	             NixOS configuration and rebuild. Run without a subcommand for the desktop GUI.",
-	// Quiet by default: the renderer warns about every driver it skips.
-	log_filter: "error",
-	launch: run,
-};
+#[derive(clap::Parser)]
+#[command(
+	version,
+	about = "NixBox desktop GUI",
+	after_help = "Terminal applications are separate installs. See Settings > Terminal applications for flake installation steps."
+)]
+struct Args {
+	#[arg(long, short = 't', value_parser = ["home-manager", "hm", "home", "nixos", "system", "nixos-system"])]
+	target: Option<String>,
+	#[arg(long, short = 'c')]
+	channel: Option<String>,
+}
 
 pub(crate) fn main() -> ExitCode {
 	// Before the command line is parsed: sudo passes the prompt text as the
@@ -44,7 +49,20 @@ pub(crate) fn main() -> ExitCode {
 		return askpass::run(&prompt);
 	}
 
-	nixbox_cmd::run(env!("CARGO_BIN_NAME"), Some(&FRONTEND))
+	let args = Args::parse();
+	tracing_subscriber::fmt()
+		.with_env_filter(
+			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error")),
+		)
+		.with_writer(std::io::stderr)
+		.init();
+	match run(args) {
+		Ok(()) => ExitCode::SUCCESS,
+		Err(error) => {
+			eprintln!("nixbox-gui: {error:#}");
+			ExitCode::FAILURE
+		}
+	}
 }
 
 /// Runs this program again with the `LD_LIBRARY_PATH` sudo stripped, so the
@@ -67,7 +85,7 @@ fn restore_library_path() {
 	eprintln!("nixbox: restarting with the library path failed: {error}");
 }
 
-fn run() -> Result<()> {
+fn run(args: Args) -> Result<()> {
 	// gpui drives the window on its own executor; everything in nixbox-nix
 	// is tokio, so it gets a runtime of its own for the life of the app.
 	let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -77,7 +95,18 @@ fn run() -> Result<()> {
 		.context("starting the async runtime")?;
 	let handle = runtime.handle().clone();
 
-	let engine = Engine::load()?;
+	let mut config = Config::load_or_default()?;
+	if let Some(target) = args.target {
+		config.target = if matches!(target.as_str(), "home-manager" | "hm" | "home") {
+			Target::HomeManager
+		} else {
+			Target::NixosSystem
+		};
+	}
+	if let Some(channel) = args.channel {
+		config.channel = channel;
+	}
+	let engine = Engine::with_config(config)?;
 	let helper = std::env::current_exe().context("locating the nixbox executable")?;
 	let (session, build_rx) = Session::new(engine);
 	let session = session

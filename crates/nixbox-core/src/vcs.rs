@@ -10,7 +10,7 @@
 //! - `init`: explicitly initialize Git or colocated JJ, without a commit.
 //! - `status` / `diff`: inspect all non-ignored config changes, including manual edits.
 //! - `journal` / `suggested_message`: read durable successful operations, with option
-//!   values omitted and operation descriptions sorted in the proposed message.
+//!   values omitted and operation descriptions kept in application order.
 //! - `review`: capture status, diff, repository revision and journal, optionally
 //!   using an edited message. Clients must obtain approval before `commit`.
 //! - `commit`: recheck the review and commit the whole config scope. Git parent
@@ -37,6 +37,8 @@ use nixbox_config::{Config, Target, settings_path};
 use serde::{Deserialize, Serialize};
 
 use crate::Op;
+
+mod message;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -92,16 +94,23 @@ pub enum Visibility {
 }
 
 /// Only redacted operation descriptions are stored, never option values.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEntry {
 	pub operation: String,
 	pub changed_files: Vec<PathBuf>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub summary: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub target: Option<Target>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Journal {
 	root: PathBuf,
 	entries: Vec<JournalEntry>,
+	/// Stable across JJ working-copy snapshots. Absent in older journals.
+	#[serde(default)]
+	boundary: Option<String>,
 }
 
 struct JournalLock(PathBuf);
@@ -211,42 +220,25 @@ impl Vcs {
 	}
 
 	pub fn suggested_message(&self) -> Result<String> {
-		let mut operations: Vec<_> = self
-			.journal()?
-			.into_iter()
-			.map(|entry| entry.operation)
-			.collect();
-		operations.sort();
-		if operations.is_empty() {
-			return Ok("nixbox: update configuration".into());
-		}
-		Ok(format!(
-			"nixbox: update configuration\n\n{}",
-			operations
-				.into_iter()
-				.map(|op| format!("- {op}"))
-				.collect::<Vec<_>>()
-				.join("\n")
-		))
+		Ok(message::render(&self.journal()?))
 	}
 
 	/// Reviews the entire config, including manual edits and untracked files.
 	/// An override is used verbatim, except that blank messages are rejected.
 	pub fn review(&self, message: Option<&str>) -> Result<Review> {
 		let repository = self.repository()?;
-		let message = message
-			.map(str::to_owned)
-			.map(Ok)
-			.unwrap_or_else(|| self.suggested_message())?;
-		ensure!(!message.trim().is_empty(), "commit message cannot be blank");
+		// Inspection imports external Git changes into colocated JJ first.
 		let (status, diff, identity) = self.inspect(&repository)?;
+		let journal = self.journal()?;
+		let message = message.map_or_else(|| message::render(&journal), str::to_owned);
+		ensure!(!message.trim().is_empty(), "commit message cannot be blank");
 		Ok(Review {
 			repository,
 			status,
 			diff,
 			message,
 			identity,
-			journal: self.journal()?,
+			journal,
 		})
 	}
 
@@ -422,11 +414,14 @@ impl Vcs {
 				.to_owned()
 			}
 		};
-		let warning = self
-			.write_journal(&Journal {
+		let cleanup = (|| {
+			self.write_journal(&Journal {
 				root: self.root.clone(),
 				entries: Vec::new(),
+				boundary: self.commit_boundary()?,
 			})
+		})();
+		let warning = cleanup
 			.err()
 			.map(|error| format!("Commit succeeded but journal cleanup failed: {error:#}"));
 		Ok(CommitOutcome { revision, warning })
@@ -648,17 +643,149 @@ impl Vcs {
 	}
 
 	fn read_journal(&self) -> Result<Journal> {
+		let boundary = self.commit_boundary()?;
 		match fs::read(&self.journal_path) {
 			Ok(bytes) => {
-				let journal: Journal = serde_json::from_slice(&bytes)?;
+				let mut journal: Journal = serde_json::from_slice(&bytes)?;
 				ensure!(journal.root == self.root, "journal scope mismatch");
+				if journal.boundary.is_some() && journal.boundary != boundary {
+					// A revision change alone cannot prove inclusion: external partial
+					// commits and branch switches may leave applied operations pending.
+					// Only reconcile automatically when the entire config is clean.
+					if let (Some(previous), Some(current), Some(repository)) =
+						(&journal.boundary, &boundary, self.detect()?)
+						&& self.boundary_advances(previous, current, &repository)?
+					{
+						let (_, diff, _) = self.inspect(&repository)?;
+						let contained = journal
+							.entries
+							.iter()
+							.flat_map(|entry| &entry.changed_files)
+							.try_fold(true, |inside, path| {
+								Ok::<_, anyhow::Error>(
+									inside
+										&& path.is_absolute() && resolved_path(path)?
+										.starts_with(&self.root),
+								)
+							})?;
+						if diff.trim().is_empty() && contained {
+							journal.entries.clear();
+						}
+					}
+				}
+				journal.boundary = boundary;
 				Ok(journal)
 			}
 			Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Journal {
 				root: self.root.clone(),
 				entries: Vec::new(),
+				boundary,
 			}),
 			Err(error) => Err(error.into()),
+		}
+	}
+
+	fn commit_boundary(&self) -> Result<Option<String>> {
+		let Some(repository) = self.detect()? else {
+			return Ok(None);
+		};
+		let identity = match repository.backend {
+			Backend::Git => {
+				let output = git_command(&repository.root)
+					.args(["rev-parse", "--verify", "--quiet", "HEAD"])
+					.output()?;
+				ensure!(
+					output.status.success() || output.status.code() == Some(1),
+					"cannot read Git commit boundary"
+				);
+				format!("git:{}", text(output)?.trim())
+			}
+			Backend::Jj => {
+				let output = run(
+					&repository.root,
+					"jj",
+					&[
+						"--ignore-working-copy",
+						"log",
+						"--no-graph",
+						"-r",
+						"@",
+						"-T",
+						"change_id ++ \"|\" ++ parents.map(|p| p.commit_id()).join(\",\")",
+					],
+				)?;
+				format!("jj:{}", text(output)?.trim())
+			}
+		};
+		Ok(Some(identity))
+	}
+
+	fn boundary_advances(
+		&self,
+		previous: &str,
+		current: &str,
+		repository: &Repository,
+	) -> Result<bool> {
+		match repository.backend {
+			Backend::Git => {
+				let (Some(previous), Some(current)) =
+					(previous.strip_prefix("git:"), current.strip_prefix("git:"))
+				else {
+					return Ok(false);
+				};
+				if !valid_commit_id(current) {
+					return Ok(false);
+				}
+				if previous.is_empty() {
+					return Ok(true);
+				}
+				if !valid_commit_id(previous) {
+					return Ok(false);
+				}
+				let output = git_command(&repository.root)
+					.args(["merge-base", "--is-ancestor", previous, current])
+					.output()?;
+				// Missing rewritten history is uncertain; retain its journal.
+				Ok(output.status.success())
+			}
+			Backend::Jj => {
+				let parents = |boundary: &str| {
+					boundary
+						.strip_prefix("jj:")
+						.and_then(|value| value.split_once('|'))
+						.map(|(_, parents)| parents.to_owned())
+				};
+				let (Some(previous), Some(current)) = (parents(previous), parents(current)) else {
+					return Ok(false);
+				};
+				if previous == current
+					|| !previous.split(',').all(valid_commit_id)
+					|| !current.split(',').all(valid_commit_id)
+				{
+					return Ok(false);
+				}
+				let revset = format!(
+					"({}) ~ ancestors({})",
+					previous.replace(',', " | "),
+					current.replace(',', " | ")
+				);
+				let output = run(
+					&repository.root,
+					"jj",
+					&[
+						"--ignore-working-copy",
+						"log",
+						"--no-graph",
+						"-r",
+						&revset,
+						"-T",
+						"commit_id",
+					],
+				);
+				Ok(output
+					.and_then(text)
+					.is_ok_and(|text| text.trim().is_empty()))
+			}
 		}
 	}
 
@@ -675,6 +802,10 @@ impl Vcs {
 		fs::File::open(self.journal_path.parent().context("journal directory")?)?.sync_all()?;
 		Ok(())
 	}
+}
+
+fn valid_commit_id(value: &str) -> bool {
+	matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn run(root: &Path, program: &str, args: &[&str]) -> Result<Output> {
@@ -778,13 +909,20 @@ pub(crate) fn operation_files(config: &Config) -> BTreeMap<PathBuf, Option<Vec<u
 pub(crate) struct AppliedJournal {
 	vcs: Vcs,
 	_lock: JournalLock,
+	journal: Journal,
 }
 
 impl AppliedJournal {
 	pub(crate) fn acquire(config: &Config) -> Result<Self> {
 		let vcs = Vcs::new(config)?;
 		let lock = vcs.lock()?;
-		Ok(Self { vcs, _lock: lock })
+		// Reconcile external commits before a new operation makes files dirty.
+		let journal = vcs.read_journal()?;
+		Ok(Self {
+			vcs,
+			_lock: lock,
+			journal,
+		})
 	}
 
 	pub(crate) fn record(
@@ -807,11 +945,8 @@ impl AppliedJournal {
 		if changed_files.is_empty() {
 			return Ok(());
 		}
-		let mut journal = self.vcs.read_journal()?;
-		journal.entries.push(JournalEntry {
-			operation: operation_description(op),
-			changed_files,
-		});
+		let mut journal = self.journal.clone();
+		journal.entries.extend(message::entries(op, &changed_files));
 		self.vcs.write_journal(&journal)
 	}
 }
@@ -839,52 +974,6 @@ fn resolved_path(path: &Path) -> Result<PathBuf> {
 		}
 		Err(error) => Err(error.into()),
 	}
-}
-
-fn operation_description(op: &Op) -> String {
-	let detail = match op {
-		Op::Install { hit, .. } => format!("install {} version {}", hit.attr, hit.version),
-		Op::Uninstall { name, .. } => format!("uninstall {name}"),
-		Op::InstallFlake { repo, module, .. } => format!("install flake {repo} module {module}"),
-		Op::InstallFlakePackage { repo, package, .. } => {
-			format!("install flake {repo} package {package}")
-		}
-		Op::UninstallFlake { repo, .. } => format!("uninstall flake {repo}"),
-		Op::UninstallFlakeOutput { input, output, .. } => {
-			format!("uninstall flake input {input} output {output:?}")
-		}
-		Op::Migrate { names, .. } => {
-			let mut names = names.clone();
-			names.sort();
-			format!("migrate packages {}", names.join(", "))
-		}
-		Op::MigrateFlakePackage { input, package, .. } => {
-			format!("migrate flake input {input} package {package}")
-		}
-		Op::SetOptions { changes, .. } => {
-			let mut changes: Vec<_> = changes
-				.iter()
-				.map(|change| {
-					format!(
-						"{} {}",
-						if change.value.is_some() {
-							"set"
-						} else {
-							"unset"
-						},
-						nixbox_nix::settings::option_path_display(&change.path)
-					)
-				})
-				.collect();
-			changes.sort();
-			format!("options {}", changes.join(", "))
-		}
-	};
-	format!(
-		"{} [{}]",
-		detail.replace(['\n', '\r'], " "),
-		op.scope().label()
-	)
 }
 
 #[cfg(test)]
@@ -1163,7 +1252,7 @@ mod tests {
 	}
 
 	#[test]
-	fn redacts_values_and_sorts_every_option_and_migration() {
+	fn redacts_values_and_preserves_option_and_migration_order() {
 		let op = Op::SetOptions {
 			changes: vec![
 				OptionChange {
@@ -1177,15 +1266,29 @@ mod tests {
 			],
 			scope: Target::HomeManager,
 		};
-		let description = operation_description(&op);
-		assert_eq!(description, "options set z, unset a [home-manager]");
-		assert!(!description.contains("secret-token"));
+		let entries = message::entries(&op, &[]);
+		assert_eq!(entries[0].operation, "Set option z for Home Manager.");
+		assert_eq!(entries[1].operation, "Unset option a for Home Manager.");
+		assert!(
+			!serde_json::to_string(&entries)
+				.unwrap()
+				.contains("secret-token")
+		);
 		assert_eq!(
-			operation_description(&Op::Migrate {
-				names: vec!["z".into(), "a".into()],
-				scope: Target::NixosSystem
-			}),
-			"migrate packages a, z [nixos]"
+			message::entries(
+				&Op::Migrate {
+					names: vec!["z".into(), "a".into()],
+					scope: Target::NixosSystem
+				},
+				&[]
+			)
+			.iter()
+			.map(|entry| entry.operation.as_str())
+			.collect::<Vec<_>>(),
+			[
+				"Move declared package z into NixBox management for NixOS.",
+				"Move declared package a into NixBox management for NixOS."
+			]
 		);
 	}
 
@@ -1352,12 +1455,14 @@ mod tests {
 		let entries = vec![JournalEntry {
 			operation: "install fd [home-manager]".into(),
 			changed_files: vec![vcs.root.join("home.nix"), outside.clone()],
+			..JournalEntry::default()
 		}];
 		{
 			let _lock = vcs.lock().unwrap();
 			vcs.write_journal(&Journal {
 				root: vcs.root.clone(),
 				entries: entries.clone(),
+				..Journal::default()
 			})
 			.unwrap();
 		}
@@ -1427,7 +1532,7 @@ mod tests {
 		assert_eq!(entries.len(), 1);
 		assert_eq!(
 			entries[0].operation,
-			"install fd version 1.0 [home-manager]"
+			"Install package fd version 1.0 for Home Manager."
 		);
 		assert!(!entries[0].changed_files.is_empty());
 		assert!(
@@ -1524,7 +1629,7 @@ mod tests {
 		assert_eq!(entries.len(), 1);
 		assert_eq!(
 			entries[0].operation,
-			"options set programs.git.enable [home-manager]"
+			"Set option programs.git.enable for Home Manager."
 		);
 		assert!(!entries[0].changed_files.is_empty());
 		engine.apply(&op, &mut SilentReporter).unwrap();
@@ -1644,7 +1749,7 @@ mod tests {
 	}
 
 	#[test]
-	fn messages_are_sorted_and_journals_are_scope_checked() {
+	fn legacy_messages_preserve_order_and_journals_are_scope_checked() {
 		let temp = repo("vcs-message");
 		let vcs = &temp.vcs;
 		let _lock = vcs.lock().unwrap();
@@ -1654,23 +1759,236 @@ mod tests {
 				JournalEntry {
 					operation: "uninstall z [nixos]".into(),
 					changed_files: Vec::new(),
+					..JournalEntry::default()
 				},
 				JournalEntry {
 					operation: "install a [home-manager]".into(),
 					changed_files: Vec::new(),
+					..JournalEntry::default()
 				},
 			],
+			..Journal::default()
 		})
 		.unwrap();
 		assert_eq!(
 			vcs.suggested_message().unwrap(),
-			"nixbox: update configuration\n\n- install a [home-manager]\n- uninstall z [nixos]"
+			"nixbox: update configuration (2 operations)\n\nOperations in application order:\n1. uninstall z [nixos]\n2. install a [home-manager]"
 		);
 		vcs.write_journal(&Journal {
 			root: vcs.root.join("wrong"),
 			entries: Vec::new(),
+			..Journal::default()
 		})
 		.unwrap();
 		assert!(vcs.journal().is_err());
+	}
+
+	fn journaled_engine(label: &str, backend: Backend) -> (TempRepo, Vcs, Engine) {
+		let temp = repo(label);
+		temp.vcs.init(backend).unwrap();
+		if backend == Backend::Jj {
+			// Fixture identity stays in this disposable repository.
+			run(
+				&temp.vcs.root,
+				"jj",
+				&["config", "set", "--repo", "user.name", "NixBox test"],
+			)
+			.unwrap();
+			run(
+				&temp.vcs.root,
+				"jj",
+				&[
+					"config",
+					"set",
+					"--repo",
+					"user.email",
+					"test@nixbox.invalid",
+				],
+			)
+			.unwrap();
+		} else {
+			for (key, value) in [
+				("user.name", "NixBox test"),
+				("user.email", "test@nixbox.invalid"),
+			] {
+				run(&temp.vcs.root, "git", &["config", "--local", key, value]).unwrap();
+			}
+		}
+		fs::write(
+			temp.vcs.root.join("configuration.nix"),
+			"{ imports = []; }\n",
+		)
+		.unwrap();
+		fs::write(temp.vcs.root.join("home.nix"), "{ imports = []; }\n").unwrap();
+		let mut config = temp._dir.config();
+		config.config_dir = Some(temp.vcs.root.clone());
+		// The test helper's environment override takes precedence over config_dir.
+		unsafe { std::env::set_var("NIXBOX_CONFIG_DIR", &temp.vcs.root) };
+		let vcs = Vcs::new(&config).unwrap();
+		vcs.commit(&vcs.review(Some("seed configuration")).unwrap())
+			.unwrap();
+		let engine =
+			Engine::from_parts(config, Manifest::default(), Manifest::default(), Vec::new());
+		(temp, vcs, engine)
+	}
+
+	#[test]
+	fn engine_messages_keep_repeats_reversals_and_mixed_targets_until_commit() {
+		let (_temp, vcs, mut engine) = journaled_engine("vcs-sequential-message", Backend::Git);
+		for op in [
+			Op::Install {
+				hit: crate::tests::hit("z"),
+				scope: Target::NixosSystem,
+			},
+			Op::Uninstall {
+				name: "z".into(),
+				scope: Target::NixosSystem,
+			},
+			Op::Install {
+				hit: crate::tests::hit("z"),
+				scope: Target::NixosSystem,
+			},
+			Op::Install {
+				hit: crate::tests::hit("a"),
+				scope: Target::HomeManager,
+			},
+		] {
+			engine.apply(&op, &mut SilentReporter).unwrap();
+		}
+		let expected = "nixbox: update NixOS and Home Manager configurations (4 operations)\n\nOperations in application order:\n1. Install package z version 1.0 for NixOS.\n2. Remove package z from NixOS.\n3. Install package z version 1.0 for NixOS.\n4. Install package a version 1.0 for Home Manager.";
+		assert_eq!(vcs.suggested_message().unwrap(), expected);
+		assert_eq!(vcs.suggested_message().unwrap(), expected);
+		let reloaded = Vcs::new(&engine.config).unwrap();
+		let review = reloaded.review(None).unwrap();
+		assert_eq!(review.message(), expected);
+		reloaded.commit(&review).unwrap();
+		assert_eq!(
+			text(run(&vcs.root, "git", &["log", "-1", "--pretty=%B"]).unwrap())
+				.unwrap()
+				.trim(),
+			expected
+		);
+		assert!(vcs.journal().unwrap().is_empty());
+		engine
+			.apply(
+				&Op::Uninstall {
+					name: "a".into(),
+					scope: Target::HomeManager,
+				},
+				&mut SilentReporter,
+			)
+			.unwrap();
+		assert_eq!(
+			vcs.suggested_message().unwrap(),
+			"nixbox: remove a from Home Manager\n\nOperations in application order:\n1. Remove package a from Home Manager."
+		);
+	}
+
+	#[test]
+	fn external_git_commit_reconciles_only_a_clean_forward_configuration() {
+		let (_temp, vcs, mut engine) = journaled_engine("vcs-git-boundary", Backend::Git);
+		engine
+			.apply(
+				&Op::Install {
+					hit: crate::tests::hit("z"),
+					scope: Target::NixosSystem,
+				},
+				&mut SilentReporter,
+			)
+			.unwrap();
+		let pending = vcs.journal().unwrap();
+		fs::write(
+			vcs.root.join("home.nix"),
+			"{ imports = []; } # manual edit\n",
+		)
+		.unwrap();
+		run(
+			&vcs.root,
+			"git",
+			&[
+				"commit",
+				"--only",
+				"-m",
+				"external partial commit",
+				"--",
+				"home.nix",
+			],
+		)
+		.unwrap();
+		assert_eq!(
+			vcs.journal().unwrap(),
+			pending,
+			"partial commit must retain uncertain operations"
+		);
+		run(&vcs.root, "git", &["add", "--all"]).unwrap();
+		run(
+			&vcs.root,
+			"git",
+			&["commit", "-m", "external configuration commit"],
+		)
+		.unwrap();
+		// A new apply must reconcile before it dirties the files again.
+		engine
+			.apply(
+				&Op::Install {
+					hit: crate::tests::hit("a"),
+					scope: Target::NixosSystem,
+				},
+				&mut SilentReporter,
+			)
+			.unwrap();
+		assert_eq!(vcs.journal().unwrap().len(), 1);
+		assert!(
+			vcs.suggested_message()
+				.unwrap()
+				.contains("Install package a")
+		);
+		assert!(
+			!vcs.suggested_message()
+				.unwrap()
+				.contains("Install package z")
+		);
+	}
+
+	#[test]
+	fn jj_snapshots_and_sibling_workspaces_retain_history_but_commits_reset_it() {
+		let (_temp, vcs, mut engine) = journaled_engine("vcs-jj-boundary", Backend::Jj);
+		engine
+			.apply(
+				&Op::Install {
+					hit: crate::tests::hit("z"),
+					scope: Target::NixosSystem,
+				},
+				&mut SilentReporter,
+			)
+			.unwrap();
+		let pending = vcs.journal().unwrap();
+		let boundary = vcs.commit_boundary().unwrap();
+		let change = text(
+			run(
+				&vcs.root,
+				"jj",
+				&["log", "--no-graph", "-r", "@", "-T", "change_id"],
+			)
+			.unwrap(),
+		)
+		.unwrap();
+		run(&vcs.root, "jj", &["status"]).unwrap();
+		assert_eq!(vcs.commit_boundary().unwrap(), boundary);
+		assert_eq!(vcs.journal().unwrap(), pending);
+		run(&vcs.root, "jj", &["new", "@-"]).unwrap();
+		assert_eq!(
+			vcs.journal().unwrap(),
+			pending,
+			"a clean sibling does not prove inclusion"
+		);
+		run(&vcs.root, "jj", &["edit", change.trim()]).unwrap();
+		run(
+			&vcs.root,
+			"jj",
+			&["commit", "-m", "external configuration commit"],
+		)
+		.unwrap();
+		assert!(vcs.journal().unwrap().is_empty());
 	}
 }

@@ -1,6 +1,8 @@
 # Desktop GUI
 
-`nixbox` is the default NixBox package: a desktop window over the same engine as the terminal UI. Run with a subcommand, it is the same command line as `nixbox-cli` instead. It reads and writes the same settings, the same managed files, and the same `state.json`, so work queued in one front-end can be resumed in another.
+The `nixbox` package installs `nixbox-gui`, a desktop window over the shared NixBox engine. It contains no CLI commands and does not install `nixbox` or `nb`. Its settings and managed files are shared with the independently installed CLI and TUI.
+
+Open Settings > Terminal applications for step-by-step flake installation commands for the terminal UI and CLI, with a copy button for each command. Nothing is installed automatically. See [Terminal applications](TERMINAL_APPS.md).
 
 ## Installing
 
@@ -22,12 +24,12 @@ The crates.io package installs a small launcher that runs the matching tagged fl
 
 ```sh
 cargo install nixbox
-nixbox
+nixbox-gui
 ```
 
 To compile and run the native GUI from a checkout, use `just gui`. This command enters the pinned devenv shell automatically, including when invoked from an older shell. The native build needs `pkg-config` and the Wayland, X11, xkbcommon, Vulkan, fontconfig, and freetype development libraries; the repository's development shell supplies them.
 
-The equivalent command is `devenv shell -- cargo run -p nixbox --features native`. Without `--features native`, Cargo builds the launcher for the tagged release, so it runs the published GUI rather than the checkout's code.
+The equivalent command is `devenv shell -- cargo run -p nixbox --features native`. Without `--features native`, Cargo builds the launcher for the tagged release, so it runs the published code rather than the checkout's code.
 
 If startup fails with `No GPU adapters found`, run `VK_LOADER_DEBUG=error,warn just gui` to see the Vulkan loader's errors. A `GLIBC_` version error from Mesa or LLVM means the GUI's runtime libraries are older than the host driver requires. For checkout builds, update `devenv update nixpkgs rust-overlay`, enter a fresh shell, and rebuild with `just gui`. The tagged release has its own pinned libraries; updating devenv does not change them. Use the native checkout build to bypass an incompatible release. Do not add another glibc to `LD_LIBRARY_PATH`.
 
@@ -41,7 +43,7 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | --- | --- |
 | nixpkgs | Searches the package catalog for your locked nixpkgs revision, falling back to live `nix search` while the catalog is built. Each hit shows where it is already installed and has an Install button. |
 | Flakes | Searches GitHub for flakes. Selecting a hit loads its packages, modules, and inputs. Clicking a hit with multiple installable outputs opens a list of exact package and compatible module paths; clicking a path installs that output. A single compatible output can be installed directly. |
-| Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Options on a managed or hand-declared package opens its Options page. |
+| Installed | Packages nixbox manages, flake outputs, and packages declared in your own config, with a filter. Managed packages and flake outputs can be removed; hand-declared packages can be migrated one at a time or all at once. Hovering a hand-declared package's Migrate button opens a bubble that migrates it to the other target instead, for example a font declared for Home Manager into the NixOS system packages. Options on a managed or hand-declared package opens its Options page. |
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | NixOS | A read-only browser of the selected host's option schema, with categories, search by path and description, nested templates, and on-demand values and declaration locations. |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
@@ -53,13 +55,15 @@ Zoom scales text and layout together, carries across theme changes, and resets w
 
 ## NixOS settings browser
 
-Open **NixOS** to inspect settings across the system without opening an installed package. Host names come from the configuration flake's `nixosConfigurations` outputs. The browser selects `nixos` when available, or the only host when there is one. Otherwise choose a host. This choice only affects inspection; it does not change the install target or the host used by existing package operations.
+Open **NixOS** to inspect settings across the system without opening an installed package. The tab's icon and page header show the NixOS logo. The header names the selected host and configuration directory, with the host picker and Reload on the right. Below it are the search field and the Diagnostic options switch, then three columns: categories with their match counts, the matching options, and the selected option's details. Details group the effective value, default, and example under Value, and the definition and declaration files under Source.
+
+Host names come from the configuration flake's `nixosConfigurations` outputs. The browser selects `nixos` when available, or the only host when there is one. Otherwise choose a host. The host picker appears when there is more than one host or none is selected yet. This choice only affects inspection; it does not change the install target or the host used by existing package operations.
 
 Categories group the selected host's declarations, including disabled services and imported custom modules. All options includes uncategorized namespaces. Search matches full paths and descriptions, with exact paths first. Diagnostic options includes internal or hidden declarations. Select an option to fetch its effective value, default, example, and definition locations separately from schema discovery. Unavailable values, null, nested templates, and withheld credential fields have different statuses. Previews limit nested depth, collection length, and long strings; sensitive attribute names are also withheld inside structured previews.
 
 Nested schema entries describe fields such as `users.users.<name>.shell`, but concrete instance inspection is not available yet. Expansions deeper than four submodules and embedded full-system configurations have a partial marker instead of silently disappearing. Their declarations remain visible. The tab currently offers inspection only. Editing, review, validation, and host-specific writes are the next implementation work; see the [implementation plan](NIXOS_SETTINGS_PLAN.md).
 
-Reload discovers hosts and options again. Switching hosts cancels older evaluations, and stale results cannot replace the current selection. Search, category, and inspection state survive tab switches. A finished rebuild invalidates the schema, including failed or cancelled rebuilds; changing the configuration directory resets it. Source edits and lock changes made outside NixBox need an explicit Reload. On smaller windows, selection opens details as a full-width page with Back to options.
+Reload discovers hosts and options again. Switching hosts cancels older evaluations, and stale results cannot replace the current selection. Search, category, and inspection state survive tab switches. A finished rebuild invalidates the schema, including failed or cancelled rebuilds; changing the configuration directory resets it. Source edits and lock changes made outside NixBox need an explicit Reload. In windows narrower than 900 pixels, categories wrap above the list and selecting an option opens its details as a full-width page with Back to options.
 
 The nixpkgs results list fills the available space below the search box and scrolls through matches. Completed searches replace the displayed rows on the current page; clearing the search removes them.
 
@@ -67,7 +71,7 @@ Installing, removing, migrating, and applying option changes all queue an op. Op
 
 ## Keyboard
 
-Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
+Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. The cursor shape follows the mode: a block over the character in Normal mode, a line in Insert mode, and an outlined box around the moving end of the selection in Visual mode. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
 
 | Default shortcut | Action |
 | --- | --- |
@@ -77,7 +81,7 @@ Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types
 | Ctrl-F | Focus search/filter on nixpkgs, Flakes, Installed, Options, or NixOS; open nixpkgs search from other pages. |
 | Up / Down, j / k in Vim Normal mode | Select a result, option, output choice, or queued operation. The selected row stays visible. |
 | Enter | Install a search result or flake output, open an installed package's options, or focus an option value editor. |
-| Delete, m, M in Installed | Remove the selected managed package/flake, migrate a declaration, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
+| Delete, m, o, M in Installed | Remove the selected managed package/flake, migrate a declaration, migrate a declaration to the other target, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
 | Ctrl-W / w, Ctrl-U / u, Ctrl-Z / U, r in Options | Apply, unset, discard, or reload. Plain letters act in Vim Normal mode. |
 | c in Build | Cancel the running build. |
 | Ctrl-Enter / Delete in Queue | Apply the queue / drop its selected operation. |
@@ -132,5 +136,5 @@ A Home Manager rebuild with no standalone `homeConfigurations` output falls back
 ## Limits
 
 - Running the GUI and the TUI at the same time is not supported. Both write `state.json` and the managed files, and nothing coordinates them.
-- The subcommands `nixbox` accepts never open a window, so `nixbox resume` and scripts work over SSH. A bare `nixbox` always opens the GUI; use `nixbox-tui` for an interface in a terminal.
-- macOS is not packaged yet. There, the flake's default package and the `cargo install nixbox` launcher run the terminal UI instead.
+- `nixbox-gui` only opens the GUI. CLI commands belong to the separately installed `nixbox-cli` package and are invoked as `nixbox`, `nb`, or `nixbox-cli`.
+- The GUI is Linux only. On macOS the flake's default package remains the independently installed terminal UI; the GUI Cargo launcher does not fall back to another interface.

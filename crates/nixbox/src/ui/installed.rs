@@ -1,8 +1,10 @@
 //! Everything installed: packages nixbox manages, flake outputs, and packages
 //! declared by hand that can be moved into a managed file.
 
+use std::time::Duration;
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
+use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{
 	ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
@@ -11,6 +13,8 @@ use gpui_kit::{
 	AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
 	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
+use nixbox_config::Target;
+use nixbox_nix::scan::ExternalPackage;
 
 use super::{empty, hover_row, muted, page_header, section};
 use crate::app::NixboxApp;
@@ -51,15 +55,21 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		)
 		.px_6()
 		.pb_2()
-		.child(
-			Input::new(&app.installed_input)
-				.readonly(app.filter_readonly())
-				.prefix(IconName::Search)
-				.cleanable(true),
-		);
+		.child(super::cursor::filter_input(
+			app,
+			&app.installed_input,
+			IconName::Search,
+		));
 
 	let managed_count = rows.managed.len();
 	let flake_count = rows.flakes.len();
+	// Checked once per render rather than once per row.
+	let hosts_home = app.session.engine.has_main_file(Target::HomeManager);
+	let hosts_nixos = app.session.engine.has_main_file(Target::NixosSystem);
+	let hosted = |target: Target| match target {
+		Target::HomeManager => hosts_home,
+		Target::NixosSystem => hosts_nixos,
+	};
 	let body = if rows.is_empty() {
 		empty("Nothing installed matches.", cx).into_any_element()
 	} else {
@@ -169,9 +179,9 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					.into_iter()
 					.enumerate()
 					.map(|(index, package)| {
-						let migratable = package.migratable;
 						let options_name = package.name.clone();
 						let scope = target_of(package.scope);
+						let across = hosted(scope.other()).then_some(scope.other());
 						hover_row(cx)
 							.id(("installed-row", managed_count + flake_count + index))
 							.on_click(cx.listener(move |this, _, window, cx| {
@@ -214,17 +224,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 										this.open_options(options_name.clone(), scope, window, cx);
 									})),
 							)
-							.child(
-								Button::new(("migrate", index))
-									.small()
-									.ghost()
-									.icon(IconName::ArrowRight)
-									.label("Migrate")
-									.disabled(!migratable)
-									.on_click(cx.listener(move |this, _, window, cx| {
-										this.migrate(package.clone(), window, cx);
-									})),
-							)
+							.child(migrate_button(index, package, across, cx))
 					}),
 			)
 			.into_any_element()
@@ -235,6 +235,49 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.child(header)
 		.child(filter)
 		.child(div().flex_1().min_h_0().child(body))
+		.into_any_element()
+}
+
+/// Migrate into the package's own target. Hovering a migratable one opens a
+/// bubble offering `across`, the other target, when this machine has it,
+/// e.g. a font declared for Home Manager can go straight to NixOS.
+fn migrate_button(
+	index: usize,
+	package: ExternalPackage,
+	across: Option<Target>,
+	cx: &mut Context<NixboxApp>,
+) -> AnyElement {
+	let migratable = package.migratable;
+	let migrate = Button::new(("migrate", index))
+		.small()
+		.ghost()
+		.icon(IconName::ArrowRight)
+		.label("Migrate")
+		.disabled(!migratable)
+		.on_click(cx.listener({
+			let package = package.clone();
+			move |this, _, window, cx| this.migrate(package.clone(), window, cx)
+		}));
+	let Some(destination) = across.filter(|_| migratable) else {
+		return migrate.into_any_element();
+	};
+	let app = cx.entity().downgrade();
+	HoverCard::new(("migrate-across-card", index))
+		.open_delay(Duration::from_millis(300))
+		.trigger(migrate)
+		.content(move |_, _, _| {
+			let app = app.clone();
+			let package = package.clone();
+			Button::new(("migrate-across", index))
+				.small()
+				.ghost()
+				.icon(IconName::ArrowRight)
+				.label(format!("Migrate to {}", destination.title()))
+				.on_click(move |_, window, cx| {
+					let package = package.clone();
+					let _ = app.update(cx, |this, cx| this.migrate_across(package, window, cx));
+				})
+		})
 		.into_any_element()
 }
 

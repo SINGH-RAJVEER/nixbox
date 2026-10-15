@@ -12,9 +12,9 @@ gh auth login
 
 NixOS changes run through `sudo nixos-rebuild switch`, so the active terminal must be able to complete the sudo prompt.
 
-This guide covers the terminal UI, which `nixbox-tui` opens. The desktop front-end, which a bare `nixbox` opens, is described in [Desktop GUI](GUI.md); it asks for the sudo password in a window of its own.
+This guide covers the separately installed terminal UI, opened with `nixbox-tui`. It does not include CLI subcommands or install `nixbox` or `nb`. The desktop front-end, opened with `nixbox-gui` or the application menu, is described in [Desktop GUI](GUI.md). See [Terminal applications](TERMINAL_APPS.md) to install the TUI or CLI from the flake.
 
-The desktop GUI also has a read-only NixOS settings browser for host-wide declarations, category search, nested option templates, and current values. Its host selector affects inspection only. System-wide editing is still in development; package-specific options remain editable through the existing Options page. See [NixOS settings browser](GUI.md#nixos-settings-browser).
+Both front-ends have a read-only NixOS settings browser for host-wide declarations, category search, nested option templates, and current values. Its host selector affects inspection only. System-wide editing is still in development; package-specific options remain editable through the existing Options page. See [NixOS](#nixos) for the terminal tab and [NixOS settings browser](GUI.md#nixos-settings-browser) for the desktop page.
 
 ## Starting NixBox
 
@@ -32,7 +32,7 @@ At startup NixBox performs the following work:
 
 ## Tabs
 
-The always-visible tabs are `nixpkgs`, `Flakes`, `Installed`, and `VCS`. The `Building` tab appears after a rebuild starts or when build output exists. The `Queue` tab appears while operations are waiting.
+The always-visible tabs are `nixpkgs`, `Flakes`, `Installed`, `NixOS`, and `VCS`. The `Building` tab appears after a rebuild starts or when build output exists. The `Queue` tab appears while operations are waiting.
 
 Use `Tab` and `Shift-Tab` to move between visible tabs. Selection wraps at the first and last row.
 
@@ -52,7 +52,7 @@ Press `Enter` to open a picker when the selected flake has multiple installable 
 
 The Installed tab combines packages from four sources: NixBox's Home Manager manifest, NixBox's NixOS manifest, packages scanned from the Home Manager entry file, and packages scanned from the NixOS entry file. The `[hm]` and `[nixos]` labels identify scope. External declarations also show the attribute where the scanner found them.
 
-Press `Delete` in Vim Normal mode on a NixBox-managed package to queue removal. `d` belongs to the filter editor, where `dd` clears the filter. NixBox will not remove an external package directly. Press `m` to migrate one external package or `M` to queue every migratable external package. Declarations in same-line lists and complex expressions remain visible but cannot be migrated automatically.
+Press `Delete` in Vim Normal mode on a NixBox-managed package to queue removal. `d` belongs to the filter editor, where `dd` clears the filter. NixBox will not remove an external package directly. Press `m` to migrate one external package or `M` to queue every migratable external package. Press `o` to migrate the selected external package to the other target instead: a font declared in `home.packages` moves into NixBox's NixOS manifest, and a package from `environment.systemPackages` moves into its Home Manager manifest. The footer names the destination while a migratable external package is selected. Declarations in same-line lists and complex expressions remain visible but cannot be migrated automatically.
 
 Between the managed and external packages, a Flakes section lists every flake package and module in the configuration. That covers outputs NixBox wired into `nixbox-home-flakes.nix` or `nixbox-system-flakes.nix`, and flake packages you declared yourself, such as `inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default` in `home.packages`. Each row shows `input#package` (or `input.<module path>` for a module), the scope, and the `github:` repository the input points at. Rows you declared yourself also name the list they sit in. A package that NixBox manages and you also declare yourself appears once.
 
@@ -61,6 +61,22 @@ Press `m` on a hand-declared flake package to move it into NixBox's generated fl
 The Installed tab's text field filters the combined list without changing configuration. It matches flake rows by name or repository.
 
 Press `Enter` on a managed or external package to open its options panel. The panel lists the package's `programs.*` or `services.*` module options, read from your configuration, and lets you stage and apply changes to the simple ones. Flake rows have no options panel yet. See [Package options](PACKAGE_OPTIONS.md).
+
+### NixOS
+
+The NixOS tab browses the option schema of a host from the configuration flake's `nixosConfigurations` outputs. It reads the hosts the first time you open the tab, then picks `nixos` when it exists or the only host when there is one. A header line names the host and configuration directory. Below it are categories with their match counts, the matching options, and the selected option's details. Terminals narrower than 110 columns hide the category column and name the category in the list title.
+
+The search field matches option paths and descriptions, with exact paths first. Inspecting an option evaluates its effective value, default, example, and definition files, so it runs only when you press `Enter`. The tab is read-only and never changes the install target or queues work. A finished rebuild invalidates the schema, which reloads the next time the tab is open.
+
+| Key | Action |
+| --- | --- |
+| `Up`, `Down`, or `j`, `k` in Vim Normal mode | Move through options. |
+| `Enter` | Inspect the selected option. |
+| `Alt-Left`, `Alt-Right`, or `[`, `]` in Vim Normal mode | Previous or next category. |
+| `Ctrl-T` | Next host. |
+| `Ctrl-D` | Show or hide diagnostic options. |
+| `Ctrl-L`, or `r` in Vim Normal mode | Reload hosts and the schema. |
+| `PageUp`, `PageDown` | Scroll the details. |
 
 ### Building
 
@@ -91,7 +107,7 @@ Normal input mode keeps the search and filter fields ready for typing. Use the a
 
 ### Vim input mode
 
-The nixpkgs, Flakes, and Installed fields share the same Vim-like text editor and key bindings. This is a focused input editor, not a full Vim command language.
+The nixpkgs, Flakes, Installed, and NixOS fields share the same Vim-like text editor and key bindings. This is a focused input editor, not a full Vim command language.
 
 | Key | Mode | Action |
 | --- | --- | --- |

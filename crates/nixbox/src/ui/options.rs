@@ -98,12 +98,11 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		)
 		.px_6()
 		.pb_3()
-		.child(
-			Input::new(&app.options_filter)
-				.readonly(app.filter_readonly())
-				.prefix(IconName::Search)
-				.cleanable(true),
-		);
+		.child(super::cursor::filter_input(
+			app,
+			&app.options_filter,
+			IconName::Search,
+		));
 
 	let body = if view.loading {
 		empty("Evaluating your configuration's options...", cx).into_any_element()

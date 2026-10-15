@@ -50,6 +50,7 @@ pub(crate) fn set_tab(app: &mut App, tab: Tab) {
 			Tab::Search => app.input.enter_normal(),
 			Tab::Flakes => app.flake_input.enter_normal(),
 			Tab::Installed => app.installed_input.enter_normal(),
+			Tab::Nixos => app.nixos_input.enter_normal(),
 			_ => {}
 		}
 	}

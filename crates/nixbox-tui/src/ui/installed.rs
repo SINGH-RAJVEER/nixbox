@@ -125,7 +125,7 @@ pub(super) fn draw_installed_body(f: &mut Frame, area: Rect, app: &App) {
 		);
 		items.push(ListItem::new(Line::from(vec![
 			Span::styled(header, dim),
-			Span::styled("  m migrate  M migrate all", dim),
+			Span::styled("  m migrate  o other target  M migrate all", dim),
 		])));
 		for ep in &external {
 			pkg_to_row.push(items.len());

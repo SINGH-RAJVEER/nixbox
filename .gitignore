@@ -7,3 +7,4 @@ CLAUDE.md
 /.devenv
 /.devenv.flake.nix
 /.env
+/.vm

@@ -1,7 +1,6 @@
 //! nixpkgs search: a search box over a virtualized list of hits.
 
 use gpui_kit::component::button::Button;
-use gpui_kit::component::input::Input;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
@@ -28,12 +27,11 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		)
 		.px_6()
 		.pb_3()
-		.child(
-			Input::new(&app.search_input)
-				.readonly(app.filter_readonly())
-				.prefix(IconName::Search)
-				.cleanable(true),
-		);
+		.child(super::cursor::filter_input(
+			app,
+			&app.search_input,
+			IconName::Search,
+		));
 
 	let body = if app.results.is_empty() {
 		let text = if app.searching {

@@ -12,8 +12,8 @@ use crate::nav::{
 };
 use crate::ops::{
 	cancel_build, confirm_flake_choice, install_selected, install_selected_flake, migrate_all,
-	migrate_selected, schedule_flake_details, schedule_flake_search, schedule_search,
-	uninstall_selected,
+	migrate_selected, migrate_selected_across, schedule_flake_details, schedule_flake_search,
+	schedule_search, uninstall_selected,
 };
 use crate::options::{
 	handle_panel_key, on_build_ended, on_options_failed, on_options_loaded, open_options_panel,
@@ -26,6 +26,15 @@ pub(crate) async fn handle_terminal_event(
 	tx: &mpsc::Sender<AppEvent>,
 	ev: CtEvent,
 ) -> Result<()> {
+	handle_key_event(app, tx, ev).await?;
+	// Any key may have switched tabs; the NixOS tab loads on its first visit.
+	if app.tab == Tab::Nixos && !app.should_quit {
+		crate::nixos::ensure_loaded(app, tx);
+	}
+	Ok(())
+}
+
+async fn handle_key_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: CtEvent) -> Result<()> {
 	let CtEvent::Key(key) = ev else { return Ok(()) };
 	if key.kind != KeyEventKind::Press {
 		return Ok(());
@@ -105,6 +114,10 @@ pub(crate) async fn handle_terminal_event(
 		return Ok(());
 	}
 
+	if app.tab == Tab::Nixos && crate::nixos::handle_key(app, tx, key) {
+		return Ok(());
+	}
+
 	if key.code == KeyCode::Esc
 		&& app.session.engine.config.input_mode == InputMode::Vim
 		&& let Some(input) = active_input(app)
@@ -167,6 +180,7 @@ pub(crate) async fn handle_terminal_event(
 				schedule_flake_details(app, tx.clone());
 			}
 			Tab::Installed => move_installed_selection(app, delta),
+			Tab::Nixos => crate::nixos::move_cursor(app, delta),
 			_ => {}
 		}
 		return Ok(());
@@ -187,6 +201,9 @@ pub(crate) async fn handle_terminal_event(
 		KeyCode::Char('M') if app.tab == Tab::Installed && normal => {
 			migrate_all(app, tx).await?;
 		}
+		KeyCode::Char('o') if app.tab == Tab::Installed && normal => {
+			migrate_selected_across(app);
+		}
 		_ => {
 			if let Some(input) = active_input(app)
 				&& input.handle_event(&ev)
@@ -195,6 +212,7 @@ pub(crate) async fn handle_terminal_event(
 					Tab::Search => schedule_search(app, tx.clone()),
 					Tab::Flakes => schedule_flake_search(app, tx.clone()),
 					Tab::Installed => app.clamp_installed_selection(),
+					Tab::Nixos => crate::nixos::refilter(app),
 					_ => {}
 				}
 			}
@@ -208,6 +226,7 @@ fn active_input(app: &mut App) -> Option<&mut VimInput> {
 		Tab::Search => Some(&mut app.input),
 		Tab::Flakes => Some(&mut app.flake_input),
 		Tab::Installed => Some(&mut app.installed_input),
+		Tab::Nixos => Some(&mut app.nixos_input),
 		Tab::Building | Tab::Queue | Tab::Vcs => None,
 	}
 }
@@ -332,6 +351,7 @@ fn settings_main_index(page: SettingsPage) -> usize {
 pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: AppEvent) {
 	match ev {
 		AppEvent::Repository(result) => crate::repository::on_result(app, result),
+		AppEvent::Nixos(event) => crate::nixos::on_event(app, tx, event),
 		AppEvent::SearchDone { epoch, hits } => {
 			if epoch == app.search_epoch {
 				app.search_task = None;
@@ -431,6 +451,7 @@ pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: A
 				return;
 			};
 			on_build_ended(app, tx);
+			crate::nixos::on_build_ended(app, tx);
 			app.status = match ended {
 				BuildEnded::Succeeded {
 					next: Some(next), ..
@@ -555,6 +576,8 @@ mod tests {
 			&mut app,
 			Ok(crate::repository::Outcome::Detected(None, None)),
 		);
+		// Keeps the NixOS tab from evaluating a real configuration.
+		app.nixos.loaded = true;
 
 		press(&mut app, KeyCode::Left).await;
 		assert_eq!(app.tab, Tab::Search);
@@ -572,7 +595,11 @@ mod tests {
 		press(&mut app, KeyCode::BackTab).await;
 		assert_eq!(app.tab, Tab::Vcs);
 		press(&mut app, KeyCode::BackTab).await;
+		assert_eq!(app.tab, Tab::Nixos);
+		press(&mut app, KeyCode::BackTab).await;
 		assert_eq!(app.tab, Tab::Installed);
+		press(&mut app, KeyCode::Tab).await;
+		assert_eq!(app.tab, Tab::Nixos);
 		press(&mut app, KeyCode::Tab).await;
 		assert_eq!(app.tab, Tab::Vcs);
 		press(&mut app, KeyCode::Tab).await;

@@ -50,6 +50,7 @@ shortcuts! {
 	Activate, "activate", "Install / open options / edit", "Lists", ["enter"];
 	Remove, "remove", "Remove selected package / flake", "Installed", ["delete"];
 	Migrate, "migrate", "Migrate selected declaration", "Installed", ["m"];
+	MigrateAcross, "migrate-across", "Migrate selected declaration to the other target", "Installed", ["o"];
 	MigrateAll, "migrate-all", "Migrate all declarations", "Installed", ["M"];
 	ApplyOptions, "apply-options", "Apply staged options", "Options", ["ctrl-w", "w"];
 	UnsetOption, "unset-option", "Unset selected option", "Options", ["ctrl-u", "u"];
@@ -390,6 +391,11 @@ impl NixboxApp {
 		cx.notify();
 	}
 
+	/// The character a visual selection last moved to.
+	pub fn vim_cursor(&self) -> usize {
+		self.keyboard.cursor
+	}
+
 	pub fn filter_readonly(&self) -> bool {
 		self.session.engine.config.input_mode == InputMode::Vim
 			&& self.keyboard.mode != Mode::Insert
@@ -507,7 +513,7 @@ impl NixboxApp {
 					Page::Packages | Page::Flakes | Page::Installed | Page::Options | Page::Queue
 				)
 			}
-			Remove | Migrate | MigrateAll => {
+			Remove | Migrate | MigrateAcross | MigrateAll => {
 				!other_input && self.page == Page::Installed && self.keyboard.mode != Mode::Visual
 			}
 			ApplyOptions | UnsetOption | DiscardOptions | ReloadOptions => {
@@ -605,7 +611,7 @@ impl NixboxApp {
 				self.move_result(if action == NextResult { 1 } else { -1 }, window, cx)
 			}
 			Activate => self.activate_result(window, cx),
-			Remove | Migrate => self.installed_action(action, window, cx),
+			Remove | Migrate | MigrateAcross => self.installed_action(action, window, cx),
 			MigrateAll => self.migrate_all(window, cx),
 			ApplyOptions => self.apply_options(window, cx),
 			UnsetOption => self.unset_option(cx),
@@ -819,6 +825,9 @@ impl NixboxApp {
 		{
 			match action {
 				Action::Migrate if package.migratable => self.migrate(package.clone(), window, cx),
+				Action::MigrateAcross if package.migratable => {
+					self.migrate_across(package.clone(), window, cx)
+				}
 				Action::Activate => {
 					self.open_options(package.name.clone(), target_of(package.scope), window, cx)
 				}

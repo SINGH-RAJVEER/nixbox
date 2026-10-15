@@ -1,28 +1,54 @@
-//! The `nixbox-tui` binary: every subcommand plus the terminal UI.
-//!
-//! Running it with no subcommand opens the UI. The commands themselves live
-//! in `nixbox-cmd`, shared with the desktop `nixbox` and the UI-less
-//! `nixbox-cli`.
+//! The independently installed terminal interface. CLI commands live elsewhere.
 
 use std::process::ExitCode;
 
-use nixbox_cmd::Frontend;
+use clap::Parser as _;
+use nixbox_config::{Config, Target};
+use tracing_subscriber::EnvFilter;
 
-const FRONTEND: Frontend = Frontend {
-	about: "Terminal UI package manager for NixOS and Home Manager",
-	long_about: "Search nixpkgs, and let nixbox write the result into your home-manager or \
-	             NixOS configuration and rebuild. Run without a subcommand for the terminal UI.",
-	log_filter: "warn",
-	launch,
-};
-
-fn launch() -> anyhow::Result<()> {
-	tokio::runtime::Builder::new_multi_thread()
-		.enable_all()
-		.build()?
-		.block_on(nixbox_tui::run())
+#[derive(clap::Parser)]
+#[command(
+	version,
+	about = "NixBox terminal UI",
+	after_help = "For CLI commands, install separately:\n  nix profile add github:SINGH-RAJVEER/nixbox#nixbox-cli\nThen run: nixbox --help or nb --help"
+)]
+struct Args {
+	#[arg(long, short = 't', value_parser = ["home-manager", "hm", "home", "nixos", "system", "nixos-system"])]
+	target: Option<String>,
+	#[arg(long, short = 'c')]
+	channel: Option<String>,
 }
 
 fn main() -> ExitCode {
-	nixbox_cmd::run(env!("CARGO_BIN_NAME"), Some(&FRONTEND))
+	let args = Args::parse();
+	tracing_subscriber::fmt()
+		.with_env_filter(
+			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+		)
+		.with_writer(std::io::stderr)
+		.init();
+	let result = (|| -> anyhow::Result<()> {
+		let mut config = Config::load_or_default()?;
+		if let Some(target) = args.target {
+			config.target = if matches!(target.as_str(), "home-manager" | "hm" | "home") {
+				Target::HomeManager
+			} else {
+				Target::NixosSystem
+			};
+		}
+		if let Some(channel) = args.channel {
+			config.channel = channel;
+		}
+		tokio::runtime::Builder::new_multi_thread()
+			.enable_all()
+			.build()?
+			.block_on(nixbox_tui::run_with_config(config))
+	})();
+	match result {
+		Ok(()) => ExitCode::SUCCESS,
+		Err(error) => {
+			eprintln!("nixbox-tui: {error:#}");
+			ExitCode::FAILURE
+		}
+	}
 }

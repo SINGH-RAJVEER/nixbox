@@ -1,4 +1,5 @@
-use nixbox_config::InputMode;
+use nixbox_config::{InputMode, Target};
+use nixbox_nix::scan::ScanTarget;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -6,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use super::{SPINNER, panel};
-use crate::app::{App, Mode, SettingsPage, Tab};
+use crate::app::{App, InstalledCursor, Mode, SettingsPage, Tab};
 use crate::options::OptionEditor;
 use crate::vim::VimMode;
 
@@ -20,6 +21,10 @@ pub(super) fn draw_search_bar(f: &mut Frame, area: Rect, app: &App) {
 		},
 		Tab::Flakes => (&app.flake_input, "search GitHub flake contents"),
 		Tab::Installed => (&app.installed_input, "search installed applications"),
+		Tab::Nixos => (
+			&app.nixos_input,
+			"search NixOS options by path or description",
+		),
 		_ => (&app.input, "search nixpkgs"),
 	};
 	let (mode_label, mode_style) = match (app.session.engine.config.input_mode, input.mode()) {
@@ -200,6 +205,9 @@ fn context_keys(app: &App) -> &'static str {
 				Tab::Installed => {
 					"type to filter  ↑↓ results  ↵ options  tab/shift-tab tabs  ctrl-s settings"
 				}
+				Tab::Nixos => {
+					"type to search  ↑↓ move  ↵ inspect  alt-←→ category  ctrl-t host  ctrl-d diagnostic"
+				}
 				Tab::Building if app.session.is_building() => {
 					"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 				}
@@ -234,8 +242,27 @@ fn context_keys(app: &App) -> &'static str {
 				VimMode::Insert => {
 					"type to filter  ↑↓ results  ↵ options  tab/shift-tab tabs  esc normal"
 				}
+				VimMode::Normal => match migratable_selection(app) {
+					Some(Target::NixosSystem) => {
+						"i/a filter  dd clear  j/k results  ↵ options  m migrate  o migrate to nixos"
+					}
+					Some(Target::HomeManager) => {
+						"i/a filter  dd clear  j/k results  ↵ options  m migrate  o migrate to home-manager"
+					}
+					None => {
+						"i/a filter  dd clear  j/k results  ↵ options  Del uninstall  m migrate"
+					}
+				},
+				VimMode::Visual => {
+					"h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
+				}
+			},
+			Tab::Nixos => match app.nixos_input.mode() {
+				VimMode::Insert => {
+					"type to search  ↑↓ move  ↵ inspect  alt-←→ category  esc normal"
+				}
 				VimMode::Normal => {
-					"i/a filter  dd clear  j/k results  ↵ options  Del uninstall  m migrate"
+					"j/k move  ↵ inspect  [ ] category  ctrl-t host  ctrl-d diagnostic  r reload  i search"
 				}
 				VimMode::Visual => {
 					"h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
@@ -248,6 +275,19 @@ fn context_keys(app: &App) -> &'static str {
 			Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
 		},
 	}
+}
+
+/// Where `o` would move the selected Installed row: the other target, when
+/// the row is a migratable hand-declared package and that target exists.
+fn migratable_selection(app: &App) -> Option<Target> {
+	let InstalledCursor::External(ep) = app.installed_cursor()? else {
+		return None;
+	};
+	let destination = match ep.scope {
+		ScanTarget::HomeManager => Target::NixosSystem,
+		ScanTarget::Nixos => Target::HomeManager,
+	};
+	(ep.migratable && app.session.engine.has_main_file(destination)).then_some(destination)
 }
 
 fn options_keys(app: &App) -> &'static str {

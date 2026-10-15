@@ -63,6 +63,29 @@ clean:
 
 # ── Test VM ────────────────────────────────────────────────────────────────────
 
+# Run the checkout's GUI against an isolated VM configuration; Apply builds the VM
+[positional-arguments]
+vm-gui *args:
+	devenv shell -- bash vm/dev.sh gui "$@"
+
+# Run the checkout's TUI against the same VM configuration
+[positional-arguments]
+vm-tui *args:
+	devenv shell -- bash vm/dev.sh tui "$@"
+
+# Run a CLI command against the same VM configuration (defaults to help)
+[positional-arguments]
+vm-cli *args="--help":
+	devenv shell -- bash vm/dev.sh cli "$@"
+
+# Build the configuration edited by vm-gui, vm-tui, and vm-cli
+vm-preview-build:
+	devenv shell -- bash vm/dev.sh build
+
+# Build and boot that configuration; restart after Apply to see the new system
+vm-preview:
+	devenv shell -- bash vm/dev.sh run
+
 # Flakes read the git tree, so a file added under vm/ is invisible to the
 # build until it is tracked. `path:.` would sidestep that, at the cost of
 # copying target/ into the store on every build.

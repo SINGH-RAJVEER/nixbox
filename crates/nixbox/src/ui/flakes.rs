@@ -1,7 +1,6 @@
 //! Flake search: hits on the left, the selected flake's details on the right.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
@@ -30,12 +29,11 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		)
 		.px_6()
 		.pb_3()
-		.child(
-			Input::new(&app.flake_input)
-				.readonly(app.filter_readonly())
-				.prefix(IconName::Github)
-				.cleanable(true),
-		);
+		.child(super::cursor::filter_input(
+			app,
+			&app.flake_input,
+			IconName::Github,
+		));
 
 	let hits = if app.flake_results.is_empty() {
 		let text = if app.flake_searching {

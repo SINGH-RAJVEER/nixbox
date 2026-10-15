@@ -27,28 +27,17 @@
 
 The root `Cargo.toml` owns the workspace version, Rust edition, shared metadata, dependencies, and Clippy policy. Each crate inherits that metadata. Internal dependencies in `nixbox-cmd`, `nixbox-tui`, `nixbox-cli`, and `nixbox` include both a local path and the current published version, so a release bump must update the workspace version and every internal dependency version.
 
-## Three binaries, one command tree
+## Independent interfaces, one engine
 
-The workspace publishes three binaries. They are the same program with a different interface behind a bare invocation:
-
-| Package | Binary | Run without a subcommand |
+| Package | Executables | Included interface |
 | --- | --- | --- |
-| `nixbox` | `nixbox` | opens the desktop GUI |
-| `nixbox-tui` | `nixbox-tui` | opens the terminal UI |
-| `nixbox-cli` | `nixbox-cli` | prints help |
+| `nixbox` | `nixbox-gui` | desktop GUI |
+| `nixbox-tui` | `nixbox-tui` | terminal UI |
+| `nixbox-cli` | `nixbox`, `nb`, `nixbox-cli` | CLI commands |
 
-Each `main` calls `nixbox_cmd::run`, which holds the whole command tree, and passes the interface as an optional `Frontend`: the `--help` text, the default tracing filter, and a `launch` function that opens it. `nixbox-cli` passes none.
+Only `nixbox-cli` depends on `nixbox-cmd`. GUI and TUI start their interfaces directly and depend on `nixbox-core` for engine and session behavior. Their local argument parsers accept interface configuration flags, not CLI subcommands. No package launches another interface or installs another package automatically.
 
-```rust
-// crates/nixbox-cli/src/main.rs
-fn main() -> ExitCode {
-	nixbox_cmd::run(env!("CARGO_BIN_NAME"), None)
-}
-```
-
-`nixbox-cmd` never depends on a front-end. The front-end crates depend on it, so `nixbox-cli` compiles neither `ratatui` nor gpui, and since there are no Cargo features to unify, a workspace build compiles `nixbox-cmd` exactly the way each binary does.
-
-They install under different names on purpose. Two packages producing the same executable collide in one `target/` directory, which cargo warns about and may one day reject, and the second `cargo install` would silently replace the first. `nixbox-cmd` learns which name is running from `env!("CARGO_BIN_NAME")`, so the usage line, the completion script, and hints like "run `nixbox-cli apply`" all name the command the user actually has.
+The CLI entry points pass their executable names to `nixbox_cmd::run_from`, preserving help text, completions, and recovery hints. Bare `nixbox` and `nb` request help; neither accepts `--gui` or `--tui`. The GUI Settings page includes copyable flake installation commands for the other interfaces.
 
 Anything the command line needs belongs below the front-end crates, not in them. Two things moved down for this reason, each with a test in `nixbox-tui` pinning it to its former home:
 
@@ -153,6 +142,25 @@ The project does not contain end-to-end terminal snapshot tests. Unit tests cann
 
 ## Testing in a VM
 
+Run the checkout's front-ends on your Linux host against one isolated VM configuration:
+
+```sh
+just vm-gui                      # open the native desktop GUI
+just vm-tui                      # open the terminal UI
+just vm-cli                      # show CLI help
+just vm-cli install ripgrep --yes # edit the configuration and build its VM
+just vm-preview-build            # build without opening a front-end
+just vm-preview                  # build and boot the edited configuration
+```
+
+These recipes seed `.vm/nixos` once from `vm/seed` and `vm/guest.nix`, using the repository's locked nixpkgs revision and the host's Linux architecture. They run the current checkout's binaries with the NixOS target. GUI, TUI, and CLI share that configuration, with separate preferences, recovery state, VCS journals, and caches under `.vm`. Later launches preserve your edits and settings. `.vm` is ignored by version control.
+
+Apply writes the managed files and runs `nix build <configuration>#nixosConfigurations.nixos.config.system.build.vm`, producing `.vm/result`. It needs no sudo. Boot with `just vm-preview`; stop and restart the guest after another Apply to load the rebuilt system. The preview keeps its disk at `.vm/nixos.qcow2`. The NixOS settings browser remains read-only; package installs, package options, and flake modules use the usual apply workflow. This seeded configuration has no Home Manager module.
+
+The launchers set `NIXBOX_CONFIG_DIR` and the XDG configuration, cache, data, and state directories. They also set `NIXBOX_VM_BUILD` to the absolute output-link path, so every shared rebuild path, including Home Manager fallback and recovery, builds this VM. See [Configuration](CONFIGURATION.md) for the environment variable.
+
+The existing guest-side workflow is separate:
+
 NixBox edits a NixOS configuration and runs rebuilds, so the useful way to try a change is against a throwaway machine rather than your own:
 
 ```sh
@@ -206,10 +214,10 @@ The repository flake exports:
 - `packages.<system>.nixbox`, the desktop GUI, on Linux systems only. Its wrapper also puts the Vulkan loader, Wayland, xkbcommon, and X11 libraries on `LD_LIBRARY_PATH`, and it installs a desktop entry and icon.
 - `packages.<system>.nixbox-tui` and `packages.<system>.nixbox-cli`.
 - `packages.<system>.default`, which is `nixbox` on Linux and `nixbox-tui` on macOS.
-- `apps.<system>.default`, plus an app for each package.
+- `apps.<system>.default`, an app for each package, and `apps.<system>.nb` for the separately installed CLI on every supported system.
 - `overlays.default`, which adds `pkgs.nixbox`, `pkgs.nixbox-tui`, and `pkgs.nixbox-cli`.
 
-Supported systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. Each package builds only its own binary target; `nixbox-tui` runs the workspace tests except the GUI's, `nixbox` runs the GUI's with `native`, and `nixbox-cli` runs its own and `nixbox-cmd`'s. The source set includes Cargo metadata, the license, README, and all crates. Every installed executable is wrapped with `gh`, `git`, and `nix` on `PATH`. The test VM and `checks.<system>.cli` use `nixbox-tui`, since the VM has no display.
+Supported systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The GUI package installs only `nixbox-gui`; the TUI only `nixbox-tui`; the CLI installs `nixbox`, `nb`, and `nixbox-cli`. Each executable gets the package's runtime wrapper. The GUI is Linux only, with graphics libraries and a desktop entry. TUI and CLI work on all supported systems. The test VM installs TUI and CLI separately and uses the CLI for scripted commands.
 
 Useful checks are:
 
@@ -258,7 +266,9 @@ Published crates must use one version across the workspace. Before merging a rel
 
 The `nix` job installs Nix and builds the lightweight `checks.x86_64-linux.build-jobs` check against the locked nixpkgs revision.
 
-The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox --all-targets --locked -- -D warnings`, and `cargo nextest run --workspace --exclude nixbox --locked`, followed by a step that builds `nixbox-tui` and `nixbox-cli` and checks their names, help, and that a bare `nixbox-cli` prints help and fails, and a dependency-free build and argument-forwarding check for the `nixbox` launcher. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
+The `test` job installs Cargo Nextest and Jujutsu 0.45.1 so the repository integration tests run with both Git and Jujutsu available, matching the development shell and Nix package checks.
+
+The `test` job mirrors the local `just ci` gate on the stable toolchain: `cargo fmt --all --check`, `cargo clippy --workspace --exclude nixbox --all-targets --locked -- -D warnings`, and `cargo nextest run --workspace --exclude nixbox --locked`, followed by a step that builds `nixbox-tui` and `nixbox-cli` and checks their names, help, and that a bare `nixbox-cli` prints help and fails, and a dependency-free build and argument-forwarding check for the `nixbox-gui` launcher. The separate `gui` job installs the graphics development libraries, then lints and tests `nixbox` with `native` enabled. Both run on pull requests, so a release reports the gates before the merge happens.
 
 The `publish` job declares `needs: [test, gui, nix]` and is restricted to `push` events, so it never runs from a pull request and never starts unless all three checks succeeded. It installs the graphics development libraries, checks the locked workspace including the GUI, creates the `v<version>` tag for the flake launcher, then publishes `nixbox-config`, `nixbox-nix`, `nixbox-core`, `nixbox-cmd`, `nixbox-tui`, `nixbox-cli`, and `nixbox` in dependency order. A later push at the same version does not move the tag or republish. A `concurrency` group keeps two pushes from racing up that chain, and never cancels a run in flight, because a half-published chain is worse than a queued one. It treats an already-published version as a skip, so re-running a failed publish is safe and does not require another version bump. Publishing requires the `CARGO_REGISTRY_TOKEN` repository secret; an expired or revoked token fails the upload with `403 Forbidden: authentication failed`.
 
