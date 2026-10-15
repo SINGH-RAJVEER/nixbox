@@ -23,8 +23,7 @@ use crate::session::Session;
 /// of a configuration can be slow; later ones hit Nix's caches.
 const OPTIONS_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// The NixOS configuration nixbox rebuilds, and so the one it reads.
-const NIXOS_HOST: &str = "nixos";
+pub use nixbox_nix::build::NIXOS_HOST;
 
 /// One option to set, or to stop setting when `value` is `None`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
