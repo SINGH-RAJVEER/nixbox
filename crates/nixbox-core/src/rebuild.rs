@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use nixbox_config::Target;
 use nixbox_nix::build::{
-	BuildEvent, flake_has_home_configuration, home_manager_switch_cmd, nixos_rebuild_switch_cmd,
-	rebuild,
+	BuildEvent, NIXOS_HOST, flake_has_home_configuration, home_manager_switch_cmd,
+	nixos_rebuild_switch_cmd, rebuild,
 };
+use nixbox_nix::nix_log::STRUCTURED_ARGS;
 use tokio::sync::{mpsc, oneshot};
 
 /// Emitted when a home-manager change has to be applied through
@@ -29,6 +30,16 @@ pub const ASKPASS_LIBRARY_PATH_ENV: &str = "NIXBOX_LD_LIBRARY_PATH";
 
 /// When set, build a VM runner at this output link instead of switching NixOS.
 pub const VM_BUILD_ENV: &str = "NIXBOX_VM_BUILD";
+
+/// How a rebuild reports its output.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LogFormat {
+	/// Nix's own plain output, for a terminal that shows it as it comes.
+	#[default]
+	Plain,
+	/// Nix's structured log, which [`crate::progress::BuildProgress`] reads.
+	Structured,
+}
 
 /// How a rebuild that needs root gets it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -81,6 +92,17 @@ impl RebuildCommand {
 			if let Ok(path) = std::env::var("LD_LIBRARY_PATH") {
 				self.envs.push((ASKPASS_LIBRARY_PATH_ENV.into(), path));
 			}
+		}
+		self
+	}
+
+	/// Asks for `format`. Every command a rebuild runs is nix or a wrapper
+	/// that forwards trailing nix flags, so the flags go at the end.
+	#[must_use]
+	pub fn with_log(mut self, format: LogFormat) -> Self {
+		if format == LogFormat::Structured {
+			self.args
+				.extend(STRUCTURED_ARGS.iter().map(|arg| (*arg).to_string()));
 		}
 		self
 	}
@@ -153,7 +175,7 @@ fn vm_build(config_dir: &Path, output: &Path) -> RebuildCommand {
 			"--out-link".into(),
 			output.display().to_string(),
 			format!(
-				"{}#nixosConfigurations.nixos.config.system.build.vm",
+				"{}#nixosConfigurations.{NIXOS_HOST}.config.system.build.vm",
 				config_dir.display()
 			),
 		],
@@ -171,11 +193,12 @@ pub async fn run(
 	config_dir: PathBuf,
 	scope: Target,
 	escalation: Escalation,
+	log: LogFormat,
 	tx: mpsc::Sender<BuildEvent>,
 	mut cancel: oneshot::Receiver<()>,
 ) {
 	let command = tokio::select! {
-		command = resolve(&config_dir, scope) => command.escalated(&escalation),
+		command = resolve(&config_dir, scope) => command.escalated(&escalation).with_log(log),
 		_ = &mut cancel => {
 			let _ = tx.send(BuildEvent::Cancelled).await;
 			return;
@@ -202,7 +225,7 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
-	use super::{Escalation, RebuildCommand, nixos, vm_build};
+	use super::{Escalation, LogFormat, RebuildCommand, nixos, vm_build};
 	use std::path::{Path, PathBuf};
 
 	#[test]
@@ -248,6 +271,18 @@ mod tests {
 			let cmd = super::resolve(Path::new("/tmp/nixos"), scope).await;
 			assert_eq!(cmd, expected);
 		}
+	}
+
+	#[test]
+	fn only_a_structured_log_adds_flags() {
+		let cmd = nixos(Path::new("/tmp/nixos"));
+
+		assert_eq!(cmd.clone().with_log(LogFormat::Plain), cmd);
+		assert!(
+			cmd.with_log(LogFormat::Structured)
+				.display()
+				.ends_with("#nixos --log-format internal-json -v")
+		);
 	}
 
 	#[test]

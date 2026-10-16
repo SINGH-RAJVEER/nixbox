@@ -280,15 +280,15 @@ impl<T> Attempt<T> {
 }
 
 #[derive(Deserialize)]
-struct RawType {
+pub(crate) struct RawType {
 	name: String,
-	description: String,
+	pub(crate) description: String,
 	elem: Option<Box<RawType>>,
 	values: Option<Vec<Value>>,
 }
 
 impl RawType {
-	fn kind(&self) -> OptionKind {
+	pub(crate) fn kind(&self) -> OptionKind {
 		let other = || OptionKind::Other(self.description.clone());
 		let name = self.name.as_str();
 		match name {
@@ -323,47 +323,76 @@ impl RawType {
 	}
 }
 
-impl RawSet {
-	fn into_set(self, settings_file: &str) -> OptionSet {
-		let root = format!("{}/", self.root.trim_end_matches('/'));
+/// Who defines an option, from the files that define it at its highest
+/// priority.
+pub(crate) struct Provenance {
+	pub defined_in: Vec<String>,
+	pub set_by_nixbox: bool,
+	pub set_by_module: bool,
+}
+
+impl Provenance {
+	/// `root` is the configuration's store path and `settings_file` the name
+	/// of nixbox's settings module inside it.
+	pub(crate) fn read(
+		root: &str,
+		settings_file: &str,
+		files: &[String],
+		priority: Option<i64>,
+		kind: &OptionKind,
+	) -> Self {
+		let root = format!("{}/", root.trim_end_matches('/'));
 		let ours =
 			|file: &str| file == settings_file || file.ends_with(&format!("/{settings_file}"));
-		let entries =
-			self.options
-				.into_iter()
-				.map(|raw| {
-					let (kind, type_description) = match raw.kind.ok() {
-						Some(raw_type) => (raw_type.kind(), raw_type.description),
-						None => (OptionKind::Other("unknown".into()), "unknown".into()),
-					};
-					let files = raw.files.ok().unwrap_or_default();
-					let local: Vec<String> = files
-						.iter()
-						.filter_map(|file| file.strip_prefix(&root).map(str::to_string))
-						.collect();
-					let set_by_nixbox = local.iter().any(|file| ours(file));
-					let mut defined_in: Vec<String> =
-						local.into_iter().filter(|file| !ours(file)).collect();
-					defined_in.sort();
-					defined_in.dedup();
-					let set_by_module = raw.priority.ok().is_some_and(|priority| priority <= 100)
-						&& defined_in.is_empty()
-						&& !set_by_nixbox && kind != OptionKind::StrList;
-					OptionEntry {
-						path: raw.path,
-						kind,
-						type_description,
-						description: raw.description.ok().flatten(),
-						default: raw.default.ok().flatten(),
-						example: raw.example.ok().flatten(),
-						value: raw.value.ok(),
-						defined_in,
-						set_by_nixbox,
-						set_by_module,
-						read_only: raw.read_only,
-					}
-				})
-				.collect();
+		let local: Vec<String> = files
+			.iter()
+			.filter_map(|file| file.strip_prefix(&root).map(str::to_string))
+			.collect();
+		let set_by_nixbox = local.iter().any(|file| ours(file));
+		let mut defined_in: Vec<String> = local.into_iter().filter(|file| !ours(file)).collect();
+		defined_in.sort();
+		defined_in.dedup();
+		let set_by_module = priority.is_some_and(|priority| priority <= 100)
+			&& defined_in.is_empty()
+			&& !set_by_nixbox
+			&& *kind != OptionKind::StrList;
+		Self {
+			defined_in,
+			set_by_nixbox,
+			set_by_module,
+		}
+	}
+}
+
+impl RawSet {
+	fn into_set(self, settings_file: &str) -> OptionSet {
+		let root = self.root;
+		let entries = self
+			.options
+			.into_iter()
+			.map(|raw| {
+				let (kind, type_description) = match raw.kind.ok() {
+					Some(raw_type) => (raw_type.kind(), raw_type.description),
+					None => (OptionKind::Other("unknown".into()), "unknown".into()),
+				};
+				let files = raw.files.ok().unwrap_or_default();
+				let provenance =
+					Provenance::read(&root, settings_file, &files, raw.priority.ok(), &kind);
+				OptionEntry {
+					path: raw.path,
+					kind,
+					type_description,
+					description: raw.description.ok().flatten(),
+					default: raw.default.ok().flatten(),
+					example: raw.example.ok().flatten(),
+					value: raw.value.ok(),
+					defined_in: provenance.defined_in,
+					set_by_nixbox: provenance.set_by_nixbox,
+					set_by_module: provenance.set_by_module,
+					read_only: raw.read_only,
+				}
+			})
+			.collect();
 		OptionSet {
 			namespaces: self.namespaces,
 			entries,

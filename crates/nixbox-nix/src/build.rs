@@ -8,9 +8,14 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
+use crate::nix_log::NixLog;
+
 #[derive(Debug, Clone)]
 pub enum BuildEvent {
+	/// A plain output line.
 	Line(String),
+	/// A line of nix's structured log; see [`crate::nix_log`].
+	Nix(NixLog),
 	Finished(Result<(), String>),
 	Cancelled,
 }
@@ -82,8 +87,12 @@ pub async fn flake_has_home_configuration(config_dir: &Path) -> bool {
 	}
 }
 
+/// The `nixosConfigurations` output every NixOS rebuild applies, and so the
+/// one whose options can be edited.
+pub const NIXOS_HOST: &str = "nixos";
+
 pub fn nixos_rebuild_switch_cmd(config_dir: &Path) -> (String, Vec<String>) {
-	let flake_ref = format!("{}#nixos", config_dir.display());
+	let flake_ref = format!("{}#{NIXOS_HOST}", config_dir.display());
 	(
 		"sudo".into(),
 		vec![
@@ -200,8 +209,10 @@ where
 {
 	let mut reader = BufReader::new(stream).lines();
 	while let Ok(Some(line)) = reader.next_line().await {
-		let text = line.trim_end().to_string();
-		if tx.send(BuildEvent::Line(text)).await.is_err() {
+		let text = line.trim_end();
+		let event =
+			NixLog::parse(text).map_or_else(|| BuildEvent::Line(text.to_string()), BuildEvent::Nix);
+		if tx.send(event).await.is_err() {
 			break;
 		}
 	}
@@ -215,19 +226,23 @@ mod tests {
 	use tokio::time::{Duration, timeout};
 
 	#[tokio::test]
-	async fn forwards_newline_delimited_lines() {
+	async fn forwards_lines_and_reads_structured_ones() {
 		let (mut writer, reader) = duplex(128);
 		let (tx, mut rx) = mpsc::channel(8);
 		let task = tokio::spawn(forward_output(reader, tx));
 
 		writer
-			.write_all(b"first line\nsecond line\n")
+			.write_all(b"first line\n@nix {\"action\":\"stop\",\"id\":3}\nsecond line\n")
 			.await
 			.unwrap();
 		drop(writer);
 		task.await.unwrap();
 
 		assert!(matches!(rx.recv().await, Some(BuildEvent::Line(line)) if line == "first line"));
+		assert!(matches!(
+			rx.recv().await,
+			Some(BuildEvent::Nix(crate::nix_log::NixLog::Stop { id: 3 }))
+		));
 		assert!(matches!(rx.recv().await, Some(BuildEvent::Line(line)) if line == "second line"));
 		assert!(rx.recv().await.is_none());
 	}

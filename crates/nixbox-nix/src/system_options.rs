@@ -11,6 +11,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::build::find_in_nix_profiles;
+use crate::options::{OptionEntry, OptionKind, Provenance, RawType};
 use crate::settings::OptionPath;
 
 const EXPRESSION: &str = include_str!("system_options.nix");
@@ -135,6 +136,113 @@ pub struct SystemOptionDetails {
 	pub definitions: Option<Vec<String>>,
 }
 
+/// One option of a group being edited.
+#[derive(Debug, Clone)]
+pub struct EditableOption {
+	pub details: SystemOptionDetails,
+	/// The option as the package options editor sees it: its kind and who
+	/// defines it. `value` is set only when the value is plain enough to edit.
+	pub entry: OptionEntry,
+}
+
+#[derive(Deserialize)]
+struct RawGroup {
+	root: String,
+	options: Vec<RawGroupOption>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawGroupOption {
+	#[serde(flatten)]
+	details: SystemOptionDetails,
+	#[serde(rename = "type")]
+	kind: Option<RawType>,
+	priority: Option<i64>,
+	#[serde(default)]
+	read_only: bool,
+}
+
+impl RawGroup {
+	fn into_options(self, settings_file: &str) -> Vec<EditableOption> {
+		self.options
+			.into_iter()
+			.map(|raw| {
+				let (kind, type_description) = match &raw.kind {
+					Some(raw_type) => (raw_type.kind(), raw_type.description.clone()),
+					None => (OptionKind::Other("unknown".into()), "unknown".into()),
+				};
+				let files = raw.details.definitions.clone().unwrap_or_default();
+				let provenance =
+					Provenance::read(&self.root, settings_file, &files, raw.priority, &kind);
+				let value = match &raw.details.value {
+					InspectedValue::Available(value) => plain_value(value),
+					_ => None,
+				};
+				let entry = OptionEntry {
+					path: raw.details.path.clone(),
+					kind,
+					type_description,
+					description: None,
+					default: raw.details.default.clone(),
+					example: raw.details.example.clone(),
+					value,
+					defined_in: provenance.defined_in,
+					set_by_nixbox: provenance.set_by_nixbox,
+					set_by_module: provenance.set_by_module,
+					read_only: raw.read_only,
+				};
+				EditableOption {
+					details: raw.details,
+					entry,
+				}
+			})
+			.collect()
+	}
+}
+
+/// A previewed value as plain JSON, when nothing was cut from it: a whole
+/// list rather than its first items, and no withheld or function markers.
+fn plain_value(value: &Value) -> Option<Value> {
+	match value {
+		Value::Object(map) => match map.get("_nixbox").and_then(Value::as_str) {
+			Some("list") if map.get("truncated") != Some(&Value::Bool(true)) => map
+				.get("items")?
+				.as_array()?
+				.iter()
+				.map(plain_value)
+				.collect::<Option<Vec<_>>>()
+				.map(Value::Array),
+			_ => None,
+		},
+		Value::Array(_) => None,
+		value => Some(value.clone()),
+	}
+}
+
+/// Evaluates every option in `paths` at once, with what deciding whether
+/// nixbox may write each one needs. `settings_file` is the name of nixbox's
+/// settings module, whose own definitions do not lock an option. Paths no
+/// longer declared are left out.
+pub async fn inspect_group(
+	configuration: &NixosConfiguration,
+	paths: &[OptionPath],
+	settings_file: &str,
+	limit: Duration,
+) -> Result<Vec<EditableOption>> {
+	let group: RawGroup = evaluate(
+		serde_json::json!({
+			"root": configuration.root,
+			"host": configuration.host,
+			"mode": "group",
+			"paths": paths,
+		}),
+		limit,
+	)
+	.await?;
+	Ok(group.into_options(settings_file))
+}
+
 /// Lists output names without forcing their configurations to evaluate.
 pub async fn discover_hosts(root: &Path, limit: Duration) -> Result<Vec<String>> {
 	evaluate(serde_json::json!({ "root": root, "mode": "hosts" }), limit).await
@@ -221,6 +329,73 @@ mod tests {
 			decode(r#"{"status":"sensitive"}"#),
 			InspectedValue::Sensitive
 		);
+	}
+
+	#[test]
+	fn group_entries_decode_into_kinds_values_and_ownership() {
+		let bool_type = serde_json::json!({"name": "bool", "description": "boolean", "elem": null, "values": null});
+		let group: RawGroup = serde_json::from_value(serde_json::json!({
+			"root": "/nix/store/abc-source",
+			"options": [
+				{
+					"path": ["services", "openssh", "enable"],
+					"value": {"status": "available", "value": true},
+					"default": "false",
+					"example": null,
+					"definitions": ["/nix/store/abc-source/hosts/configuration.nix"],
+					"type": bool_type,
+					"priority": 100,
+					"readOnly": false
+				},
+				{
+					"path": ["networking", "nameservers"],
+					"value": {"status": "available", "value": {"_nixbox": "list", "items": ["1.1.1.1"], "truncated": false}},
+					"default": null,
+					"example": null,
+					"definitions": ["/nix/store/abc-source/nixbox-system-settings.nix"],
+					"type": {"name": "listOf", "description": "list of string", "elem": {"name": "str", "description": "string", "elem": null, "values": null}, "values": null},
+					"priority": 100
+				},
+				{
+					"path": ["services", "openssh", "ports"],
+					"value": {"status": "available", "value": {"_nixbox": "list", "items": [22], "truncated": true}},
+					"default": null,
+					"example": null,
+					"definitions": [],
+					"type": {"name": "listOf", "description": "list of 16 bit unsigned integer", "elem": null, "values": null},
+					"priority": 1500
+				},
+				{
+					"path": ["users", "users", "me", "hashedPassword"],
+					"value": {"status": "sensitive"},
+					"default": null,
+					"example": null,
+					"definitions": null,
+					"type": null,
+					"priority": null,
+					"readOnly": true
+				}
+			]
+		}))
+		.unwrap();
+
+		let options = group.into_options("nixbox-system-settings.nix");
+
+		let enable = &options[0].entry;
+		assert_eq!(enable.kind, OptionKind::Bool);
+		assert_eq!(enable.value, Some(Value::Bool(true)));
+		assert_eq!(enable.defined_in, ["hosts/configuration.nix"]);
+		assert_eq!(enable.default.as_deref(), Some("false"));
+		let nameservers = &options[1].entry;
+		assert_eq!(nameservers.kind, OptionKind::StrList);
+		assert!(nameservers.set_by_nixbox && nameservers.defined_in.is_empty());
+		assert_eq!(nameservers.value, Some(serde_json::json!(["1.1.1.1"])));
+		// A cut-off preview is never offered as the value to edit.
+		assert_eq!(options[2].entry.value, None);
+		let password = &options[3];
+		assert_eq!(password.details.value, InspectedValue::Sensitive);
+		assert!(password.entry.read_only);
+		assert!(!password.entry.kind.is_editable());
 	}
 
 	#[test]
@@ -336,6 +511,25 @@ mod tests {
 		};
 		assert_eq!(value["items"]["apiToken"]["_nixbox"], "sensitive");
 		assert_eq!(value["items"]["enabled"], true);
+		let group = inspect_group(
+			&configuration,
+			&[
+				path("custom.enable"),
+				path("custom.greeting"),
+				path("custom.deleted"),
+			],
+			"nixbox-system-settings.nix",
+			limit,
+		)
+		.await
+		.unwrap();
+		assert_eq!(group.len(), 2, "Undeclared paths are left out");
+		assert_eq!(group[0].entry.kind, OptionKind::Bool);
+		assert_eq!(group[0].entry.value, Some(Value::Bool(false)));
+		// A default declared in the local flake has that flake as its source too.
+		assert_eq!(group[0].entry.defined_in, ["flake.nix"]);
+		assert_eq!(group[1].entry.kind, OptionKind::Str);
+		assert_eq!(group[1].entry.defined_in, ["flake.nix"]);
 		let configuration = NixosConfiguration {
 			host: "host with \"quotes\"".into(),
 			..configuration

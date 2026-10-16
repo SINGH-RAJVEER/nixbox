@@ -8,6 +8,7 @@
 			configuration = lib.evalModules {
 				modules = [
 					({ lib, ... }: {
+						_file = "${self.outPath}/flake.nix";
 						options = {
 							custom.enable = lib.mkEnableOption "the fixture service";
 							custom.greeting = lib.mkOption {

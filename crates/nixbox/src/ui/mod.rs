@@ -1,6 +1,7 @@
 //! Rendering. The window has top tabs, one page, and a status line; pages
 //! are flat lists separated by rules rather than nested panels.
 
+mod build;
 mod cursor;
 mod flakes;
 mod installed;
@@ -38,7 +39,7 @@ impl Render for NixboxApp {
 			Page::Options => options::render(self, cx),
 			Page::Nixos => nixos::render(self, window, cx),
 			Page::Queue => queue::render_queue(self, cx),
-			Page::Build => queue::render_build(self, cx),
+			Page::Build => build::render(self, cx),
 			Page::VersionControl => repository::render(self, cx),
 			Page::Settings => settings::render(self, cx),
 		};

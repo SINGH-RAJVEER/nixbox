@@ -178,7 +178,12 @@ pub fn default_host(hosts: &[String], previous: Option<&str>) -> Option<String> 
 	previous
 		.and_then(|host| hosts.iter().find(|candidate| candidate.as_str() == host))
 		.cloned()
-		.or_else(|| hosts.iter().find(|host| host.as_str() == "nixos").cloned())
+		.or_else(|| {
+			hosts
+				.iter()
+				.find(|host| host.as_str() == crate::options::NIXOS_HOST)
+				.cloned()
+		})
 		.or_else(|| match hosts {
 			[host] => Some(host.clone()),
 			_ => None,

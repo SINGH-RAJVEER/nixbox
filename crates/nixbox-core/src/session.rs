@@ -21,7 +21,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::Engine;
 use crate::op::Op;
-use crate::rebuild::{self, Escalation};
+use crate::progress::{BuildProgress, Outcome};
+use crate::rebuild::{self, Escalation, LogFormat};
 use crate::report::LogReporter;
 use crate::state::{InProgress, PersistedState};
 
@@ -85,6 +86,9 @@ pub struct Session {
 	pub queue: VecDeque<Op>,
 	/// Output of the current or most recent rebuild, plus engine notes.
 	pub log: Vec<String>,
+	/// The steps of the current or most recent rebuild, read from nix's
+	/// structured log.
+	pub progress: BuildProgress,
 	/// The last rebuild failure, kept across launches until a rebuild
 	/// succeeds.
 	pub last_error: Option<String>,
@@ -106,6 +110,7 @@ impl Session {
 			engine,
 			queue: VecDeque::new(),
 			log: Vec::new(),
+			progress: BuildProgress::default(),
 			last_error: None,
 			build: None,
 			build_tx,
@@ -295,12 +300,13 @@ impl Session {
 	/// changes that are already on disk.
 	pub fn start_rebuild(&mut self, scope: Target, label: String) {
 		let (cancel_tx, cancel_rx) = oneshot::channel();
+		self.log.clear();
+		self.progress.start(&label);
 		self.build = Some(ActiveBuild {
 			scope,
 			label,
 			cancel: Some(cancel_tx),
 		});
-		self.log.clear();
 		self.persist();
 
 		let config_dir = self.engine.config.home_manager_dir();
@@ -316,7 +322,14 @@ impl Session {
 				}
 			};
 			tokio::join!(
-				rebuild::run(config_dir, scope, escalation, tx, cancel_rx),
+				rebuild::run(
+					config_dir,
+					scope,
+					escalation,
+					LogFormat::Structured,
+					tx,
+					cancel_rx
+				),
 				forward
 			);
 		};
@@ -347,10 +360,23 @@ impl Session {
 	pub fn on_build_event(&mut self, event: BuildEvent) -> Option<BuildEnded> {
 		match event {
 			BuildEvent::Line(line) => {
+				self.progress.on_line(&line);
 				self.push_log(line);
 				None
 			}
+			BuildEvent::Nix(log) => {
+				self.progress.on_nix(&log);
+				for line in log.plain_lines() {
+					self.push_log(line);
+				}
+				None
+			}
 			BuildEvent::Finished(result) => {
+				self.progress.finish(if result.is_ok() {
+					Outcome::Succeeded
+				} else {
+					Outcome::Failed
+				});
 				let label = self.finish_build();
 				let ended = match result {
 					Ok(()) => {
@@ -375,6 +401,7 @@ impl Session {
 				Some(ended)
 			}
 			BuildEvent::Cancelled => {
+				self.progress.finish(Outcome::Cancelled);
 				let label = self.finish_build();
 				self.persist();
 				Some(BuildEnded::Cancelled {
@@ -505,6 +532,7 @@ impl Session {
 			label: label.into(),
 			cancel: Some(cancel_tx),
 		});
+		self.progress.start(label);
 		cancel_rx
 	}
 }
@@ -643,6 +671,37 @@ mod tests {
 
 		assert_eq!(session.log.len(), super::LOG_LIMIT);
 		assert_eq!(session.log.first().map(String::as_str), Some("5"));
+	}
+
+	#[test]
+	fn structured_output_reads_as_plain_lines_and_tracks_steps() {
+		use crate::progress::{StepKind, StepState};
+		use nixbox_nix::nix_log::NixLog;
+
+		let dir = temp_dir("session-structured");
+		let mut session = session(dir.config());
+		let _cancel = session.fake_build(Target::NixosSystem, "apply 1");
+		let nix = |line: &str| BuildEvent::Nix(NixLog::parse(line).expect("structured line"));
+
+		session.on_build_event(BuildEvent::Line("$ sudo nixos-rebuild switch".into()));
+		session.on_build_event(nix(
+			r#"@nix {"action":"msg","level":4,"msg":"evaluating file '/x.nix'"}"#,
+		));
+		session.on_build_event(nix(
+			r#"@nix {"action":"msg","level":3,"msg":"these 2 derivations will be built:"}"#,
+		));
+		session.on_build_event(BuildEvent::Finished(Ok(())));
+
+		assert_eq!(
+			session.log,
+			[
+				"$ sudo nixos-rebuild switch",
+				"these 2 derivations will be built:"
+			]
+		);
+		let evaluate = session.progress.step(StepKind::Evaluate).unwrap();
+		assert_eq!(evaluate.state, StepState::Succeeded);
+		assert_eq!(evaluate.lines, ["these 2 derivations will be built:"]);
 	}
 
 	#[test]

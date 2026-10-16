@@ -87,35 +87,76 @@ let
 			}
 			else value;
 
-	selected = lib.findFirst (entry: entry.metadata.path == query.path) null entries;
-	sensitive = builtins.any sensitiveSegment query.path;
-	option = selected.option;
+	# Paths as JSON make unambiguous keys, even for names containing dots.
+	index = builtins.listToAttrs (map (entry: {
+		name = builtins.toJSON entry.metadata.path;
+		value = entry;
+	}) entries);
+	lookup = path: index.${builtins.toJSON path} or null;
+
 	renderLiteral = value:
 		let text = if builtins.isAttrs value && value ? _type && value ? text then value.text
 			else lib.generators.toPretty { multiline = true; } (safe 3 value);
 		in if builtins.stringLength text > 4096 then builtins.substring 0 4096 text + "\n... truncated" else text;
-	default = if sensitive then null else attempt (
-		if option ? defaultText then renderLiteral option.defaultText
-		else if option ? default then renderLiteral option.default
-		else null
-	);
-	example = if sensitive then null else attempt (
-		if option ? example then renderLiteral option.example else null
-	);
-	valueResult = builtins.tryEval (builtins.deepSeq (safe 3 option.value) (safe 3 option.value));
+
+	describeType = depth: type: {
+		name = type.name or "unspecified";
+		description = type.description or type.name or "unspecified";
+		elem =
+			if depth > 0 && type ? nestedTypes && type.nestedTypes ? elemType
+			then describeType (depth - 1) type.nestedTypes.elemType
+			else null;
+		values =
+			if (type.name or "") == "enum" then
+				let payload = type.functor.payload or [ ];
+				in if builtins.isList payload then payload else payload.values or [ ]
+			else null;
+	};
+
+	inspect = path: selected:
+		let
+			sensitive = builtins.any sensitiveSegment path;
+			option = selected.option;
+			valueResult = builtins.tryEval (builtins.deepSeq (safe 3 option.value) (safe 3 option.value));
+		in {
+			inherit path;
+			default = if sensitive then null else attempt (
+				if option ? defaultText then renderLiteral option.defaultText
+				else if option ? default then renderLiteral option.default
+				else null
+			);
+			example = if sensitive then null else attempt (
+				if option ? example then renderLiteral option.example else null
+			);
+			value =
+				if sensitive then { status = "sensitive"; }
+				else if selected.metadata.nested then { status = "template"; }
+				else if valueResult.success then { status = "available"; value = valueResult.value; }
+				else { status = "unavailable"; };
+			definitions = if selected.metadata.nested || sensitive then null else attempt (
+				map (definition: toString definition.file) (option.definitionsWithLocations or [ ])
+			);
+		};
+
+	# What deciding whether nixbox may write an option needs: its type, and the
+	# priority it is defined at. 100 is a plain definition, 1000 mkDefault, and
+	# 1500 the option's own default.
+	editing = selected: {
+		type = attempt (describeType 2 selected.option.type);
+		readOnly = selected.metadata.readOnly;
+		priority = attempt (selected.option.highestPrio or 1500);
+	};
+
+	selected = lookup query.path;
 in
 	if query.mode == "hosts" then builtins.attrNames (flake.nixosConfigurations or { })
 	else if query.mode == "catalog" then { options = map (entry: entry.metadata) entries; }
-	else if selected == null then throw "The selected option is no longer declared. Reload the schema."
-	else {
-		path = query.path;
-		inherit default example;
-		value =
-			if sensitive then { status = "sensitive"; }
-			else if selected.metadata.nested then { status = "template"; }
-			else if valueResult.success then { status = "available"; value = valueResult.value; }
-			else { status = "unavailable"; };
-		definitions = if selected.metadata.nested || sensitive then null else attempt (
-			map (definition: toString definition.file) (option.definitionsWithLocations or [ ])
-		);
+	else if query.mode == "group" then {
+		root = toString flake.outPath;
+		options = lib.concatMap (path:
+			let found = lookup path;
+			in if found == null then [ ] else [ (inspect path found // editing found) ]
+		) query.paths;
 	}
+	else if selected == null then throw "The selected option is no longer declared. Reload the schema."
+	else inspect query.path selected

@@ -301,16 +301,17 @@ with subtest("the Installed tab lists flake packages from both places"):
 	assert f"github:{REPO}" in shown, shown
 	assert "environment.systemPackages" in shown, shown
 
-with subtest("d in the Installed tab removes a hand-written flake package"):
-	if "d uninstall" not in screen():
+with subtest("Del in the Installed tab removes a hand-written flake package"):
+	# Escape in Normal mode quits, so only send it to leave Insert mode.
+	if "esc normal" in screen():
 		tui("Escape")
 	tui("i")
 	machine.succeed("su -l tester -c \"tmux send-keys -t nb -l '#cli'\"")
 	tui("Escape")
 	machine.wait_until_succeeds(
-		"su -l tester -c 'tmux capture-pane -p -t nb' | grep -q 'd uninstall'", timeout=30
+		"su -l tester -c 'tmux capture-pane -p -t nb' | grep -q 'Del uninstall'", timeout=30
 	)
-	tui("d")
+	tui("DC")
 	machine.wait_until_succeeds(f"! grep -qF '.cli' {CONFIG}/configuration.nix", timeout=60)
 	# The flake still provides two managed packages, so its input stays.
 	assert f"github:{REPO}" in read("flake.nix"), read("flake.nix")
@@ -375,7 +376,7 @@ with subtest("Enter on an Installed package opens its options"):
 	tui("i")
 	machine.succeed("su -l tester -c \"tmux send-keys -t nb -l 'git'\"")
 	tui("Escape")
-	screen_has("d uninstall")
+	screen_has("Del uninstall")
 	tui("Enter")
 	screen_has("options in programs.git", timeout=600)
 	shown = screen()
@@ -401,7 +402,9 @@ with subtest("after the rebuild the panel shows the value as nixbox's"):
 	# The rebuild fails offline; when it ends the open panel reads its
 	# options again, now from a configuration that includes the new file.
 	screen_has("change(s) failed", timeout=600)
-	tui("BTab")
+	# Wrap from Building through Search and Flakes to Installed. Entering VCS
+	# starts repository detection, which consumes navigation keys while busy.
+	tui("Tab Tab Tab")
 	screen_has("· nixbox", timeout=600)
 
 with subtest("unsetting removes the line again"):
