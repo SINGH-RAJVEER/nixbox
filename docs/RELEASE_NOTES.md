@@ -9,7 +9,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 - Reworked the desktop Build page into expandable preparation, evaluation, download, build, and activation steps. Each step shows its duration and output; download and build progress uses Nix's reported counts and bytes. The running step opens automatically, and failures retain the failed step and its error.
 - Read Nix's structured rebuild output in the shared session while keeping CLI output readable. Build cancellation and persisted recovery continue to use the same rebuild process.
 - Added shared batched NixOS option inspection, including values, types, definition priorities, and source ownership.
-- Updated the VM integration test to use Delete for uninstall, avoid quitting the TUI from Normal mode, and follow the current tab order.
+- Updated the VM integration test to use Delete for uninstall, avoid quitting the TUI from Normal mode, and navigate without racing asynchronous repository detection.
 - Updated all seven workspace crates and internal dependencies to `0.4.0`.
 
 ## 0.3.7 - 2026-10-15

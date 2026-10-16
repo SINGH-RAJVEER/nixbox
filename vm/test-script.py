@@ -402,8 +402,9 @@ with subtest("after the rebuild the panel shows the value as nixbox's"):
 	# The rebuild fails offline; when it ends the open panel reads its
 	# options again, now from a configuration that includes the new file.
 	screen_has("change(s) failed", timeout=600)
-	# Back from Building past the VCS and NixOS tabs to Installed.
-	tui("BTab BTab BTab")
+	# Wrap from Building through Search and Flakes to Installed. Entering VCS
+	# starts repository detection, which consumes navigation keys while busy.
+	tui("Tab Tab Tab")
 	screen_has("· nixbox", timeout=600)
 
 with subtest("unsetting removes the line again"):
