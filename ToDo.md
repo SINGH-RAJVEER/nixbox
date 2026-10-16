@@ -7,4 +7,8 @@
 	- [x] TUI editing: staged edits, typed editors, unset, apply as one queued op
 	- [x] docs: `PACKAGE_OPTIONS.md`, `USER_GUIDE.md`, `MANAGED_FILES.md`, `ARCHITECTURE.md`
 	- [x] GUI: Options page reached from the Installed page
-	- [ ] follow-ups: `nixbox options` CLI, flake module options, complex types, `mkForce` overrides
+	- [ ] Follow-ups: `nixbox options` CLI, flake module options, complex types, `mkForce` overrides
+	- [ ] The flake sercher should search for both the repo names and repo output names
+    - [ ] Make the textbox expand with the commit message in the vcs tab
+    - [ ] Make the application autodetect the entire setup of configuration.nix and other related files
+

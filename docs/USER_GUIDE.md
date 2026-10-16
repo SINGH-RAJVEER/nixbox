@@ -14,7 +14,7 @@ NixOS changes run through `sudo nixos-rebuild switch`, so the active terminal mu
 
 This guide covers the separately installed terminal UI, opened with `nixbox-tui`. It does not include CLI subcommands or install `nixbox` or `nb`. The desktop front-end, opened with `nixbox-gui` or the application menu, is described in [Desktop GUI](GUI.md). See [Terminal applications](TERMINAL_APPS.md) to install the TUI or CLI from the flake.
 
-Both front-ends have a read-only NixOS settings browser for host-wide declarations, category search, nested option templates, and current values. Its host selector affects inspection only. System-wide editing is still in development; package-specific options remain editable through the existing Options page. See [NixOS](#nixos) for the terminal tab and [NixOS settings browser](GUI.md#nixos-settings-browser) for the desktop page.
+Both front-ends have a NixOS settings browser for host-wide declarations, category search, nested option templates, and current values. The desktop page also edits simple settings of the `nixos` host, such as booleans, choices, strings, numbers, and string lists, and applies them as one NixOS rebuild; the terminal tab is read-only. The host selector never changes the install target. Package-specific options remain editable through the existing Options page. See [NixOS](#nixos) for the terminal tab and [NixOS settings browser](GUI.md#nixos-settings-browser) for the desktop page.
 
 ## Starting NixBox
 

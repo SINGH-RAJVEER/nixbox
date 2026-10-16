@@ -136,11 +136,13 @@ Start a new login session after setup. `status` and `doctor` report one of four 
 
 ### Teardown
 
-Teardown rewrites the package and flake-output files in configuration mode, byte-for-byte what earlier releases wrote, and rebuilds. The profile and its generations stay on disk and off PATH. Delete them with `rm ~/.local/state/nix/profiles/nixbox*` or `sudo rm /nix/var/nix/profiles/nixbox*`, then collect garbage.
+Teardown rewrites the package and flake-output files in configuration mode and rebuilds. The package file is byte-for-byte what earlier releases wrote; the flake-output file takes the trimmed form described below. The profile and its generations stay on disk and off PATH. Delete them with `rm ~/.local/state/nix/profiles/nixbox*` or `sudo rm /nix/var/nix/profiles/nixbox*`, then collect garbage.
 
 ## Generated flake-output modules
 
 `nixbox-home-flakes.nix` and `nixbox-system-flakes.nix` store outputs selected from external flake inputs. Each file has an import marker block backed by a `BTreeMap` from the `owner/repository` key to a module output path. The manifest format also has a package marker block backed by a second `BTreeMap` from the repository to its set of package attributes, so one flake can contribute several packages; Home Manager renders that block as `home.packages`, while NixOS renders it as `environment.systemPackages`. A third map records the root flake input each repository is referenced through, such as `zen-browser`.
+
+The inputs themselves stay in the root `flake.nix`, the only place Nix accepts them; these files reach them as `inputs.<name>`. Sections without entries are left out, along with the module arguments only they use: a file with packages and no modules has no `imports` list, one with modules and no packages takes no `pkgs`, and an empty file is just `{ ... }: { }`. A file with both looks like this:
 
 ```nix
 # Managed by nixbox. Do not edit by hand.

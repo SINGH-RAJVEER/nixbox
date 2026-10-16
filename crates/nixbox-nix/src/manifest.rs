@@ -305,35 +305,45 @@ impl ManagedFlakeFile {
 		)
 	}
 
+	/// Sections without entries are left out, along with the module
+	/// arguments only they use, so an empty file is a plain `{ ... }: { }`.
 	fn write(&self, manifest: &FlakeManifest, package_option: &str) -> Result<()> {
 		if let Some(parent) = self.path.parent() {
 			fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
 		}
-		let mut imports = String::new();
-		imports.push_str("\t\t# nixbox:flakes:start\n");
-		for (repo, modules) in &manifest.modules {
-			let input = manifest.input_for(repo);
-			for module in modules {
-				imports.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
+		let mut body = String::new();
+		if !manifest.modules.is_empty() {
+			body.push_str("\timports = [\n\t\t# nixbox:flakes:start\n");
+			for (repo, modules) in &manifest.modules {
+				let input = manifest.input_for(repo);
+				for module in modules {
+					body.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
+				}
 			}
+			body.push_str("\t\t# nixbox:flakes:end\n\t];\n");
 		}
-		imports.push_str("\t\t# nixbox:flakes:end\n");
-		let mut packages = String::new();
-		packages.push_str("\t\t# nixbox:flake-packages:start\n");
-		for (repo, attrs) in &manifest.packages {
-			let input = manifest.input_for(repo);
-			for package in attrs {
-				packages.push_str(&format!(
-					"\t\tinputs.{input}.{}{} # github:{repo}\n",
-					PACKAGE_PREFIXES[0],
-					attr_name(package)
-				));
+		if !manifest.packages.is_empty() {
+			body.push_str(&format!(
+				"\t{package_option} = [\n\t\t# nixbox:flake-packages:start\n"
+			));
+			for (repo, attrs) in &manifest.packages {
+				let input = manifest.input_for(repo);
+				for package in attrs {
+					body.push_str(&format!(
+						"\t\tinputs.{input}.{}{} # github:{repo}\n",
+						PACKAGE_PREFIXES[0],
+						attr_name(package)
+					));
+				}
 			}
+			body.push_str("\t\t# nixbox:flake-packages:end\n\t];\n");
 		}
-		packages.push_str("\t\t# nixbox:flake-packages:end\n");
-		let content = format!(
-			"# Managed by nixbox. Do not edit by hand.\n{{ inputs, pkgs, ... }}:\n{{\n\timports = [\n{imports}\t];\n\t{package_option} = [\n{packages}\t];\n}}\n"
-		);
+		let args = match (manifest.modules.is_empty(), manifest.packages.is_empty()) {
+			(true, true) => "{ ... }",
+			(false, true) => "{ inputs, ... }",
+			(_, false) => "{ inputs, pkgs, ... }",
+		};
+		let content = format!("# Managed by nixbox. Do not edit by hand.\n{args}:\n{{\n{body}}}\n");
 		fs::write(&self.path, content).with_context(|| format!("writing {}", self.path.display()))
 	}
 }
@@ -999,6 +1009,7 @@ mod tests {
 
 		let rendered = fs::read_to_string(&path).unwrap();
 		assert!(rendered.contains("environment.systemPackages = ["));
+		assert!(!rendered.contains("imports"));
 		managed
 			.write_nixos(&manifest, PackageMode::Profile)
 			.unwrap();
@@ -1009,6 +1020,15 @@ mod tests {
 		assert!(rendered.contains(
 			"inputs.\"owner/package\".packages.${pkgs.stdenv.hostPlatform.system}.bun-latest"
 		));
+
+		managed
+			.write_nixos(&FlakeManifest::default(), PackageMode::Configuration)
+			.unwrap();
+		assert_eq!(
+			fs::read_to_string(&path).unwrap(),
+			"# Managed by nixbox. Do not edit by hand.\n{ ... }:\n{\n}\n"
+		);
+		assert!(managed.load().unwrap().outputs().is_empty());
 		let _ = fs::remove_file(path);
 	}
 }

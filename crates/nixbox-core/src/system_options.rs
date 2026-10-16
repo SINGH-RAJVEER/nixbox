@@ -1,8 +1,15 @@
 //! The NixOS settings browser's policy, shared by every front-end: how the
 //! schema is grouped into categories, how search ranks matches, which host
-//! opens by default, and how an inspection reads.
+//! opens by default, how an inspection reads, and which options the editor
+//! shows together and may change.
 
-use nixbox_nix::system_options::{InspectedValue, SystemOption, format_preview};
+use nixbox_nix::settings::OptionPath;
+use nixbox_nix::system_options::{EditableOption, InspectedValue, SystemOption, format_preview};
+
+use crate::options::{NIXOS_HOST, locked_reason};
+
+/// The most options one editor group evaluates at once.
+pub const GROUP_LIMIT: usize = 48;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Category {
@@ -205,13 +212,76 @@ pub fn value_text(value: &InspectedValue) -> String {
 	}
 }
 
-/// Why an option cannot be changed from the browser.
+/// Why an option cannot be changed from the terminal browser, which only
+/// inspects.
 #[must_use]
 pub fn access_note(option: &SystemOption) -> &'static str {
 	if option.read_only {
 		"Declared read-only. This setting cannot be changed here."
 	} else {
-		"Inspection only. Editing system settings is not available in this version."
+		"Inspection only. Edit system settings in the desktop app."
+	}
+}
+
+/// The options the editor shows with `selected`: the siblings under its
+/// parent that the browser lists, in schema order, keeping the nearest
+/// [`GROUP_LIMIT`] when there are more. `selected` is always included.
+#[must_use]
+pub fn sibling_group(
+	options: &[SystemOption],
+	selected: &[String],
+	show_diagnostic: bool,
+) -> Vec<OptionPath> {
+	let Some((_, parent)) = selected.split_last() else {
+		return Vec::new();
+	};
+	let siblings: Vec<&OptionPath> = options
+		.iter()
+		.filter(|option| {
+			option.path == selected
+				|| (option.path.len() == selected.len()
+					&& option.path.starts_with(parent)
+					&& !option.template
+					&& (show_diagnostic || !option.diagnostic))
+		})
+		.map(|option| &option.path)
+		.collect();
+	let at = siblings
+		.iter()
+		.position(|path| path.as_slice() == selected)
+		.unwrap_or(0);
+	let start = at
+		.saturating_sub(GROUP_LIMIT / 2)
+		.min(siblings.len().saturating_sub(GROUP_LIMIT));
+	siblings
+		.into_iter()
+		.skip(start)
+		.take(GROUP_LIMIT)
+		.cloned()
+		.collect()
+}
+
+/// Whether nixbox's NixOS rebuild applies `host`'s configuration, so its
+/// options may be edited.
+#[must_use]
+pub fn host_is_editable(host: &str) -> bool {
+	host == NIXOS_HOST
+}
+
+/// Why an inspected option cannot be edited, or `None` when it can.
+#[must_use]
+pub fn edit_lock(option: &EditableOption) -> Option<String> {
+	match &option.details.value {
+		InspectedValue::Sensitive => Some("credential value".into()),
+		InspectedValue::Unavailable => Some("value could not be evaluated".into()),
+		InspectedValue::Template => Some("nested schema".into()),
+		InspectedValue::Available(_) => locked_reason(&option.entry).or_else(|| {
+			option
+				.entry
+				.value
+				.is_none()
+				.then(|| "value too large to edit here".into())
+		}),
 	}
 }
 
@@ -325,5 +395,79 @@ mod tests {
 		assert_eq!(Category::All.cycle(1), Category::General);
 		assert_eq!(Category::All.cycle(-1), Category::System);
 		assert_eq!(Category::System.cycle(1), Category::All);
+	}
+
+	#[test]
+	fn groups_are_listed_siblings_around_the_selection() {
+		let mut options = vec![
+			option("services.foo.enable", "", false),
+			option("services.foo.settings.port", "", false),
+			option("services.foo.debug", "", true),
+			option("services.foo.user", "", false),
+			option("services.bar.enable", "", false),
+		];
+		let selected: OptionPath = options[3].path.clone();
+		let names = |group: Vec<OptionPath>| -> Vec<String> {
+			group.iter().map(|path| path.join(".")).collect()
+		};
+		assert_eq!(
+			names(sibling_group(&options, &selected, false)),
+			["services.foo.enable", "services.foo.user"]
+		);
+		assert_eq!(sibling_group(&options, &selected, true).len(), 3);
+
+		options = (0..GROUP_LIMIT * 2)
+			.map(|index| option(&format!("big.option{index:03}"), "", false))
+			.collect();
+		let group = sibling_group(&options, &options[GROUP_LIMIT * 2 - 1].path, false);
+		assert_eq!(group.len(), GROUP_LIMIT);
+		assert_eq!(group.last(), Some(&options[GROUP_LIMIT * 2 - 1].path));
+	}
+
+	#[test]
+	fn edits_are_locked_by_value_and_ownership() {
+		use nixbox_nix::options::{OptionEntry, OptionKind};
+		use nixbox_nix::system_options::SystemOptionDetails;
+
+		let editable = |value: InspectedValue, plain: Option<serde_json::Value>| EditableOption {
+			details: SystemOptionDetails {
+				path: vec!["custom".into(), "enable".into()],
+				value,
+				default: None,
+				example: None,
+				definitions: Some(Vec::new()),
+			},
+			entry: OptionEntry {
+				path: vec!["custom".into(), "enable".into()],
+				kind: OptionKind::Bool,
+				type_description: "boolean".into(),
+				description: None,
+				default: None,
+				example: None,
+				value: plain,
+				defined_in: Vec::new(),
+				set_by_nixbox: false,
+				set_by_module: false,
+				read_only: false,
+			},
+		};
+		let available = InspectedValue::Available(serde_json::Value::Bool(false));
+		assert_eq!(
+			edit_lock(&editable(
+				available.clone(),
+				Some(serde_json::Value::Bool(false))
+			)),
+			None
+		);
+		assert!(edit_lock(&editable(InspectedValue::Sensitive, None)).is_some());
+		assert!(edit_lock(&editable(available.clone(), None)).is_some());
+		let mut owned = editable(available, Some(serde_json::Value::Bool(false)));
+		owned.entry.defined_in = vec!["configuration.nix".into()];
+		assert_eq!(
+			edit_lock(&owned).as_deref(),
+			Some("set in configuration.nix")
+		);
+		assert!(host_is_editable(NIXOS_HOST));
+		assert!(!host_is_editable("workstation"));
 	}
 }

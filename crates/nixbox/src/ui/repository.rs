@@ -1,6 +1,7 @@
 //! Version control page. Changes fill the left; commit, push and remote
 //! controls sit beside them, so the commit control never hides below a long
-//! diff yet only enables for a complete, current review.
+//! diff yet only enables for a complete, current review. Why a control is
+//! disabled lives in its tooltip rather than in text around it.
 
 use std::ops::Range;
 
@@ -8,6 +9,8 @@ use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, Textarea};
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tag::Tag;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
 	ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex,
 };
@@ -58,21 +61,32 @@ pub fn render(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.into_any_element()
 }
 
+/// The logo, the repository's root with a tag when the configuration is
+/// only part of it, and refresh.
 fn header(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 	let controls = &app.repository;
-	let subtitle = match &controls.detected {
-		Some(repo) => format!(
-			"{} repository at {}",
-			backend_name(repo.backend),
-			repo.root.display()
-		),
-		None => format!("Configuration at {}", app.session.config_dir().display()),
+	let root = match &controls.detected {
+		Some(repo) => repo.root.display().to_string(),
+		None => app.session.config_dir().display().to_string(),
 	};
+	let parent = controls
+		.detected
+		.as_ref()
+		.filter(|repo| repo.root != repo.config_root)
+		.map(|repo| match repo.backend {
+			Backend::Jj => {
+				"The configuration is a subdirectory of this JJ repository. It can be reviewed, but commit, push and remote creation are refused."
+			}
+			Backend::Git => {
+				"The configuration is a subdirectory of this Git repository. Commits cover only the configuration, and unrelated staged paths must be unstaged first."
+			}
+		});
 	h_flex()
 		.px_6()
 		.pt_5()
 		.pb_3()
 		.gap_3()
+		.items_center()
 		.child(vcs_logo(controls.backend, rems(1.75)))
 		.child(
 			v_flex()
@@ -80,90 +94,107 @@ fn header(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 				.min_w_0()
 				.gap_1()
 				.child(
-					div()
-						.text_lg()
-						.font_weight(FontWeight::SEMIBOLD)
-						.text_color(cx.theme().link)
-						.child("Version control"),
+					h_flex()
+						.gap_2()
+						.items_center()
+						.child(
+							div()
+								.text_lg()
+								.font_weight(FontWeight::SEMIBOLD)
+								.text_color(cx.theme().link)
+								.child("Version control"),
+						)
+						.when_some(controls.detected.as_ref(), |title, repo| {
+							title.child(Tag::secondary().xsmall().child(backend_name(repo.backend)))
+						})
+						.when_some(parent, |title, explanation| {
+							title.child(
+								div()
+									.id("repository-parent")
+									.tooltip(move |window, cx| {
+										Tooltip::new(explanation).build(window, cx)
+									})
+									.child(Tag::warning().xsmall().outline().child("subdirectory")),
+							)
+						}),
 				)
-				.child(muted(subtitle, cx).truncate()),
+				.child(
+					div()
+						.min_w_0()
+						.truncate()
+						.text_sm()
+						.font_family(cx.theme().mono_font_family.clone())
+						.text_color(cx.theme().muted_foreground)
+						.child(root),
+				),
 		)
 		.child(
 			Button::new("repository-refresh")
-				.outline()
+				.ghost()
 				.small()
 				.icon(IconName::RotateCw)
-				.label("Refresh review")
+				.label("Refresh")
+				.tooltip("Refresh the review")
 				.loading(controls.busy)
 				.disabled(controls.busy || app.repository_pending_writes())
 				.on_click(cx.listener(|this, _, window, cx| this.refresh_repository(window, cx))),
 		)
 }
 
-/// The latest result, then anything that currently limits what can be done.
+/// The latest result, and a warning while queued work blocks reviewing.
 fn notices(app: &NixboxApp, cx: &App) -> impl IntoElement {
 	let controls = &app.repository;
 	let theme = cx.theme();
 	let failed = controls.notice.contains("failed");
-	let parent = controls
-		.detected
-		.as_ref()
-		.filter(|repo| repo.root != repo.config_root)
-		.map(|repo| match repo.backend {
-			Backend::Jj => {
-				"This configuration lives inside a larger JJ repository. It can be reviewed, but commit, push and remote creation are refused there."
-			}
-			Backend::Git => {
-				"This configuration lives inside a larger Git repository. Commits cover only this directory, and unrelated staged paths must be unstaged first."
-			}
-		});
-	v_flex()
-		.px_6()
-		.pb_3()
-		.gap_1()
+	let pending = app.repository_pending_writes();
+	let shown = controls.busy || pending || !controls.notice.trim().is_empty();
+	h_flex()
+		.when(shown, |row| row.px_6().pb_3())
+		.gap_2()
+		.items_center()
 		.text_sm()
-		.child(
-			h_flex()
-				.gap_2()
-				.when(controls.busy, |line| line.child(Spinner::new().small()))
-				.child(
-					div()
-						.min_w_0()
-						.text_color(if failed {
-							theme.danger
-						} else {
-							theme.muted_foreground
-						})
-						.child(controls.notice.clone()),
-				),
-		)
-		.when(app.repository_pending_writes(), |notices| {
-			notices.child(div().text_color(theme.warning).child(
-				"Queued changes or a rebuild are pending. Finish or drop them before reviewing and committing.",
-			))
+		.when(controls.busy, |line| line.child(Spinner::new().small()))
+		.when(!pending, |line| {
+			line.child(
+				div()
+					.min_w_0()
+					.truncate()
+					.text_color(if failed {
+						theme.danger
+					} else {
+						theme.muted_foreground
+					})
+					.child(controls.notice.clone()),
+			)
 		})
-		.when_some(parent, |notices, parent| {
-			notices.child(div().text_color(theme.muted_foreground).child(parent))
+		.when(pending, |line| {
+			line.child(
+				div()
+					.text_color(theme.warning)
+					.child("Waiting for queued changes and rebuilds to finish."),
+			)
 		})
 }
 
 fn initialize(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let disabled = app.repository.busy || app.repository_pending_writes();
-	let choice = |id: &'static str, backend: Backend, label: &'static str| {
-		Button::new(id)
-			.outline()
-			.disabled(disabled)
-			.child(
-				h_flex()
-					.gap_2()
-					.items_center()
-					.child(vcs_logo(Some(backend), rems(1.)))
-					.child(label),
-			)
-			.on_click(cx.listener(move |this, _, window, cx| {
-				this.run_repository(RepositoryAction::Init(backend), window, cx)
-			}))
-	};
+	let choice =
+		|id: &'static str, backend: Backend, label: &'static str, tooltip: &'static str| {
+			Button::new(id)
+				.outline()
+				.disabled(disabled)
+				.tooltip(tooltip)
+				.child(
+					h_flex()
+						.gap_2()
+						.items_center()
+						.child(vcs_logo(Some(backend), rems(1.)))
+						.child(label),
+				)
+				.on_click(cx.listener(move |this, _, window, cx| {
+					this.run_repository(RepositoryAction::Init(backend), window, cx)
+				}))
+		};
 	v_flex()
 		.flex_1()
 		.items_center()
@@ -171,21 +202,29 @@ fn initialize(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.gap_4()
 		.border_t_1()
 		.border_color(cx.theme().border)
-		.child(div().font_weight(FontWeight::MEDIUM).child(
-			"This configuration is not under version control.",
-		))
+		.child(
+			div()
+				.font_weight(FontWeight::MEDIUM)
+				.child("Not under version control"),
+		)
 		.child(muted(
-			"Initialize a repository to review and commit what nixbox changes. Nothing is committed or pushed.",
+			"Initialize a repository to review and commit nixbox's changes.",
 			cx,
 		))
 		.child(
 			h_flex()
 				.gap_3()
-				.child(choice("repository-init-git", Backend::Git, "Initialize Git"))
+				.child(choice(
+					"repository-init-git",
+					Backend::Git,
+					"Git",
+					"Initialize a Git repository. Nothing is committed.",
+				))
 				.child(choice(
 					"repository-init-jj",
 					Backend::Jj,
-					"Initialize Jujutsu with Git",
+					"Jujutsu",
+					"Initialize Jujutsu colocated with Git. Nothing is committed.",
 				)),
 		)
 		.into_any_element()
@@ -292,10 +331,12 @@ fn changes(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let status_toggle = Button::new("repository-show-status")
 		.ghost()
 		.xsmall()
-		.label(if controls.show_status {
-			"Hide status"
+		.icon(IconName::SquareTerminal)
+		.selected(controls.show_status)
+		.tooltip(if controls.show_status {
+			"Hide the status output"
 		} else {
-			"Show status"
+			"Show the status output"
 		})
 		.on_click(cx.listener(|this, _, _, cx| {
 			this.repository.show_status = !this.repository.show_status;
@@ -316,7 +357,7 @@ fn changes(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						Button::new("repository-show-all")
 							.ghost()
 							.xsmall()
-							.label("Show all files")
+							.label("All files")
 							.on_click(cx.listener(|this, _, _, cx| this.focus_file(None, cx))),
 					)
 				})
@@ -429,7 +470,7 @@ fn diff_line(line: &DiffLine, number_width: usize, cx: &App) -> gpui_kit::Div {
 		.child(text)
 }
 
-/// Commit, push and remote controls. A disabled control says why.
+/// Commit, push and remote controls. A disabled control's tooltip says why.
 fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let controls = &app.repository;
 	let pending = app.repository_pending_writes();
@@ -467,10 +508,13 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.w_full()
 		.icon(IconName::Check)
 		.label(match (&controls.review, files) {
-			(Some(_), 1) => "Commit 1 file locally".to_string(),
-			(Some(_), files) if files > 1 => format!("Commit {files} files locally"),
-			_ => "Commit locally".to_string(),
+			(Some(_), 1) => "Commit 1 file".to_string(),
+			(Some(_), files) if files > 1 => format!("Commit {files} files"),
+			_ => "Commit".to_string(),
 		})
+		.tooltip(
+			commit_blocker.unwrap_or("Commit the reviewed changes locally. Nothing is pushed."),
+		)
 		.disabled(disabled || commit_blocker.is_some())
 		.on_click(cx.listener(|this, _, window, cx| this.commit_repository(window, cx)));
 
@@ -489,14 +533,7 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				.px_6()
 				.gap_2()
 				.child(Textarea::new(&controls.message).disabled(controls.busy))
-				.child(muted(
-					"Suggested from nixbox's changes. Your edits are kept across refreshes.",
-					cx,
-				))
-				.child(commit)
-				.when_some(commit_blocker, |section, reason| {
-					section.child(muted(reason, cx))
-				}),
+				.child(commit),
 		);
 
 	let branch = controls.branch.read(cx).value();
@@ -523,8 +560,8 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		v_flex()
 			.px_6()
 			.gap_2()
-			.child(match &controls.origin {
-				Some(url) => h_flex()
+			.child(
+				h_flex()
 					.gap_2()
 					.text_sm()
 					.child(
@@ -537,16 +574,18 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 							.min_w_0()
 							.truncate()
 							.font_family(cx.theme().mono_font_family.clone())
-							.child(url.clone()),
+							.when(controls.origin.is_none(), |url| {
+								url.text_color(cx.theme().muted_foreground)
+							})
+							.child(controls.origin.clone().unwrap_or_else(|| "none".into())),
 					),
-				None => h_flex().child(muted("No origin remote is configured.", cx)),
-			})
+			)
 			.child(Input::new(&controls.branch).disabled(controls.busy))
 			.when(jj, |section| {
 				section.child(
 					Checkbox::new("repository-create-bookmark")
 						.small()
-						.label("Create or advance the nixbox bookmark to the last commit")
+						.label("Advance the nixbox bookmark")
 						.checked(controls.create_bookmark)
 						.disabled(disabled)
 						.on_click(cx.listener(|this, _: &bool, window, cx| {
@@ -560,17 +599,15 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					.small()
 					.w_full()
 					.icon(IconName::ArrowUp)
-					.label(if jj {
-						"Push bookmark to origin"
+					.label("Push to origin")
+					.tooltip(push_blocker.unwrap_or(if jj {
+						"Push the bookmark to origin."
 					} else {
-						"Push branch to origin"
-					})
+						"Push the branch to origin."
+					}))
 					.disabled(disabled || push_blocker.is_some())
 					.on_click(cx.listener(|this, _, window, cx| this.push_repository(window, cx))),
-			)
-			.when_some(push_blocker, |section, reason| {
-				section.child(muted(reason, cx))
-			}),
+			),
 	);
 
 	if controls.origin.is_none() && !parent {
@@ -580,50 +617,63 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			v_flex()
 				.px_6()
 				.gap_2()
-				.child(muted(
-					"Optional. Creates the repository with an authenticated gh and adds it as origin, without pushing.",
-					cx,
-				))
 				.child(
 					h_flex()
 						.gap_2()
-						.child(div().flex_1().child(Input::new(&controls.owner).disabled(controls.busy)))
+						.child(
+							div()
+								.flex_1()
+								.child(Input::new(&controls.owner).disabled(controls.busy)),
+						)
 						.child(muted("/", cx))
-						.child(div().flex_1().child(Input::new(&controls.name).disabled(controls.busy))),
+						.child(
+							div()
+								.flex_1()
+								.child(Input::new(&controls.name).disabled(controls.busy)),
+						),
 				)
 				.child(
-					ButtonGroup::new("repository-visibility")
-						.outline()
-						.small()
+					h_flex()
+						.gap_2()
 						.child(
-							Button::new("repository-private")
-								.label("Private")
-								.selected(!controls.public)
-								.disabled(disabled),
+							ButtonGroup::new("repository-visibility")
+								.outline()
+								.small()
+								.child(
+									Button::new("repository-private")
+										.label("Private")
+										.selected(!controls.public)
+										.disabled(disabled),
+								)
+								.child(
+									Button::new("repository-public")
+										.label("Public")
+										.selected(controls.public)
+										.disabled(disabled),
+								)
+								.on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+									if let Some(index) = clicked.first() {
+										this.repository.public = *index == 1;
+										cx.notify();
+									}
+								})),
 						)
 						.child(
-							Button::new("repository-public")
-								.label("Public")
-								.selected(controls.public)
-								.disabled(disabled),
-						)
-						.on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
-							if let Some(index) = clicked.first() {
-								this.repository.public = *index == 1;
-								cx.notify();
-							}
-						})),
-				)
-				.child(
-					Button::new("repository-create-remote")
-						.outline()
-						.small()
-						.w_full()
-						.icon(IconName::Github)
-						.label("Create repository and add origin")
-						.disabled(disabled || !named)
-						.on_click(
-							cx.listener(|this, _, window, cx| this.create_repository_remote(window, cx)),
+							Button::new("repository-create-remote")
+								.outline()
+								.small()
+								.flex_1()
+								.icon(IconName::Github)
+								.label("Create")
+								.tooltip(if named {
+									"Create the repository with gh and add it as origin, without pushing."
+								} else {
+									"Enter an owner and a repository name."
+								})
+								.disabled(disabled || !named)
+								.on_click(cx.listener(|this, _, window, cx| {
+									this.create_repository_remote(window, cx)
+								})),
 						),
 				),
 		);
