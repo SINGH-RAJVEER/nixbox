@@ -2,6 +2,10 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Added hardware-aware filtering to the NixOS browser in the GUI and TUI. Link the selected host to this machine's detected CPU, GPUs, Bluetooth, and battery; known irrelevant settings then disappear from search and editor groups. Configured and staged settings stay accessible, incomplete detection stays unknown, and Show all restores excluded hardware settings.
+
 ## 0.4.6 - 2026-10-23
 
 - Added a round GTK-style close button at the top right of the desktop GUI that quits NixBox like Ctrl-Q. Settings has a switch to hide it, saved as `close_button`, and `nixbox config set close-button false` does the same.

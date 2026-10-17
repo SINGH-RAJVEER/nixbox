@@ -1,5 +1,7 @@
 # Architecture
 
+Hardware-aware settings use `nixbox-nix::hardware` for read-only local facts and `nixbox-core::hardware::HardwareFilter` for applicability rules and configured/staged exceptions. Front-ends explicitly bind the local inventory to the selected configuration root and host, refresh it with schema reloads, and clear that binding on target changes. Shared search counts and editor groups apply the same hardware rules. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
+
 ## System boundary
 
 NixBox is a local application with three front-ends: a terminal UI, a command line, and a desktop GUI. It does not run a daemon, expose an HTTP API, receive webhooks, or maintain a remote index. The process reads local configuration, calls the `nix`, `home-manager`, `nixos-rebuild`, `git`, and `gh` executables, writes local Nix and JSON files, and renders a Ratatui or gpui interface.

@@ -1,5 +1,7 @@
 # NixOS settings tab plan
 
+The browser now has shared hardware-applicability rules and a read-only local inventory. Each selected host must be explicitly associated with this machine before filtering; configured, staged, and unknown settings remain visible. Remote inventory reports and persistent associations are future work. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
+
 Status: implementation started on 2026-10-10. Prepared on 2026-10-05 in the `nixos-settings` Jujutsu workspace at `/home/rajveer/Projects/personal/nixbox-nixos-settings`, based on `8f69afe2`.
 
 ## Current implementation

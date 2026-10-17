@@ -30,6 +30,10 @@ pub struct NixosConfiguration {
 #[serde(rename_all = "camelCase")]
 pub struct SystemOption {
 	pub path: OptionPath,
+	/// A non-default definition outside nixpkgs, or unknown when its
+	/// provenance cannot be read. This never evaluates the option's value.
+	#[serde(default)]
+	pub configured: Option<bool>,
 	pub description: Option<String>,
 	pub type_description: String,
 	pub declarations: Vec<String>,
@@ -458,6 +462,14 @@ mod tests {
 		);
 		assert!(entry("custom.missingDescription").description.is_none());
 		assert!(entry("custom.debug").diagnostic);
+		assert_eq!(entry("custom.greeting").configured, Some(true));
+		assert_eq!(entry("custom.enable").configured, Some(false));
+		assert_eq!(entry("credentials.apiToken").configured, Some(false));
+		assert_eq!(entry("hardware.nvidia.open").configured, Some(true));
+		assert_eq!(
+			entry("hardware.nvidia.modesetting.enable").configured,
+			Some(false)
+		);
 		assert!(entry("custom.fixed").read_only);
 		assert!(entry("users.users.<name>.active").template);
 		assert!(entry("services.jobs.*.name").nested);

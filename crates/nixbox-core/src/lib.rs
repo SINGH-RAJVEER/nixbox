@@ -9,6 +9,7 @@
 
 pub mod engine;
 pub mod flakes;
+pub mod hardware;
 pub mod op;
 pub mod options;
 pub mod profile;

@@ -64,6 +64,8 @@ Press `Enter` on a managed or external package to open its options panel. The pa
 
 ### NixOS
 
+Press `Alt-H` to link this machine's hardware to the selected host. Hardware filtering then hides settings known to require absent devices. Press `Alt-A` to show all hardware options, or `Alt-H` again to unlink. The association lasts for the session and clears when switching hosts or configuration directories. Configured options and uncertain hardware stay visible. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
+
 The NixOS tab browses the option schema of a host from the configuration flake's `nixosConfigurations` outputs. It reads the hosts the first time you open the tab, then picks `nixos` when it exists or the only host when there is one. A header line names the host and configuration directory. Below it are categories with their match counts, the matching options, and the selected option's details. Terminals narrower than 110 columns hide the category column and name the category in the list title.
 
 The search field matches option paths and descriptions, with exact paths first. Inspecting an option evaluates its effective value, default, example, and definition files, so it runs only when you press `Enter`. The tab is read-only and never changes the install target or queues work. A finished rebuild invalidates the schema, which reloads the next time the tab is open.
@@ -75,6 +77,8 @@ The search field matches option paths and descriptions, with exact paths first. 
 | `Alt-Left`, `Alt-Right`, or `[`, `]` in Vim Normal mode | Previous or next category. |
 | `Ctrl-T` | Next host. |
 | `Ctrl-D` | Show or hide diagnostic options. |
+| `Alt-H` | Use this machine's hardware for the selected host, or unlink it. |
+| `Alt-A` | Show all hardware options, or restore relevance filtering. |
 | `Ctrl-L`, or `r` in Vim Normal mode | Reload hosts and the schema. |
 | `PageUp`, `PageDown` | Scroll the details. |
 

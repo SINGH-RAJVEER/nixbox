@@ -10,6 +10,15 @@
 					({ lib, ... }: {
 						_file = "${self.outPath}/flake.nix";
 						options = {
+							hardware.cpu.intel.updateMicrocode = lib.mkEnableOption "Intel microcode";
+							hardware.cpu.amd.updateMicrocode = lib.mkEnableOption "AMD microcode";
+							hardware.nvidia.open = lib.mkEnableOption "NVIDIA open driver";
+							hardware.nvidia.modesetting.enable = lib.mkEnableOption "NVIDIA modesetting";
+							hardware.bluetooth.enable = lib.mkEnableOption "Bluetooth";
+							services.undervolt.tempBat = lib.mkOption {
+								type = lib.types.nullOr lib.types.int;
+								default = null;
+							};
 							custom.enable = lib.mkEnableOption "the fixture service";
 							custom.greeting = lib.mkOption {
 								type = lib.types.str;
@@ -71,6 +80,7 @@
 							};
 						};
 						config.custom.greeting = "from configuration";
+						config.hardware.nvidia.open = false;
 					})
 				];
 			};

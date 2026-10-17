@@ -128,6 +128,7 @@ pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>)
 		.size_full()
 		.child(header(app, cx))
 		.child(toolbar(app, cx))
+		.when(ready, |page| page.child(hardware_toolbar(app, cx)))
 		.when(ready && narrow, |page| page.child(category_chips(app, cx)))
 		.child(
 			div()
@@ -259,6 +260,35 @@ fn toolbar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 					this.refresh_nixos_filter(cx);
 				})),
 		)
+}
+
+fn hardware_toolbar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	let linked = app.nixos.hardware.inventory.is_some();
+	v_flex()
+		.px_6()
+		.pb_3()
+		.gap_1()
+		.child(h_flex()
+			.gap_4()
+			.flex_wrap()
+			.child(Switch::new("nixos-local-hardware")
+				.label("Use this machine's hardware")
+				.checked(linked)
+				.on_click(cx.listener(|this, checked: &bool, window, cx| {
+					this.use_local_nixos_hardware(*checked, window, cx);
+				})))
+			.child(Switch::new("nixos-all-hardware")
+				.label("Show all hardware options")
+				.checked(app.nixos.hardware.show_all)
+				.on_click(cx.listener(|this, checked: &bool, window, cx| {
+					this.nixos.hardware.show_all = *checked;
+					this.refresh_nixos_hardware(window, cx);
+				}))))
+		.child(div().text_xs().text_color(cx.theme().muted_foreground).child(if linked {
+			format!("{}. Configured, staged, and unknown settings stay visible.", app.nixos.local_hardware.summary())
+		} else {
+			"Hardware is not linked to this host. Use this machine only if it is the selected host. Unknown settings stay visible.".into()
+		}))
 }
 
 fn choose_category(this: &mut NixboxApp, category: Category, cx: &mut Context<NixboxApp>) {
@@ -478,6 +508,12 @@ fn details(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		);
 	if let Some(note) = partial_note(option) {
 		body = body.child(div().px_6().pb_2().child(muted(note, cx)));
+	}
+	if let Some(reason) = app.nixos.hardware.exclusion_reason(&option.path) {
+		body = body.child(div().px_6().pb_2().child(muted(
+			format!("{reason}. Visible because it is configured, staged, or Show all is enabled."),
+			cx,
+		)));
 	}
 	if let Some(error) = &app.nixos.detail_error {
 		body = body.child(
