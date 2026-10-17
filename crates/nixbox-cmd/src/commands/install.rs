@@ -73,6 +73,7 @@ pub async fn run(args: &InstallArgs, global: &GlobalArgs) -> Result<ExitCode> {
 			summary,
 		},
 		&args.apply,
+		&global.telemetry,
 	)
 	.await
 }

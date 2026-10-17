@@ -11,6 +11,7 @@ use anyhow::{Result, bail};
 use clap::Args;
 use nixbox_config::Target;
 use nixbox_core::rebuild::LogFormat;
+use nixbox_core::telemetry::{self, Telemetry};
 use nixbox_core::{
 	Activation, Engine, Escalation, InProgress, Op, PersistedState, Reporter, rebuild,
 };
@@ -61,8 +62,13 @@ impl Reporter for StderrReporter {
 	}
 }
 
-pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Result<ExitCode> {
-	execute_with(engine, plan, opts, None).await
+pub async fn execute(
+	engine: &mut Engine,
+	plan: Plan,
+	opts: &ApplyOpts,
+	telemetry: &Telemetry,
+) -> Result<ExitCode> {
+	execute_with(engine, plan, opts, None, telemetry).await
 }
 
 /// [`execute`], with `activation` overriding the one the ops call for.
@@ -71,6 +77,7 @@ pub async fn execute_with(
 	plan: Plan,
 	opts: &ApplyOpts,
 	activation: Option<Activation>,
+	telemetry: &Telemetry,
 ) -> Result<ExitCode> {
 	let activation = activation.unwrap_or_else(|| engine.activation_for(&plan.ops));
 	let action = match activation {
@@ -116,7 +123,7 @@ pub async fn execute_with(
 		[only] => only.clone(),
 		rest => format!("{} change(s)", rest.len()),
 	};
-	run_activation(engine, plan.scope, &label, activation).await
+	run_activation(engine, plan.scope, &label, activation, telemetry).await
 }
 
 /// Asks before changing anything. A non-interactive stdin has to pass
@@ -156,7 +163,9 @@ pub(crate) async fn run_activation(
 	scope: Target,
 	label: &str,
 	activation: Activation,
+	telemetry: &Telemetry,
 ) -> Result<ExitCode> {
+	let attempt = telemetry.begin_activation(scope, activation);
 	mark_in_progress(scope, label, activation);
 	let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
 	let (cancel_tx, cancel_rx) = oneshot::channel();
@@ -172,6 +181,7 @@ pub(crate) async fn run_activation(
 
 	let mut cancel = Some(cancel_tx);
 	let mut outcome = Outcome::Succeeded;
+	let mut terminal_outcome = None;
 	loop {
 		tokio::select! {
 			event = build_rx.recv() => {
@@ -182,12 +192,17 @@ pub(crate) async fn run_activation(
 							eprintln!("{line}");
 						}
 					}
-					Some(BuildEvent::Finished(Ok(()))) => break,
+					Some(BuildEvent::Finished(Ok(()))) => {
+						terminal_outcome = Some(telemetry::Outcome::Succeeded);
+						break;
+					}
 					Some(BuildEvent::Finished(Err(error))) => {
+						terminal_outcome = Some(telemetry::Outcome::Failed);
 						outcome = Outcome::Failed(error);
 						break;
 					}
 					Some(BuildEvent::Cancelled) => {
+						terminal_outcome = Some(telemetry::Outcome::Cancelled);
 						outcome = Outcome::Cancelled;
 						break;
 					}
@@ -206,6 +221,9 @@ pub(crate) async fn run_activation(
 		}
 	}
 	let _ = task.await;
+	if let (Some(attempt), Some(outcome)) = (attempt, terminal_outcome) {
+		attempt.finish(outcome);
+	}
 	let retry = retry_command(activation);
 
 	match &outcome {

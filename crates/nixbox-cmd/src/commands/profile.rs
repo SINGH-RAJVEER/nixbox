@@ -96,7 +96,7 @@ async fn setup(apply: &ApplyOpts, global: &GlobalArgs) -> Result<ExitCode> {
 		}],
 		summary,
 	};
-	let code = execute(&mut engine, plan, apply).await?;
+	let code = execute(&mut engine, plan, apply, &global.telemetry).await?;
 	if code != ExitCode::SUCCESS || apply.dry_run || apply.no_rebuild || rebuild::builds_vm() {
 		return Ok(code);
 	}
@@ -137,7 +137,7 @@ async fn teardown(apply: &ApplyOpts, global: &GlobalArgs) -> Result<ExitCode> {
 			),
 		],
 	};
-	execute(&mut engine, plan, apply).await
+	execute(&mut engine, plan, apply, &global.telemetry).await
 }
 
 /// The selected target, provided its profile has been built at least once.

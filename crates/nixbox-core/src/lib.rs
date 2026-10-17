@@ -19,6 +19,7 @@ pub mod search;
 pub mod session;
 pub mod state;
 pub mod system_options;
+pub mod telemetry;
 pub mod text_motion;
 pub mod vcs;
 

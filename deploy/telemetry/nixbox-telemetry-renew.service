@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew the NixBox telemetry HTTPS certificate
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/nixbox/deploy/telemetry
+ExecStart=/opt/nixbox/deploy/telemetry/manage.sh renew

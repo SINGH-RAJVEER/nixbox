@@ -40,6 +40,20 @@ async fn handle_key_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: CtEven
 		return Ok(());
 	}
 	if app.repository.busy {
+		if app.mode == Mode::SettingsSelect
+			&& matches!(
+				app.settings_page,
+				SettingsPage::Telemetry | SettingsPage::TelemetryPreview
+			) {
+			handle_settings_select(app, key.code, key.modifiers);
+			return Ok(());
+		}
+		if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+			app.mode = Mode::SettingsSelect;
+			app.settings_page = SettingsPage::Telemetry;
+			app.settings_cursor = usize::from(app.session.engine.config.telemetry.enabled);
+			return Ok(());
+		}
 		crate::repository::handle_key(app, tx, key);
 		return Ok(());
 	}
@@ -261,11 +275,17 @@ fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 
 fn settings_option_count(page: SettingsPage) -> usize {
 	match page {
-		SettingsPage::Main => 4,
+		SettingsPage::Main => 5,
 		SettingsPage::InputMode => INPUT_MODES.len(),
 		SettingsPage::Theme => theme::ALL.len(),
 		SettingsPage::Target => TARGETS.len(),
 		SettingsPage::Channel => CHANNELS.len(),
+		SettingsPage::Telemetry => 3,
+		SettingsPage::TelemetryPreview => nixbox_core::telemetry::preview()
+			.unwrap_or_default()
+			.lines()
+			.count()
+			.max(1),
 	}
 }
 
@@ -275,7 +295,8 @@ fn select_setting(app: &mut App) {
 			0 => SettingsPage::InputMode,
 			1 => SettingsPage::Theme,
 			2 => SettingsPage::Target,
-			_ => SettingsPage::Channel,
+			3 => SettingsPage::Channel,
+			_ => SettingsPage::Telemetry,
 		};
 		app.settings_cursor = match app.settings_page {
 			SettingsPage::InputMode => INPUT_MODES
@@ -292,8 +313,39 @@ fn select_setting(app: &mut App) {
 				.position(|channel| *channel == app.session.engine.config.channel)
 				.unwrap_or(0),
 			SettingsPage::Main => 0,
+			SettingsPage::Telemetry => usize::from(app.session.engine.config.telemetry.enabled),
+			SettingsPage::TelemetryPreview => 0,
 		};
 		app.status = "↑/↓ select  ·  Enter confirm  ·  Esc back".into();
+		return;
+	}
+	if app.settings_page == SettingsPage::TelemetryPreview {
+		app.settings_page = SettingsPage::Telemetry;
+		app.settings_cursor = 2;
+		return;
+	}
+	if app.settings_page == SettingsPage::Telemetry {
+		if app.settings_cursor == 2 {
+			app.settings_page = SettingsPage::TelemetryPreview;
+			app.settings_cursor = 0;
+			app.status = "Synthetic example. Nothing collected or sent. Esc returns.".into();
+			return;
+		}
+		let enabled = app.settings_cursor == 1;
+		if !enabled {
+			app.session.telemetry.disable();
+		}
+		app.status =
+			match nixbox_core::telemetry::set_enabled(&mut app.session.engine.config, enabled) {
+				Ok(()) => {
+					app.session.telemetry.refresh();
+					format!(
+						"Basic usage data: {}.",
+						nixbox_core::telemetry::status_label(app.session.engine.config.telemetry)
+					)
+				}
+				Err(error) => format!("Saving telemetry preference failed: {error}"),
+			};
 		return;
 	}
 
@@ -320,7 +372,9 @@ fn select_setting(app: &mut App) {
 			app.session.engine.config.channel = CHANNELS[app.settings_cursor].to_string();
 			format!("Channel set to {}.", app.session.engine.config.channel)
 		}
-		SettingsPage::Main => unreachable!(),
+		SettingsPage::Main | SettingsPage::Telemetry | SettingsPage::TelemetryPreview => {
+			unreachable!()
+		}
 	};
 	let _ = app.session.engine.config.save();
 	app.settings_page = SettingsPage::Main;
@@ -328,6 +382,15 @@ fn select_setting(app: &mut App) {
 }
 
 fn close_settings_page(app: &mut App) {
+	if app.settings_page == SettingsPage::TelemetryPreview {
+		app.settings_page = SettingsPage::Telemetry;
+		app.settings_cursor = 2;
+		return;
+	}
+	if app.repository.busy && app.settings_page == SettingsPage::Telemetry {
+		app.mode = Mode::Browsing;
+		return;
+	}
 	if app.settings_page == SettingsPage::Main {
 		app.mode = Mode::Browsing;
 		app.status = "Settings closed.".into();
@@ -345,6 +408,7 @@ fn settings_main_index(page: SettingsPage) -> usize {
 		SettingsPage::Theme => 1,
 		SettingsPage::Target => 2,
 		SettingsPage::Channel => 3,
+		SettingsPage::Telemetry | SettingsPage::TelemetryPreview => 4,
 	}
 }
 
@@ -532,13 +596,19 @@ mod tests {
 			press(&mut app, KeyCode::BackTab).await;
 			press(&mut app, KeyCode::Char('d')).await;
 			press(&mut app, KeyCode::Delete).await;
-			for code in ['c', 'r', 's'] {
+			for code in ['c', 'r'] {
 				press_with_modifiers(&mut app, KeyCode::Char(code), KeyModifiers::CONTROL).await;
 			}
 			assert_eq!(app.tab, tab);
 			assert_eq!(app.mode, Mode::Browsing);
 			assert!(!app.should_quit);
 			assert!(app.session.queue.is_empty());
+			press_with_modifiers(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL).await;
+			assert_eq!(app.settings_page, SettingsPage::Telemetry);
+			assert_eq!(app.mode, Mode::SettingsSelect);
+			assert!(!app.session.engine.config.telemetry.enabled);
+			press(&mut app, KeyCode::Esc).await;
+			assert_eq!(app.mode, Mode::Browsing);
 		}
 	}
 

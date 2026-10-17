@@ -16,12 +16,13 @@ use crate::commands::target_name;
 use crate::render;
 
 /// Every key `get`/`set` understands, in the order `show` prints them.
-const KEYS: [&str; 8] = [
+const KEYS: [&str; 9] = [
 	"channel",
 	"target",
 	"theme",
 	"input-mode",
 	"tab-labels",
+	"telemetry-enabled",
 	"config-dir",
 	"home-manager-main-file",
 	"nixos-main-file",
@@ -73,6 +74,7 @@ fn show(global: &GlobalArgs) -> Result<ExitCode> {
 				"theme": config.theme,
 				"input-mode": input_mode_name(config.input_mode),
 				"tab-labels": config.tab_labels.name(),
+				"telemetry-enabled": config.telemetry.enabled,
 				"config-dir": config.config_dir,
 				"home-manager-main-file": config.home_manager_main_file,
 				"nixos-main-file": config.nixos_main_file,
@@ -105,6 +107,12 @@ fn get(key: &str, global: &GlobalArgs) -> Result<ExitCode> {
 
 fn set(key: &str, value: &str) -> Result<ExitCode> {
 	let mut config = Config::load_or_default()?;
+	if key == "telemetry-enabled" {
+		let enabled = parse_telemetry(value)?;
+		nixbox_core::telemetry::set_enabled(&mut config, enabled)?;
+		println!("telemetry-enabled = {}", config.telemetry.enabled);
+		return Ok(ExitCode::SUCCESS);
+	}
 	match key {
 		"channel" => {
 			if value.trim().is_empty() {
@@ -141,6 +149,7 @@ fn read(config: &Config, key: &str) -> Option<String> {
 		"theme" => config.theme.clone(),
 		"input-mode" => input_mode_name(config.input_mode).to_string(),
 		"tab-labels" => config.tab_labels.name().to_string(),
+		"telemetry-enabled" => config.telemetry.enabled.to_string(),
 		"config-dir" => path_value(config.config_dir.as_ref()),
 		"home-manager-main-file" => path_value(config.home_manager_main_file.as_ref()),
 		"nixos-main-file" => path_value(config.nixos_main_file.as_ref()),
@@ -158,6 +167,16 @@ fn parse_path(value: &str) -> Option<PathBuf> {
 		None
 	} else {
 		Some(PathBuf::from(value))
+	}
+}
+
+fn parse_telemetry(value: &str) -> Result<bool> {
+	match value {
+		"true" => Ok(true),
+		"false" => Ok(false),
+		_ => bail!(
+			"telemetry-enabled accepts only `true` or `false`. Run `nixbox telemetry status` for the collection disclosure and recipient"
+		),
 	}
 }
 
@@ -202,6 +221,15 @@ mod tests {
 			assert!(read(&config, key).is_some(), "{key} has no reader");
 		}
 		assert!(read(&config, "nonsense").is_none());
+	}
+
+	#[test]
+	fn telemetry_accepts_only_explicit_booleans() {
+		assert!(super::parse_telemetry("true").expect("true"));
+		assert!(!super::parse_telemetry("false").expect("false"));
+		for value in ["1", "yes", "TRUE", "", " true "] {
+			assert!(super::parse_telemetry(value).is_err());
+		}
 	}
 
 	#[test]

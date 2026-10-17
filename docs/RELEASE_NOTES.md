@@ -2,6 +2,12 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Added optional usage counters, disabled by default for fresh and existing installs. GUI/TUI settings and CLI controls disclose the fields, show effective status, and provide offline examples. Settings writes preserve opt-out across stale instances. All interfaces share `https://nixb.duckdns.org:58443/v1/telemetry`; consent version 3 discloses that recipient and requires an explicit choice.
+- Added an optional Axum receiver that stores daily SQLite aggregates for 90 days and enforces strict request and capacity limits. The collection protocol is custom JSON.
+- Added receiver and Nginx Dockerfiles, isolated Compose deployment, and certificate issuance and renewal. Public HTTPS ingestion is verified on the shared VM without restarting or reconfiguring its existing application. Provider infrastructure logging and backup retention remain outside application verification.
+
 ## 0.4.1 - 2026-10-22
 
 - Added opt-in package profiles. `nixbox profile setup` moves a target's packages into an independent Nix profile and rebuilds once; installs and removals then build only the profile. Modules, options and migrations still rebuild. `nixbox profile teardown` moves the packages back into the combined configuration module.

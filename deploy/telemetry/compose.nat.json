@@ -1,0 +1,55 @@
+{
+	"name": "nixbox-telemetry",
+	"services": {
+		"receiver": {
+			"image": "nixbox-telemetry-receiver:${TELEMETRY_IMAGE_TAG:?Set TELEMETRY_IMAGE_TAG to the loaded receiver image tag}",
+			"restart": "unless-stopped",
+			"init": true,
+			"read_only": true,
+			"cap_drop": ["ALL"],
+			"security_opt": ["no-new-privileges:true"],
+			"environment": { "NIXBOX_TELEMETRY_BIND": "0.0.0.0:8787", "NIXBOX_TELEMETRY_DATABASE": "/data/counts.sqlite3" },
+			"volumes": ["counts:/data"],
+			"tmpfs": ["/tmp:rw,noexec,nosuid,size=16m"],
+			"networks": ["backend"],
+			"cpus": "0.50",
+			"mem_limit": "128m",
+			"pids_limit": 64,
+			"stop_grace_period": "10s",
+			"logging": { "driver": "json-file", "options": { "max-size": "1m", "max-file": "2" } }
+		},
+		"nginx": {
+			"image": "nixbox-telemetry-nginx:${TELEMETRY_NGINX_TAG:?Set TELEMETRY_NGINX_TAG to the loaded nginx image tag}",
+			"restart": "unless-stopped",
+			"read_only": true,
+			"security_opt": ["no-new-privileges:true"],
+			"environment": { "TELEMETRY_DOMAIN": "${TELEMETRY_DOMAIN:?Set TELEMETRY_DOMAIN}", "TELEMETRY_PUBLIC_HTTPS_PORT": "58443" },
+			"ports": ["${TELEMETRY_INTERNAL_HTTPS_PORT:-18443}:8443"],
+			"volumes": ["certificates:/etc/letsencrypt:ro"],
+			"tmpfs": ["/tmp:rw,noexec,nosuid,size=32m"],
+			"networks": ["frontend", "backend"],
+			"depends_on": { "receiver": { "condition": "service_healthy" } },
+			"cpus": "0.50",
+			"mem_limit": "64m",
+			"pids_limit": 64,
+			"stop_grace_period": "10s",
+			"logging": { "driver": "json-file", "options": { "max-size": "1m", "max-file": "2" } }
+		},
+		"acme": {
+			"image": "ghcr.io/acmesh-official/acme.sh:3.1.6",
+			"profiles": ["tools"],
+			"environment": { "TELEMETRY_DOMAIN": "${TELEMETRY_DOMAIN:?Set TELEMETRY_DOMAIN}", "AUTO_UPGRADE": "0" },
+			"entrypoint": ["/bin/sh", "/hooks/duckdns-acme.sh"],
+			"command": ["issue"],
+			"secrets": ["duckdns_token"],
+			"volumes": ["acme_state:/acme.sh", "certificates:/certificates", "./duckdns-acme.sh:/hooks/duckdns-acme.sh:ro"],
+			"networks": ["frontend"],
+			"cpus": "0.50",
+			"mem_limit": "128m",
+			"pids_limit": 64
+		}
+	},
+	"secrets": { "duckdns_token": { "file": "./secrets/duckdns-token" } },
+	"volumes": { "counts": {}, "certificates": {}, "acme_state": {} },
+	"networks": { "frontend": {}, "backend": { "internal": true } }
+}

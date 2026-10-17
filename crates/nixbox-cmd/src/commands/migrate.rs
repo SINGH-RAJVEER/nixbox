@@ -92,6 +92,7 @@ pub async fn run(args: &MigrateArgs, global: &GlobalArgs) -> Result<ExitCode> {
 			summary,
 		},
 		&args.apply,
+		&global.telemetry,
 	)
 	.await
 }

@@ -17,6 +17,7 @@ use gpui_kit::{
 };
 use nixbox_config::{Config, Target};
 use nixbox_core::rebuild::{ASKPASS_ENV, ASKPASS_LIBRARY_PATH_ENV};
+use nixbox_core::telemetry::{Interface, Telemetry};
 use nixbox_core::{Engine, Escalation, Session};
 use tracing_subscriber::EnvFilter;
 
@@ -108,8 +109,11 @@ fn run(args: Args) -> Result<()> {
 	}
 	let engine = Engine::with_config(config)?;
 	let helper = std::env::current_exe().context("locating the nixbox executable")?;
+	let telemetry = Telemetry::new(Interface::Gui, handle.clone());
+	let window_telemetry = telemetry.clone();
 	let (session, build_rx) = Session::new(engine);
 	let session = session
+		.with_telemetry(telemetry.clone())
 		.with_runtime(handle.clone())
 		.with_escalation(Escalation::Askpass(helper));
 
@@ -131,6 +135,8 @@ fn run(args: Args) -> Result<()> {
 						..WindowOptions::default()
 					},
 					|window, cx| {
+						// Restore may start an activation while constructing the first window.
+						window_telemetry.refresh();
 						let view = cx.new(|cx| {
 							let mut app = NixboxApp::new(session, build_rx, handle, window, cx);
 							app.prepare_catalog(cx);
@@ -142,11 +148,14 @@ fn run(args: Args) -> Result<()> {
 				if let Err(error) = opened {
 					eprintln!("nixbox: opening the window failed: {error:#}");
 					cx.update(|cx| cx.quit());
+				} else {
+					window_telemetry.started();
 				}
 			})
 			.detach();
 		});
 
+	runtime.block_on(telemetry.shutdown());
 	drop(runtime);
 	Ok(())
 }

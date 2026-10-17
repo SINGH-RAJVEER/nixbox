@@ -8,3 +8,6 @@ CLAUDE.md
 /.devenv.flake.nix
 /.env
 /.vm
+/nixbox-telemetry.sqlite3*
+/deploy/telemetry/.env
+/deploy/telemetry/secrets/

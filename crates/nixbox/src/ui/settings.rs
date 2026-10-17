@@ -12,6 +12,7 @@ use gpui_kit::{
 use nixbox_config::{
 	DEFAULT_CHANNEL, InputMode, THEMES, TabLabels, Target, config_dir_from_env, default_config_dir,
 };
+use nixbox_core::telemetry;
 
 use super::{muted, page_header};
 use crate::app::NixboxApp;
@@ -100,6 +101,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			}
 		}));
 	let shortcuts = keyboard_settings(app, cx);
+	let privacy = telemetry_settings(app, cx);
 	let terminal_apps = super::terminal_apps::render(cx);
 	v_flex()
 		.size_full()
@@ -123,6 +125,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					input_modes,
 					cx,
 				))
+				.child(privacy)
 				.child(setting(
 					"Install target",
 					"Where new packages and flakes are added.",
@@ -154,6 +157,58 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					cx,
 				))
 				.child(shortcuts),
+		)
+		.into_any_element()
+}
+
+fn telemetry_settings(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
+	let saved = app.session.engine.config.telemetry;
+	let buttons = ButtonGroup::new("telemetry-choice")
+		.outline()
+		.small()
+		.children([false, true].map(|enabled| {
+			Button::new(if enabled {
+				"telemetry-on"
+			} else {
+				"telemetry-off"
+			})
+			.label(if enabled { "On" } else { "Off" })
+			.selected(enabled == saved.enabled)
+			.disabled(enabled && telemetry::RECIPIENT.is_none())
+		}))
+		.on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+			if let Some(index) = clicked.first() {
+				this.set_telemetry(*index == 1, cx);
+			}
+		}));
+	v_flex()
+		.flex_shrink_0()
+		.px_6()
+		.py_4()
+		.gap_2()
+		.child(
+			div()
+				.font_weight(FontWeight::MEDIUM)
+				.child("Share basic usage data"),
+		)
+		.child(muted(telemetry::DISCLOSURE, cx))
+		.child(muted(
+			format!(
+				"{} · Recipient: {}",
+				telemetry::status_label(saved),
+				telemetry::RECIPIENT.unwrap_or("not configured; enabling is unavailable")
+			),
+			cx,
+		))
+		.child(
+			h_flex().items_center().gap_3().child(buttons).child(
+				Button::new("telemetry-preview")
+					.small()
+					.label("Copy example report")
+					.on_click(cx.listener(|this, _, _, cx| {
+						this.copy_telemetry_preview(cx);
+					})),
+			),
 		)
 		.into_any_element()
 }

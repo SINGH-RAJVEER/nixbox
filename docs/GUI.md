@@ -108,6 +108,10 @@ Edit any shortcut under **Settings > Keyboard shortcuts**. Separate alternatives
 
 Bindings persist as `gui_shortcuts` overrides in `settings.json` and take effect without restarting. These overrides apply only to the GUI; `input_mode` is shared with the TUI.
 
+## Optional usage data
+
+Settings includes **Share basic usage data**, defaulting to Off. It shows the disclosure, effective status, recipient, and **Copy example report**, which copies a synthetic JSON payload without collecting or sending anything. The shared recipient is `https://nixb.duckdns.org:58443/v1/telemetry`; On explicitly saves consent, while debug, CI, and VM builds continue to suppress delivery. The Off control remains available during rebuilds and repository operations. Data is limited to release/interface/platform counters and completed activation outcomes; no IDs, searches, package names, configuration contents, or logs are sent. See [Optional telemetry](TELEMETRY_PLAN.md).
+
 ## Configuration location
 
 Settings shows the configuration directory nixbox edits and rebuilds. Type a path, where a leading `~` means your home directory, and press Enter or **Apply**, or pick a directory with **Browse**. **Use default** returns to `~/.config/nixos`. The directory must exist; NixBox warns when it has no `flake.nix`. Changing it reloads installed packages, flakes, and options from the new directory and restarts repository detection. It is refused while operations are queued or a rebuild runs, since those write to the current directory. When `NIXBOX_CONFIG_DIR` is set, it overrides the saved location and the field is read-only.

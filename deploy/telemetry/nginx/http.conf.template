@@ -1,0 +1,16 @@
+server {
+	listen 8080 default_server;
+	server_name ${TELEMETRY_DOMAIN};
+
+	location ^~ /.well-known/acme-challenge/ {
+		root /var/www/acme;
+		default_type text/plain;
+		limit_except GET {
+			deny all;
+		}
+	}
+
+	location / {
+		return 308 https://${TELEMETRY_DOMAIN}:${TELEMETRY_PUBLIC_HTTPS_PORT}$request_uri;
+	}
+}

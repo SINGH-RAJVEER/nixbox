@@ -66,6 +66,7 @@ pub async fn run(args: &RemoveArgs, global: &GlobalArgs) -> Result<ExitCode> {
 			summary,
 		},
 		&args.apply,
+		&global.telemetry,
 	)
 	.await
 }

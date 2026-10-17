@@ -68,6 +68,12 @@ XDG_CONFIG_HOME=/tmp/nbx/config XDG_CACHE_HOME=/tmp/nbx/cache \
 
 ## Development environment
 
+`just ci` also runs `just telemetry-ci`, covering the shared collector and optional Axum receiver. The receiver feature is off in ordinary application builds. Run it separately with `cargo run -p nixbox-core --features telemetry-receiver --example telemetry-receiver` inside `devenv shell`; [Optional telemetry](TELEMETRY_PLAN.md#running-the-axum-receiver) documents its binding, storage, limits, and release-build command.
+
+[`deploy/telemetry`](../deploy/telemetry) contains receiver and Nginx Dockerfiles, a Compose definition, certificate bootstrap, and a renewal timer. [VPS deployment](TELEMETRY_PLAN.md#vps-deployment-with-docker-and-nginx) covers installation. All interfaces compile the same recipient constant, `https://nixb.duckdns.org:58443/v1/telemetry`; changing server `.env` does not change an installed client's recipient. Local telemetry tests inject loopback receivers and must never send to the public service.
+
+Collector tests inject a local destination and consent source, exercise actual HTTP delivery and SQLite ingestion, and never contact a production endpoint. Debug/test, CI, and VM application runs suppress delivery. Production has no runtime endpoint override. The public recipient is configured, while verifying the deployed service remains a release step separate from passing local tests.
+
 The supported development path is the pinned devenv shell:
 
 ```sh
