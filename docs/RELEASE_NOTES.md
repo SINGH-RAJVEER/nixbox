@@ -2,6 +2,10 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## 0.4.6 - 2026-10-23
+
+- Added a round GTK-style close button at the top right of the desktop GUI that quits NixBox like Ctrl-Q. Settings has a switch to hide it, saved as `close_button`, and `nixbox config set close-button false` does the same.
+
 ## 0.4.5 - 2026-10-23
 
 - Added optional usage counters, disabled by default for fresh and existing installs. GUI/TUI settings and CLI controls disclose the fields, show effective status, and provide offline examples. Settings writes preserve opt-out across stale instances. All interfaces share `https://nixb.duckdns.org:58443/v1/telemetry`; consent version 3 discloses that recipient and requires an explicit choice.
