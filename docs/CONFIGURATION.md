@@ -13,6 +13,11 @@ The complete shape is:
 	"theme": "default",
 	"input_mode": "vim",
 	"tab_labels": "icons-and-names",
+	"telemetry": {
+		"enabled": false,
+		"consent_version": 0,
+		"revision": 0
+	},
 	"config_dir": null,
 	"recent_searches": [],
 	"home_manager_main_file": null,
@@ -27,12 +32,21 @@ The complete shape is:
 | `theme` | `default` | Active color palette. Valid built-in names are `default`, `dracula`, `gruvbox`, `nord`, `catppuccin`, and `monokai`. An unknown value displays the default theme until another theme is selected. |
 | `input_mode` | `vim` | Text editing behavior. Valid values are `vim` and `normal`. |
 | `tab_labels` | `icons-and-names` | What the desktop GUI's navigation tabs show. Valid values are `icons`, `icons-and-names`, and `names`. `nixbox config set tab-labels` accepts the same values. |
+| `telemetry.enabled` | `false` | Saved telemetry consent. Missing fields on upgrades stay disabled. The shared recipient is `https://nixb.duckdns.org:58443/v1/telemetry`. |
+| `telemetry.consent_version` | `0` | Version of the disclosed collection contract. A saved enablement is valid only for the current version, `3`, which discloses the selected recipient. |
+| `telemetry.revision` | `0` | Local counter advanced by explicit consent changes, so queued work can detect a disable/enable cycle. It is never part of a report. |
 | `config_dir` | `null` | Optional configuration root. `null` uses `~/.config/nixos`; `NIXBOX_CONFIG_DIR` overrides it. |
 | `recent_searches` | `[]` | The schema can retain up to 20 non-empty package queries, newest first, with duplicates moved to the front. The current TUI neither adds queries to this field nor displays a recent-search screen. |
 | `home_manager_main_file` | `null` | Optional absolute or relative path to the Home Manager file that NixBox scans and imports its generated Home Manager modules into. |
 | `nixos_main_file` | `null` | Optional absolute or relative path to the NixOS file that NixBox scans and imports its generated NixOS modules into. |
 
-NixBox saves settings immediately after selecting an input mode, theme, tab labels, configuration location, target, or channel. It writes formatted JSON directly to the settings path.
+NixBox saves settings immediately after selecting an input mode, theme, tab labels, configuration location, target, or channel. Writers use a persistent `settings.lock` sibling to serialize updates, write formatted JSON to a private temporary file, synchronize it, and atomically replace the settings file. A linked settings file keeps its symlink; writers update and lock the resolved target. Invalid existing settings are never overwritten by a preference save.
+
+Ordinary saves preserve the latest telemetry consent from disk, even if an older open instance still holds an enabled snapshot. The shared `Config::set_telemetry_enabled` function is the only application path that persists explicit consent changes, and it updates consent without overwriting other saved preferences. Failed opt-out saves leave that instance disabled but do not confirm an opt-out for other instances. Removing the settings file also makes a later ordinary save use disabled telemetry defaults.
+
+The consent foundation honors `NIXBOX_NO_TELEMETRY=1` and `DO_NOT_TRACK=1` as disabling overrides. Environment variables cannot enable collection. Debug and test builds, a present `CI` variable, and a present `NIXBOX_VM_BUILD` variable suppress delivery. These overrides leave saved consent unchanged.
+
+GUI Settings, TUI Settings > Usage data, and `nixbox config set telemetry-enabled true|false` share the consent function. `nixbox telemetry status` shows saved consent, effective status, disclosure, and recipient. `nixbox telemetry preview` prints a synthetic example without collecting or sending anything. All interfaces use the fixed HTTPS recipient `https://nixb.duckdns.org:58443/v1/telemetry`; it has no runtime environment override. Collection requires explicit saved consent and remains suppressed in debug, CI, and VM builds. Version 1 and 2 consent need renewal because it did not disclose this recipient. The collector and optional Axum receiver are implemented and verified against controlled local receivers. See the [telemetry implementation plan](TELEMETRY_PLAN.md) for the allowed fields, Docker/Nginx deployment, and remaining public-service checks.
 
 ## Configuration root
 

@@ -25,6 +25,7 @@ use crate::progress::{BuildProgress, Outcome};
 use crate::rebuild::{self, Escalation, LogFormat};
 use crate::report::LogReporter;
 use crate::state::{InProgress, PersistedState};
+use crate::telemetry::{self, ActivationAttempt, Telemetry};
 
 /// Lines kept in the build log. Older lines are dropped first.
 pub const LOG_LIMIT: usize = 1000;
@@ -36,6 +37,7 @@ struct ActiveBuild {
 	label: String,
 	activation: crate::Activation,
 	cancel: Option<oneshot::Sender<()>>,
+	attempt: Option<ActivationAttempt>,
 }
 
 /// What [`Session::enqueue`] did with an op.
@@ -83,6 +85,7 @@ pub struct Session {
 	/// Settings, both manifests, the external-package scan, and every
 	/// mutation of the user's configuration.
 	pub engine: Engine,
+	pub telemetry: Telemetry,
 	/// Ops waiting for their turn, oldest first.
 	pub queue: VecDeque<Op>,
 	/// Output of the current or most recent rebuild, plus engine notes.
@@ -109,6 +112,7 @@ impl Session {
 		let (build_tx, build_rx) = mpsc::unbounded_channel();
 		let session = Self {
 			engine,
+			telemetry: Telemetry::default(),
 			queue: VecDeque::new(),
 			log: Vec::new(),
 			progress: BuildProgress::default(),
@@ -127,6 +131,12 @@ impl Session {
 	#[must_use]
 	pub fn with_runtime(mut self, runtime: Handle) -> Self {
 		self.runtime = Some(runtime);
+		self
+	}
+
+	#[must_use]
+	pub fn with_telemetry(mut self, telemetry: Telemetry) -> Self {
+		self.telemetry = telemetry;
 		self
 	}
 
@@ -325,6 +335,7 @@ impl Session {
 			label,
 			activation,
 			cancel: Some(cancel_tx),
+			attempt: self.telemetry.begin_activation(scope, activation),
 		});
 		self.persist();
 
@@ -397,7 +408,11 @@ impl Session {
 				} else {
 					Outcome::Failed
 				});
-				let label = self.finish_build();
+				let label = self.finish_build(if result.is_ok() {
+					telemetry::Outcome::Succeeded
+				} else {
+					telemetry::Outcome::Failed
+				});
 				let ended = match result {
 					Ok(()) => {
 						self.last_error = None;
@@ -422,7 +437,7 @@ impl Session {
 			}
 			BuildEvent::Cancelled => {
 				self.progress.finish(Outcome::Cancelled);
-				let label = self.finish_build();
+				let label = self.finish_build(telemetry::Outcome::Cancelled);
 				self.persist();
 				Some(BuildEnded::Cancelled {
 					label,
@@ -432,10 +447,16 @@ impl Session {
 		}
 	}
 
-	fn finish_build(&mut self) -> String {
-		self.build
-			.take()
-			.map_or_else(|| "build".into(), |build| build.label)
+	fn finish_build(&mut self, outcome: telemetry::Outcome) -> String {
+		self.build.take().map_or_else(
+			|| "build".into(),
+			|build| {
+				if let Some(attempt) = build.attempt {
+					attempt.finish(outcome);
+				}
+				build.label
+			},
+		)
 	}
 
 	fn push_log(&mut self, line: String) {
@@ -553,6 +574,9 @@ impl Session {
 			label: label.into(),
 			activation: crate::Activation::Configuration,
 			cancel: Some(cancel_tx),
+			attempt: self
+				.telemetry
+				.begin_activation(scope, crate::Activation::Configuration),
 		});
 		self.progress.start(label);
 		cancel_rx

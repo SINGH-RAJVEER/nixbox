@@ -1,10 +1,14 @@
+mod settings;
+mod telemetry;
+
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
+
+pub use telemetry::{TELEMETRY_CONSENT_VERSION, TelemetrySettings, TelemetryStatus};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
@@ -123,6 +127,9 @@ pub struct Config {
 	/// Desktop keyboard overrides. Missing actions use their defaults; empty lists disable them.
 	#[serde(default)]
 	pub gui_shortcuts: BTreeMap<String, Vec<String>>,
+	/// Optional usage collection. Only explicit consent changes may persist this field.
+	#[serde(default)]
+	pub telemetry: TelemetrySettings,
 	#[serde(default)]
 	pub recent_searches: Vec<String>,
 	/// The configuration directory nixbox edits and rebuilds. `None` uses
@@ -166,6 +173,7 @@ impl Default for Config {
 			input_mode: InputMode::default(),
 			tab_labels: TabLabels::default(),
 			gui_shortcuts: BTreeMap::new(),
+			telemetry: TelemetrySettings::default(),
 			recent_searches: Vec::new(),
 			config_dir: None,
 			home_manager_main_file: None,
@@ -275,24 +283,21 @@ impl Config {
 	}
 
 	pub fn load_or_default() -> Result<Self> {
-		let path = settings_path()?;
-		if !path.exists() {
-			return Ok(Self::default());
-		}
-		let raw =
-			fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-		let cfg: Config =
-			serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-		Ok(cfg)
+		settings::load(&settings_path()?)
 	}
 
+	/// Saves ordinary preferences while preserving the latest saved consent.
 	pub fn save(&self) -> Result<()> {
-		let path = settings_path()?;
-		if let Some(parent) = path.parent() {
-			fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+		settings::save(&settings_path()?, self)
+	}
+
+	/// Persists an explicit consent change without saving other in-memory preferences.
+	/// A failed disable still leaves this instance opted out.
+	pub fn set_telemetry_enabled(&mut self, enabled: bool) -> Result<()> {
+		if !enabled {
+			self.telemetry.enabled = false;
 		}
-		let raw = serde_json::to_string_pretty(self)?;
-		fs::write(&path, raw).with_context(|| format!("writing {}", path.display()))?;
+		self.telemetry = settings::set_telemetry_enabled(&settings_path()?, enabled)?;
 		Ok(())
 	}
 }
@@ -328,6 +333,7 @@ mod tests {
 		assert_eq!(cfg.theme, "default");
 		assert_eq!(cfg.input_mode, InputMode::Vim);
 		assert!(cfg.recent_searches.is_empty());
+		assert_eq!(cfg.telemetry, TelemetrySettings::default());
 		assert!(cfg.home_manager_main_file.is_none());
 		assert!(cfg.nixos_main_file.is_none());
 	}
@@ -379,6 +385,7 @@ mod tests {
 		assert_eq!(cfg.input_mode, InputMode::Vim);
 		assert_eq!(cfg.tab_labels, TabLabels::IconsAndNames);
 		assert!(cfg.gui_shortcuts.is_empty());
+		assert_eq!(cfg.telemetry, TelemetrySettings::default());
 		assert!(cfg.recent_searches.is_empty());
 		assert!(cfg.home_manager_main_file.is_none());
 		assert!(cfg.nixos_main_file.is_none());

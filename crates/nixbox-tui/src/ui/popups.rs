@@ -10,7 +10,14 @@ use crate::theme;
 pub(super) fn draw_settings_popup(f: &mut Frame, app: &App) {
 	let t = app.theme();
 	let area = f.area();
-	let popup_width: u16 = 42;
+	let popup_width: u16 = if matches!(
+		app.settings_page,
+		SettingsPage::Telemetry | SettingsPage::TelemetryPreview
+	) {
+		76
+	} else {
+		42
+	};
 	let (title, labels, selected) = settings_content(app);
 	let popup_height = labels.len() as u16 + 2;
 	let x = area.x + area.width.saturating_sub(popup_width) / 2;
@@ -60,6 +67,15 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
 					"  {:<12} {}  ›",
 					"Channel", app.session.engine.config.channel
 				),
+				format!(
+					"  {:<12} {}  >",
+					"Usage data",
+					if app.session.engine.config.telemetry.enabled {
+						"On"
+					} else {
+						"Off"
+					}
+				),
 			],
 			selected,
 		),
@@ -100,7 +116,61 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
 				.collect(),
 			selected,
 		),
+		SettingsPage::Telemetry => {
+			use nixbox_core::telemetry;
+			let consent = app.session.engine.config.telemetry;
+			let mut labels = vec![
+				option_label("Off", !consent.enabled),
+				option_label(
+					if telemetry::RECIPIENT.is_some() {
+						"On"
+					} else {
+						"On unavailable: receiver not configured"
+					},
+					consent.enabled,
+				),
+				"  View synthetic example report".into(),
+				String::new(),
+			];
+			labels.extend(wrap(telemetry::DISCLOSURE, 68));
+			labels.extend(wrap(
+				&format!(
+					"Status: {}. Recipient: {}.",
+					telemetry::status_label(consent),
+					telemetry::RECIPIENT.unwrap_or("not configured")
+				),
+				68,
+			));
+			(" Share basic usage data ", labels, selected)
+		}
+		SettingsPage::TelemetryPreview => (
+			" Synthetic example, nothing sent ",
+			nixbox_core::telemetry::preview()
+				.unwrap_or_default()
+				.lines()
+				.map(str::to_owned)
+				.collect(),
+			selected,
+		),
 	}
+}
+
+fn wrap(text: &str, width: usize) -> Vec<String> {
+	let mut lines = Vec::new();
+	let mut line = String::new();
+	for word in text.split_whitespace() {
+		if !line.is_empty() && line.len() + 1 + word.len() > width {
+			lines.push(std::mem::take(&mut line));
+		}
+		if !line.is_empty() {
+			line.push(' ');
+		}
+		line.push_str(word);
+	}
+	if !line.is_empty() {
+		lines.push(line);
+	}
+	lines
 }
 
 fn option_label(label: &str, selected: bool) -> String {

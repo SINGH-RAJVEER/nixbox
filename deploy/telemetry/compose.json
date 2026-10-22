@@ -1,0 +1,49 @@
+{
+	"name": "nixbox-telemetry",
+	"services": {
+		"receiver": {
+			"build": { "context": "../..", "dockerfile": "deploy/telemetry/receiver.Dockerfile" },
+			"restart": "unless-stopped",
+			"init": true,
+			"read_only": true,
+			"cap_drop": ["ALL"],
+			"security_opt": ["no-new-privileges:true"],
+			"environment": {
+				"NIXBOX_TELEMETRY_BIND": "0.0.0.0:8787",
+				"NIXBOX_TELEMETRY_DATABASE": "/data/counts.sqlite3"
+			},
+			"volumes": ["counts:/data"],
+			"tmpfs": ["/tmp:rw,noexec,nosuid,size=16m"],
+			"networks": ["backend"],
+			"mem_limit": "256m",
+			"pids_limit": 128,
+			"stop_grace_period": "10s",
+			"logging": { "driver": "json-file", "options": { "max-size": "1m", "max-file": "2" } }
+		},
+		"nginx": {
+			"build": { "context": "../..", "dockerfile": "deploy/telemetry/nginx.Dockerfile" },
+			"restart": "unless-stopped",
+			"read_only": true,
+			"security_opt": ["no-new-privileges:true"],
+			"environment": { "TELEMETRY_DOMAIN": "${TELEMETRY_DOMAIN:?Set TELEMETRY_DOMAIN in .env}", "TELEMETRY_PUBLIC_HTTPS_PORT": "${TELEMETRY_PUBLIC_HTTPS_PORT:-58443}" },
+			"ports": ["${HTTP_PORT:-80}:8080", "${HTTPS_PORT:-58443}:8443"],
+			"volumes": ["certificates:/etc/letsencrypt:ro", "acme:/var/www/acme:ro"],
+			"tmpfs": ["/tmp:rw,noexec,nosuid,size=32m"],
+			"networks": ["frontend", "backend"],
+			"depends_on": { "receiver": { "condition": "service_healthy" } },
+			"mem_limit": "128m",
+			"pids_limit": 128,
+			"stop_grace_period": "10s",
+			"logging": { "driver": "json-file", "options": { "max-size": "1m", "max-file": "2" } }
+		},
+		"certbot": {
+			"image": "docker.io/certbot/certbot:v5.8.0",
+			"profiles": ["tools"],
+			"volumes": ["certificates:/etc/letsencrypt", "acme:/var/www/acme"],
+			"tmpfs": ["/var/log/letsencrypt:rw,nosuid,size=16m", "/var/lib/letsencrypt:rw,nosuid,size=16m"],
+			"networks": ["frontend"]
+		}
+	},
+	"volumes": { "counts": {}, "certificates": {}, "acme": {} },
+	"networks": { "frontend": {}, "backend": { "internal": true } }
+}

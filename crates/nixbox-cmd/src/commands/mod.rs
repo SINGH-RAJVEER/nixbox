@@ -15,6 +15,7 @@ pub mod resume;
 pub mod scan;
 pub mod search;
 pub mod status;
+pub mod telemetry;
 
 use std::pin::pin;
 use std::time::Duration;

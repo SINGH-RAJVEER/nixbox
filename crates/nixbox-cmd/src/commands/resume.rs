@@ -61,6 +61,7 @@ pub async fn run(args: &ResumeArgs, global: &GlobalArgs) -> Result<ExitCode> {
 				in_progress.scope,
 				&in_progress.label,
 				in_progress.activation,
+				&global.telemetry,
 			)
 			.await?;
 			clear_in_progress()?;
@@ -106,6 +107,7 @@ pub async fn run(args: &ResumeArgs, global: &GlobalArgs) -> Result<ExitCode> {
 				summary,
 			},
 			&args.apply,
+			&global.telemetry,
 		)
 		.await?;
 		if last != ExitCode::SUCCESS {

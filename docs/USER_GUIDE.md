@@ -140,6 +140,7 @@ The settings UI changes these values:
 - `Theme` selects `default`, `dracula`, `gruvbox`, `nord`, `catppuccin`, or `monokai`.
 - `Target` selects Home Manager or NixOS for new installs.
 - `Channel` selects `nixpkgs-26.05` or `nixpkgs-unstable` for live-search fallback.
+- `Usage data` shows the optional collection disclosure, saved choice, effective status, recipient, and an offline example. It defaults to Off. On explicitly consents to sending the disclosed counts to `https://nixb.duckdns.org:58443/v1/telemetry`; development builds continue to suppress delivery. During a repository operation, Ctrl-S opens this privacy page directly so collection can still be disabled.
 
 Path overrides are valid settings but are not editable in the TUI. Edit `settings.json` directly to set them.
 

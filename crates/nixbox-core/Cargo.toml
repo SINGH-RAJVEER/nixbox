@@ -14,12 +14,24 @@ description = "Headless engine behind nixbox: manifest mutation, config wiring, 
 [features]
 # Exposes `Session::fake_build` so front-end tests can simulate a rebuild.
 test-util = []
+telemetry-receiver = ["dep:axum", "dep:rusqlite"]
 
 [dependencies]
-nixbox-config = { path = "../nixbox-config", version = "0.4.1" }
-nixbox-nix = { path = "../nixbox-nix", version = "0.4.1" }
+nixbox-config = { path = "../nixbox-config", version = "0.4.5" }
+nixbox-nix = { path = "../nixbox-nix", version = "0.4.5" }
 anyhow = { workspace = true }
 directories = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+reqwest = { workspace = true }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"], optional = true }
+rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["net", "test-util"] }
+
+[[example]]
+name = "telemetry-receiver"
+required-features = ["telemetry-receiver"]

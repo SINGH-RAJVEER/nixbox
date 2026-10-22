@@ -119,6 +119,10 @@ Without `--output`, `flake add` installs the flake's first package on the Home M
 
 ## Settings and completions
 
+Optional usage collection defaults to off. `nixbox config get telemetry-enabled` reads saved consent and `nixbox config set telemetry-enabled false` disables it. Enabling requires the literal `true` and explicitly consents to sending the disclosed counts to `https://nixb.duckdns.org:58443/v1/telemetry`. Debug, CI, and VM builds still suppress delivery. The CLI never uses an environment variable to enable collection.
+
+`nixbox telemetry status`, also available with `--json`, prints saved consent, effective status, recipient, and the collection disclosure. `nixbox telemetry preview` prints a synthetic report through the actual serializer. Both commands are offline and do not initialize collection. Help, version, completions, and config commands also produce no reports. Other commands can count one dispatch and completed activation outcomes after consent, with at most 100 ms for delivery at exit. CLI aliases all use the same `cli` dimension. See [Optional telemetry](TELEMETRY_PLAN.md) for the exact fields and receiver.
+
 | Command | Purpose |
 | --- | --- |
 | `nixbox config show` | Print every setting. |

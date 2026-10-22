@@ -1,28 +1,28 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/nixbox",
-    "crates/nixbox-cli",
-    "crates/nixbox-cmd",
-    "crates/nixbox-tui",
-    "crates/nixbox-core",
-    "crates/nixbox-nix",
-    "crates/nixbox-config",
+	"crates/nixbox",
+	"crates/nixbox-cli",
+	"crates/nixbox-cmd",
+	"crates/nixbox-tui",
+	"crates/nixbox-core",
+	"crates/nixbox-nix",
+	"crates/nixbox-config",
 ]
 # `nixbox` is the desktop front-end and pulls in gpui and the graphics stack,
 # so a plain `cargo build`/`cargo test` leaves it out. Build it with
 # `-p nixbox --features native`.
 default-members = [
-    "crates/nixbox-cli",
-    "crates/nixbox-cmd",
-    "crates/nixbox-tui",
-    "crates/nixbox-core",
-    "crates/nixbox-nix",
-    "crates/nixbox-config",
+	"crates/nixbox-cli",
+	"crates/nixbox-cmd",
+	"crates/nixbox-tui",
+	"crates/nixbox-core",
+	"crates/nixbox-nix",
+	"crates/nixbox-config",
 ]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.4.5"
 edition = "2024"
 authors = ["Rajveer Singh"]
 license = "Apache-2.0"
@@ -55,6 +55,8 @@ anyhow = "1.0"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tempfile = "3.27"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

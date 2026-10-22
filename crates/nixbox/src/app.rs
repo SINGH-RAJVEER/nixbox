@@ -1068,6 +1068,39 @@ impl NixboxApp {
 		self.save_config(format!("Tabs show {}.", labels.label().to_lowercase()), cx);
 	}
 
+	pub fn set_telemetry(&mut self, enabled: bool, cx: &mut Context<Self>) {
+		if !enabled {
+			self.session.telemetry.disable();
+		}
+		let status =
+			match nixbox_core::telemetry::set_enabled(&mut self.session.engine.config, enabled) {
+				Ok(()) => {
+					self.session.telemetry.refresh();
+					format!(
+						"Basic usage data: {}.",
+						nixbox_core::telemetry::status_label(self.session.engine.config.telemetry)
+					)
+				}
+				Err(error) => format!("Saving telemetry preference failed: {error}"),
+			};
+		self.set_status(status, cx);
+	}
+
+	pub fn copy_telemetry_preview(&mut self, cx: &mut Context<Self>) {
+		match nixbox_core::telemetry::preview() {
+			Ok(example) => {
+				cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(example));
+				self.set_status(
+					"Synthetic example copied. Nothing was collected or sent.",
+					cx,
+				);
+			}
+			Err(error) => {
+				self.set_status(format!("Creating telemetry example failed: {error}"), cx)
+			}
+		}
+	}
+
 	/// Uses the typed directory; an empty field returns to the default.
 	pub fn apply_config_dir_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
 		let typed = self.config_dir_input.read(cx).value().trim().to_owned();
@@ -1471,6 +1504,23 @@ mod tests {
 							Some(command.to_owned())
 						);
 					}
+					app.update(cx, |app, _| app.keyboard.settings_scroll.scroll_to_item(2));
+					window.render_frame(cx);
+					for id in ["telemetry-off", "telemetry-on", "telemetry-preview"] {
+						assert!(
+							window.find(id).visible(),
+							"Privacy controls must be visible after scrolling"
+						);
+					}
+					assert!(!app.read(cx).session.engine.config.telemetry.enabled);
+					window.click("telemetry-preview", cx);
+					let example = cx
+						.read_from_clipboard()
+						.and_then(|item| item.text())
+						.expect("example report");
+					let report: nixbox_core::telemetry::Report =
+						serde_json::from_str(&example).expect("report JSON");
+					report.validate().expect("strict example schema");
 				}
 				if page == Page::Build {
 					assert!(

@@ -153,6 +153,7 @@ async fn migrate(
 			summary,
 		},
 		opts,
+		&global.telemetry,
 	)
 	.await
 }
@@ -381,6 +382,7 @@ async fn add(
 			summary,
 		},
 		opts,
+		&global.telemetry,
 	)
 	.await
 }
@@ -413,6 +415,7 @@ async fn remove(repo: &str, opts: &ApplyOpts, global: &GlobalArgs) -> Result<Exi
 			summary,
 		},
 		opts,
+		&global.telemetry,
 	)
 	.await
 }

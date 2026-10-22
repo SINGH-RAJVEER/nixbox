@@ -45,5 +45,12 @@ pub async fn run(args: &ApplyArgs, global: &GlobalArgs) -> Result<ExitCode> {
 	} else {
 		Activation::Packages
 	};
-	execute_with(&mut engine, plan, &args.apply, Some(activation)).await
+	execute_with(
+		&mut engine,
+		plan,
+		&args.apply,
+		Some(activation),
+		&global.telemetry,
+	)
+	.await
 }

@@ -26,6 +26,8 @@ flowchart LR
 
 ## Workspace crates
 
+Optional telemetry lives in `nixbox-core::telemetry`. Front-ends explicitly own a handle and attach it to `Session` or pass it through CLI activation execution. Constructors and engine library use do not start collection. Versioned consent lives in `nixbox-config`; ordinary settings saves preserve the latest on-disk choice. Only typed start/outcome observations can enter the bounded collector. A consumed activation token prevents duplicate completion reporting and discards attempts crossing a consent change. The shared schema also validates the optional Axum receiver, exposed as a core example with feature-gated server dependencies. All application builds use `https://nixb.duckdns.org:58443/v1/telemetry`, with collection off until explicit consent. Docker/Nginx files provide persistent receiver hosting and HTTPS termination. The wire format is custom JSON. See [Optional telemetry](TELEMETRY_PLAN.md).
+
 The workspace uses Rust edition 2024 and contains seven crates. The dependency direction is intentionally simple.
 
 | Crate | Responsibility | Local dependencies |

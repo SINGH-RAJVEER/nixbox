@@ -1,0 +1,15 @@
+*
+!Cargo.toml
+!Cargo.lock
+!README.md
+!LICENSE
+!crates/
+!crates/**
+!deploy/
+!deploy/telemetry/
+!deploy/telemetry/**
+**/.env
+**/secrets
+**/*.sqlite3*
+**/*.pem
+**/target

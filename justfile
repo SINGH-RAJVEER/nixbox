@@ -131,7 +131,12 @@ dev-test:
 	devenv test
 
 # Full pre-commit gate: format, lint, test
-ci: fmt lint test
+ci: fmt lint test telemetry-ci
+
+# Validate the optional Axum receiver and local telemetry delivery.
+telemetry-ci:
+	cargo clippy -p nixbox-core --features telemetry-receiver --all-targets -- -D warnings
+	cargo nextest run -p nixbox-core --features telemetry-receiver -E 'test(telemetry::)'
 
 # Full gate plus the VM check, which boots a machine and takes minutes
 ci-vm: ci vm-test

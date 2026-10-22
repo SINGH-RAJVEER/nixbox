@@ -50,6 +50,8 @@ pub(crate) enum SettingsPage {
 	Theme,
 	Target,
 	Channel,
+	Telemetry,
+	TelemetryPreview,
 }
 
 /// The queue holds core ops verbatim, so what the TUI schedules is exactly
@@ -459,7 +461,13 @@ async fn event_loop(
 	terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 	engine: Engine,
 ) -> Result<()> {
+	let telemetry = nixbox_core::telemetry::Telemetry::new(
+		nixbox_core::telemetry::Interface::Tui,
+		tokio::runtime::Handle::current(),
+	);
+	telemetry.started();
 	let (session, mut build_rx) = Session::new(engine);
+	let session = session.with_telemetry(telemetry.clone());
 	let mut app = App::from_session(session);
 	let (tx, mut rx) = mpsc::channel::<AppEvent>(128);
 	state::restore(&mut app);
@@ -521,6 +529,7 @@ async fn event_loop(
 		handle.abort();
 	}
 	app.nixos.abort();
+	telemetry.shutdown().await;
 	Ok(())
 }
 

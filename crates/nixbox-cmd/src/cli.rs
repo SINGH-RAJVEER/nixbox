@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use nixbox_config::{Config, Target};
 use nixbox_core::Engine;
+use nixbox_core::telemetry::{Interface, Telemetry};
 
 use crate::commands;
 
@@ -54,6 +55,9 @@ pub struct GlobalArgs {
 	/// Print JSON instead of a table.
 	#[arg(long, global = true)]
 	pub json: bool,
+
+	#[arg(skip)]
+	pub(crate) telemetry: Telemetry,
 }
 
 impl GlobalArgs {
@@ -149,6 +153,12 @@ pub enum Command {
 		action: commands::config::Action,
 	},
 
+	/// Inspect optional telemetry without collecting or sending data.
+	Telemetry {
+		#[command(subcommand)]
+		action: commands::telemetry::Action,
+	},
+
 	/// Print a shell completion script.
 	Completions {
 		/// Shell to generate for.
@@ -157,8 +167,21 @@ pub enum Command {
 }
 
 impl Cli {
-	pub async fn run(self) -> Result<ExitCode> {
-		match self.command {
+	pub async fn run(mut self) -> Result<ExitCode> {
+		let telemetry = if matches!(
+			&self.command,
+			None | Some(
+				Command::Config { .. } | Command::Telemetry { .. } | Command::Completions { .. }
+			)
+		) {
+			Telemetry::default()
+		} else {
+			let telemetry = Telemetry::new(Interface::Cli, tokio::runtime::Handle::current());
+			telemetry.started();
+			telemetry
+		};
+		self.global.telemetry = telemetry.clone();
+		let result = match self.command {
 			// A binary with an interface opens it before getting here, so
 			// this is `nixbox-cli`: say what it can do instead of exiting
 			// silently.
@@ -186,12 +209,15 @@ impl Cli {
 			Some(Command::Doctor) => commands::doctor::run(&self.global).await,
 			Some(Command::Flake { action }) => commands::flake::run(&action, &self.global).await,
 			Some(Command::Config { action }) => commands::config::run(&action, &self.global),
+			Some(Command::Telemetry { action }) => commands::telemetry::run(&action, &self.global),
 			Some(Command::Commit(args)) => commands::commit::run(&args, &self.global),
 			Some(Command::Completions { shell }) => {
 				commands::completions::run(shell);
 				Ok(ExitCode::SUCCESS)
 			}
-		}
+		};
+		telemetry.shutdown().await;
+		result
 	}
 }
 
@@ -295,6 +321,7 @@ mod tests {
 			target: Some(TargetArg::HomeManager),
 			channel: Some("nixpkgs-unstable".into()),
 			json: false,
+			..GlobalArgs::default()
 		}
 		.apply(&mut config);
 
