@@ -1,28 +1,28 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/nixbox",
-    "crates/nixbox-cli",
-    "crates/nixbox-cmd",
-    "crates/nixbox-tui",
-    "crates/nixbox-core",
-    "crates/nixbox-nix",
-    "crates/nixbox-config",
+	"crates/nixbox",
+	"crates/nixbox-cli",
+	"crates/nixbox-cmd",
+	"crates/nixbox-tui",
+	"crates/nixbox-core",
+	"crates/nixbox-nix",
+	"crates/nixbox-config",
 ]
 # `nixbox` is the desktop front-end and pulls in gpui and the graphics stack,
 # so a plain `cargo build`/`cargo test` leaves it out. Build it with
 # `-p nixbox --features native`.
 default-members = [
-    "crates/nixbox-cli",
-    "crates/nixbox-cmd",
-    "crates/nixbox-tui",
-    "crates/nixbox-core",
-    "crates/nixbox-nix",
-    "crates/nixbox-config",
+	"crates/nixbox-cli",
+	"crates/nixbox-cmd",
+	"crates/nixbox-tui",
+	"crates/nixbox-core",
+	"crates/nixbox-nix",
+	"crates/nixbox-config",
 ]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.4.5"
 edition = "2024"
 authors = ["Rajveer Singh"]
 license = "Apache-2.0"
