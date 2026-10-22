@@ -2,7 +2,7 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
-## Unreleased
+## 0.4.1 - 2026-10-22
 
 - Added opt-in package profiles. `nixbox profile setup` moves a target's packages into an independent Nix profile and rebuilds once; installs and removals then build only the profile. Modules, options and migrations still rebuild. `nixbox profile teardown` moves the packages back into the combined configuration module.
 - Made every rebuild set the profile to the configuration's package set, so fresh installs, `nixos-rebuild --rollback`, the boot menu and `nix flake update` carry the profile along. The profile build and the rebuild share one `nixbox.profile` option and produce the same store path.
