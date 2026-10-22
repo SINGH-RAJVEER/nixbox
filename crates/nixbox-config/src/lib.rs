@@ -124,6 +124,9 @@ pub struct Config {
 	pub input_mode: InputMode,
 	#[serde(default)]
 	pub tab_labels: TabLabels,
+	/// Whether the desktop GUI draws a close button at the right of its tabs.
+	#[serde(default = "default_close_button")]
+	pub close_button: bool,
 	/// Desktop keyboard overrides. Missing actions use their defaults; empty lists disable them.
 	#[serde(default)]
 	pub gui_shortcuts: BTreeMap<String, Vec<String>>,
@@ -164,6 +167,10 @@ fn default_theme() -> String {
 	"default".to_string()
 }
 
+fn default_close_button() -> bool {
+	true
+}
+
 impl Default for Config {
 	fn default() -> Self {
 		Self {
@@ -172,6 +179,7 @@ impl Default for Config {
 			theme: default_theme(),
 			input_mode: InputMode::default(),
 			tab_labels: TabLabels::default(),
+			close_button: default_close_button(),
 			gui_shortcuts: BTreeMap::new(),
 			telemetry: TelemetrySettings::default(),
 			recent_searches: Vec::new(),
@@ -384,6 +392,7 @@ mod tests {
 		assert_eq!(cfg.theme, "default");
 		assert_eq!(cfg.input_mode, InputMode::Vim);
 		assert_eq!(cfg.tab_labels, TabLabels::IconsAndNames);
+		assert!(cfg.close_button);
 		assert!(cfg.gui_shortcuts.is_empty());
 		assert_eq!(cfg.telemetry, TelemetrySettings::default());
 		assert!(cfg.recent_searches.is_empty());

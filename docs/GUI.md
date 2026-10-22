@@ -37,7 +37,7 @@ To install it through your own flake, add `inputs.nixbox.url = "github:SINGH-RAJ
 
 ## Pages
 
-The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inputs, and other controls. Tabs centered along the top of the window list the pages, with an underline marking the active tab. NixBox sits at the left of the same row and the current install target at the right. In smaller windows, the tabs scroll horizontally. The tabs show icons and names by default; Settings switches them to icons only, which name themselves on hover, or names only. The Version control tab shows the Git or Jujutsu logo for the repository holding your configuration, or a branch icon when there is none. Queue shows the number of waiting operations, and Installed stays selected while a package's Options page is open. The status line at the bottom reports the last thing that happened, and shows the last failed rebuild until you dismiss it.
+The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inputs, and other controls. Tabs centered along the top of the window list the pages, with an underline marking the active tab. NixBox sits at the left of the same row and the current install target at the right, followed by a round GTK-style close button that quits NixBox like Ctrl-Q. Settings can hide the close button for window managers that draw their own. In smaller windows, the tabs scroll horizontally. The tabs show icons and names by default; Settings switches them to icons only, which name themselves on hover, or names only. The Version control tab shows the Git or Jujutsu logo for the repository holding your configuration, or a branch icon when there is none. Queue shows the number of waiting operations, and Installed stays selected while a package's Options page is open. The status line at the bottom reports the last thing that happened, and shows the last failed rebuild until you dismiss it.
 
 | Page | What it does |
 | --- | --- |
@@ -49,7 +49,7 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
-| Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
+| Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, the close button, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
 
 Zoom scales text and layout together, carries across theme changes, and resets when the GUI restarts.
 

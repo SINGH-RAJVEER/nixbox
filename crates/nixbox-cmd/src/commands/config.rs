@@ -16,12 +16,13 @@ use crate::commands::target_name;
 use crate::render;
 
 /// Every key `get`/`set` understands, in the order `show` prints them.
-const KEYS: [&str; 9] = [
+const KEYS: [&str; 10] = [
 	"channel",
 	"target",
 	"theme",
 	"input-mode",
 	"tab-labels",
+	"close-button",
 	"telemetry-enabled",
 	"config-dir",
 	"home-manager-main-file",
@@ -74,6 +75,7 @@ fn show(global: &GlobalArgs) -> Result<ExitCode> {
 				"theme": config.theme,
 				"input-mode": input_mode_name(config.input_mode),
 				"tab-labels": config.tab_labels.name(),
+				"close-button": config.close_button,
 				"telemetry-enabled": config.telemetry.enabled,
 				"config-dir": config.config_dir,
 				"home-manager-main-file": config.home_manager_main_file,
@@ -129,6 +131,7 @@ fn set(key: &str, value: &str) -> Result<ExitCode> {
 		}
 		"input-mode" => config.input_mode = parse_input_mode(value)?,
 		"tab-labels" => config.tab_labels = parse_tab_labels(value)?,
+		"close-button" => config.close_button = parse_close_button(value)?,
 		"config-dir" => config.config_dir = parse_path(value),
 		"home-manager-main-file" => config.home_manager_main_file = parse_path(value),
 		"nixos-main-file" => config.nixos_main_file = parse_path(value),
@@ -149,6 +152,7 @@ fn read(config: &Config, key: &str) -> Option<String> {
 		"theme" => config.theme.clone(),
 		"input-mode" => input_mode_name(config.input_mode).to_string(),
 		"tab-labels" => config.tab_labels.name().to_string(),
+		"close-button" => config.close_button.to_string(),
 		"telemetry-enabled" => config.telemetry.enabled.to_string(),
 		"config-dir" => path_value(config.config_dir.as_ref()),
 		"home-manager-main-file" => path_value(config.home_manager_main_file.as_ref()),
@@ -200,6 +204,14 @@ fn parse_tab_labels(value: &str) -> Result<TabLabels> {
 	TabLabels::from_name(value).ok_or_else(|| {
 		anyhow::anyhow!("unknown tab labels `{value}`. Use `icons`, `icons-and-names`, or `names`")
 	})
+}
+
+fn parse_close_button(value: &str) -> Result<bool> {
+	match value {
+		"true" => Ok(true),
+		"false" => Ok(false),
+		other => bail!("unknown close button value `{other}`. Use `true` or `false`"),
+	}
 }
 
 fn input_mode_name(mode: InputMode) -> &'static str {

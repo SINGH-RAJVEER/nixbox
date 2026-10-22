@@ -1068,6 +1068,13 @@ impl NixboxApp {
 		self.save_config(format!("Tabs show {}.", labels.label().to_lowercase()), cx);
 	}
 
+	/// Display only, like the tab labels.
+	pub fn set_close_button(&mut self, shown: bool, cx: &mut Context<Self>) {
+		self.session.engine.config.close_button = shown;
+		let state = if shown { "shown" } else { "hidden" };
+		self.save_config(format!("Close button {state}."), cx);
+	}
+
 	pub fn set_telemetry(&mut self, enabled: bool, cx: &mut Context<Self>) {
 		if !enabled {
 			self.session.telemetry.disable();
@@ -1686,6 +1693,17 @@ mod tests {
 				"Tabs center in the window: {center:?}"
 			);
 			assert!(first.top() < px(8.), "Tabs sit at the top: {first:?}");
+			let close = window.find("window-close").bounds();
+			assert!(
+				close.right() > px(1140.) && close.top() < px(16.),
+				"The close button sits at the top right: {close:?}"
+			);
+			app.update(cx, |app, cx| {
+				app.session.engine.config.close_button = false;
+				cx.notify();
+			});
+			window.render_frame(cx);
+			assert!(window.try_find("window-close").is_none());
 
 			// A missing directory is refused before anything is saved or reloaded.
 			app.update(cx, |app, cx| {
