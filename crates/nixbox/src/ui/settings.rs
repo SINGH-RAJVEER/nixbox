@@ -2,6 +2,7 @@
 
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
 	Disableable as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex,
 };
@@ -83,6 +84,12 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			}
 		}));
 
+	let close_button = Switch::new("close-button")
+		.checked(config.close_button)
+		.on_click(cx.listener(|this, checked: &bool, _, cx| {
+			this.set_close_button(*checked, cx);
+		}));
+
 	let location = configuration(app, cx);
 	let input_modes = ButtonGroup::new("input-mode")
 		.outline()
@@ -148,6 +155,12 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					"Tab labels",
 					"What the navigation tabs show. Icon-only tabs name themselves on hover.",
 					tab_labels,
+					cx,
+				))
+				.child(setting(
+					"Close button",
+					"A round close button at the top right that quits NixBox, like GTK apps. Turn it off if your window manager already draws one.",
+					close_button,
 					cx,
 				))
 				.child(setting(

@@ -22,13 +22,13 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-	Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-	prelude::FluentBuilder as _, rems,
+	Render, SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
+	Window, div, prelude::FluentBuilder as _, rems,
 };
 
 use nixbox_core::vcs::Backend;
 
-use crate::app::{NixboxApp, Page};
+use crate::app::{NixboxApp, Page, Quit};
 
 impl Render for NixboxApp {
 	fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -145,13 +145,22 @@ impl NixboxApp {
 					})),
 			)
 			.child(
-				h_flex().flex_1().min_w_0().justify_end().child(
-					div()
-						.truncate()
-						.text_xs()
-						.text_color(cx.theme().muted_foreground)
-						.child(format!("Installing into {target}")),
-				),
+				h_flex()
+					.flex_1()
+					.min_w_0()
+					.gap_3()
+					.justify_end()
+					.items_center()
+					.child(
+						div()
+							.truncate()
+							.text_xs()
+							.text_color(cx.theme().muted_foreground)
+							.child(format!("Installing into {target}")),
+					)
+					.when(self.session.engine.config.close_button, |row| {
+						row.child(close_button(cx))
+					}),
 			)
 	}
 
@@ -193,6 +202,29 @@ impl NixboxApp {
 				)
 			})
 	}
+}
+
+/// Adwaita's circular window close button: a faint disc of the foreground
+/// color that darkens under the pointer and when pressed.
+fn close_button(cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	let foreground = cx.theme().foreground;
+	div()
+		.id("window-close")
+		.size_6()
+		.flex_shrink_0()
+		.flex()
+		.items_center()
+		.justify_center()
+		.rounded_full()
+		.bg(foreground.opacity(0.1))
+		.hover(move |button| button.bg(foreground.opacity(0.15)))
+		.active(move |button| button.bg(foreground.opacity(0.3)))
+		.text_color(foreground)
+		.cursor_pointer()
+		.tooltip(|window, cx| Tooltip::new("Close").build(window, cx))
+		.on_click(|_, window, cx| window.dispatch_action(Box::new(Quit), cx))
+		.child(Icon::new(IconName::WindowClose).size_3p5())
+		.test_support()
 }
 
 /// Title, one-line explanation, and optional trailing controls.
