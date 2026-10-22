@@ -148,8 +148,10 @@ impl Engine {
 		manifest.inputs.insert(repo.clone(), input.to_string());
 		manifest.add_package(repo, package.to_string());
 		match scope {
-			Target::HomeManager => managed.write_home_manager(&manifest)?,
-			Target::NixosSystem => managed.write_nixos(&manifest)?,
+			Target::HomeManager => {
+				managed.write_home_manager(&manifest, self.manifest_for(scope).mode)?
+			}
+			Target::NixosSystem => managed.write_nixos(&manifest, self.manifest_for(scope).mode)?,
 		}
 		match ensure_imported(&main_file, managed.path())? {
 			ImportStatus::MainFileMissing => {
@@ -222,8 +224,10 @@ impl Engine {
 			}
 		};
 		match scope {
-			Target::HomeManager => managed.write_home_manager(&manifest)?,
-			Target::NixosSystem => managed.write_nixos(&manifest)?,
+			Target::HomeManager => {
+				managed.write_home_manager(&manifest, self.manifest_for(scope).mode)?
+			}
+			Target::NixosSystem => managed.write_nixos(&manifest, self.manifest_for(scope).mode)?,
 		}
 		reporter.info(format!(
 			"Wired github:{repo} into {} as input `{input}` and added {} to {}.",
@@ -298,8 +302,10 @@ impl Engine {
 			return Ok(());
 		}
 		match scope {
-			Target::HomeManager => managed.write_home_manager(&manifest)?,
-			Target::NixosSystem => managed.write_nixos(&manifest)?,
+			Target::HomeManager => {
+				managed.write_home_manager(&manifest, self.manifest_for(scope).mode)?
+			}
+			Target::NixosSystem => managed.write_nixos(&manifest, self.manifest_for(scope).mode)?,
 		}
 		git_track(managed.path(), reporter);
 		self.release_input(&input, reporter)?;
@@ -333,8 +339,12 @@ impl Engine {
 		}
 		if removed_managed {
 			match scope {
-				Target::HomeManager => managed.write_home_manager(&manifest)?,
-				Target::NixosSystem => managed.write_nixos(&manifest)?,
+				Target::HomeManager => {
+					managed.write_home_manager(&manifest, self.manifest_for(scope).mode)?
+				}
+				Target::NixosSystem => {
+					managed.write_nixos(&manifest, self.manifest_for(scope).mode)?
+				}
 			}
 			reporter.info(format!("Removed {name} from {}.", managed.path().display()));
 			git_track(managed.path(), reporter);
@@ -526,7 +536,7 @@ mod tests {
 			std::fs::read_to_string(engine.config.main_file_for(Target::HomeManager)).unwrap();
 		assert!(!home.contains(".chatgpt"));
 		assert!(home.contains(".claude-code"));
-		assert!(home.contains("nixbox-home-flakes.nix"));
+		assert!(home.contains("nixbox-home-packages.nix"));
 		let managed =
 			std::fs::read_to_string(engine.config.flake_manifest_for(Target::HomeManager)).unwrap();
 		assert!(

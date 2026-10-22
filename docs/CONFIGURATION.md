@@ -46,18 +46,18 @@ The configuration root determines these paths:
 | `<root>/flake.lock` | Source of the exact nixpkgs revision used to build and validate the package catalog. |
 | `<root>/home.nix` | Default Home Manager entry file. |
 | `<root>/configuration.nix` | Preferred NixOS entry file when it exists. |
-| `<root>/nixbox-home-packages.nix` | Generated Home Manager package module. |
-| `<root>/nixbox-system-packages.nix` | Generated NixOS package module. |
-| `<root>/nixbox-home-flakes.nix` | Generated Home Manager imports and the reserved external-flake package block. |
-| `<root>/nixbox-system-flakes.nix` | Generated NixOS imports and the reserved external-flake package block. |
+| `<root>/nixbox-home-packages.nix` | Generated Home Manager nixpkgs packages, flake packages and module imports. |
+| `<root>/nixbox-system-packages.nix` | Generated NixOS nixpkgs packages, flake packages and module imports. |
 | `<root>/nixbox-home-settings.nix` | Home Manager package options set from the options panel. |
 | `<root>/nixbox-system-settings.nix` | NixOS package options set from the options panel. |
 
 If `<root>/configuration.nix` does not exist and `nixos_main_file` is unset, NixBox uses `/etc/nixos/configuration.nix`. The generated files still stay under the configuration root.
 
+Older `nixbox-home-flakes.nix` and `nixbox-system-flakes.nix` files are [merged automatically on startup](MANAGED_FILES.md#upgrading-existing-configurations), then deleted after their imports have been updated.
+
 `NIXBOX_CONFIG_DIR` does not move `settings.json`, `state.json`, or the package catalog cache.
 
-For host-side VM development, `NIXBOX_VM_BUILD=<absolute-output-link>` replaces rebuilds with `nix build <root>#nixosConfigurations.nixos.config.system.build.vm --out-link <absolute-output-link>`. It applies to both targets and recovery, builds without sudo, and leaves activation to a later VM boot. The `just vm-gui`, `just vm-tui`, and `just vm-cli` recipes set it together with isolated XDG directories. See [Development](DEVELOPMENT.md#testing-in-a-vm) for launch and boot commands.
+For host-side VM development, `NIXBOX_VM_BUILD=<absolute-output-link>` replaces rebuilds with `nix build <root>#nixosConfigurations.nixos.config.system.build.vm --out-link <absolute-output-link>`. It applies to both targets and recovery, builds without sudo, and leaves activation to a later VM boot. A target in package-profile mode gets the same VM build: package changes do not touch the host's package profile, and `nixbox profile rollback` refuses to run. The `just vm-gui`, `just vm-tui`, and `just vm-cli` recipes set it together with isolated XDG directories. See [Development](DEVELOPMENT.md#testing-in-a-vm) for launch and boot commands.
 
 ## Version control journal
 

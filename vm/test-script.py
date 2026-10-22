@@ -225,7 +225,7 @@ def uninstall(package: str) -> dict:
 
 
 def managed_flakes() -> str:
-	return read("nixbox-system-flakes.nix")
+	return read("nixbox-system-packages.nix")
 
 
 def tui(keys: str) -> None:
@@ -255,9 +255,9 @@ with subtest("a queued flake package is wired in as a person would write it"):
 	assert flake.count("specialArgs") == 1, flake
 	line = f"inputs.helium-browser.packages.${{pkgs.stdenv.hostPlatform.system}}.default # github:{REPO}"
 	assert line in managed_flakes(), managed_flakes()
-	assert "./nixbox-system-flakes.nix" in main_config(), main_config()
+	assert "./nixbox-system-packages.nix" in main_config(), main_config()
 	tracked = machine.succeed("su -l tester -c 'git -C ~/.config/nixos ls-files'")
-	assert "nixbox-system-flakes.nix" in tracked, tracked
+	assert "nixbox-system-packages.nix" in tracked, tracked
 
 with subtest("flake list reports the managed package, as text and as json"):
 	listed = nixbox("flake list")
@@ -417,3 +417,21 @@ with subtest("unsetting removes the line again"):
 	machine.succeed("su -l tester -c 'tmux kill-session -t nb'")
 	nixbox("config set input-mode normal")
 	nixbox("remove git --no-rebuild --yes")
+
+with subtest("profile setup and teardown change only the package file's mode"):
+	# Offline, so nothing is rebuilt: this checks the files and that the
+	# guest's real module system accepts them.
+	nixbox("install hello --no-rebuild --yes")
+	before = managed()
+	nixbox("profile setup --no-rebuild --yes")
+	assert "# nixbox:mode profile" in managed(), managed()
+	assert "pkgs.hello" in managed(), managed()
+	assert "nixbox-packages" in evaluated("nixbox.profile.drvPath")
+	# The profile build and the activation script share one store path, so
+	# a rebuild after a profile update leaves the profile alone.
+	environment = evaluated("nixbox.profile.outPath").strip('"')
+	assert environment in evaluated("system.activationScripts.nixboxProfile")
+	assert "/nix/var/nix/profiles/nixbox" in evaluated("environment.profiles")
+	nixbox("profile teardown --no-rebuild --yes")
+	assert managed() == before, managed()
+	nixbox("remove hello --no-rebuild --yes")

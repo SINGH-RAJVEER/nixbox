@@ -91,7 +91,7 @@ impl OptionsView {
 }
 
 /// How a value reads in the text field.
-fn edit_text(value: Option<&SettingValue>) -> String {
+pub(crate) fn edit_text(value: Option<&SettingValue>) -> String {
 	match value {
 		Some(SettingValue::Str(text)) => text.clone(),
 		Some(SettingValue::Int(number)) => number.to_string(),

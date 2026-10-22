@@ -6,8 +6,11 @@ use std::process::{Command, Stdio};
 use anyhow::Result;
 use nixbox_config::{Config, Target};
 use nixbox_nix::{
-	Manifest, SettingsFile, SettingsManifest,
-	manifest::{FlakeOutput, ImportStatus, ManagedFile, ensure_imported},
+	Manifest, PackageMode, SettingsFile, SettingsManifest,
+	manifest::{
+		FlakeOutput, ImportStatus, ManagedFile, ensure_imported, migrate_flake_file,
+		write_home_integration,
+	},
 	scan::{ExternalPackage, ScanTarget, remove_from_source, scan},
 };
 
@@ -73,6 +76,29 @@ impl Engine {
 	/// Same as [`Engine::load`] but with settings supplied by the caller —
 	/// used when a front-end overrides the target or channel per invocation.
 	pub fn with_config(config: Config) -> Result<Self> {
+		if [Target::HomeManager, Target::NixosSystem]
+			.into_iter()
+			.any(|scope| config.legacy_flake_manifest_for(scope).exists())
+		{
+			let _journal = crate::vcs::AppliedJournal::acquire(&config)?;
+			let mut sources = vec![config.config_root()];
+			sources.extend(
+				[Target::HomeManager, Target::NixosSystem]
+					.into_iter()
+					.map(|scope| config.main_file_for(scope)),
+			);
+			for scope in [Target::HomeManager, Target::NixosSystem] {
+				let package_file = config.managed_file_for(scope);
+				if migrate_flake_file(
+					&package_file,
+					&config.legacy_flake_manifest_for(scope),
+					&sources,
+					scope == Target::HomeManager,
+				)? {
+					git_track(&package_file, &mut crate::SilentReporter);
+				}
+			}
+		}
 		let home_manifest =
 			ManagedFile::new(config.managed_file_for(Target::HomeManager)).load()?;
 		let nixos_manifest =
@@ -197,6 +223,61 @@ impl Engine {
 		Ok(managed)
 	}
 
+	/// Rewrites `scope`'s combined package module in `mode`. This is
+	/// the only place a target changes mode: ordinary package changes keep
+	/// whatever mode the files already have.
+	fn set_package_mode(
+		&mut self,
+		scope: Target,
+		mode: PackageMode,
+		home_inside_nixos: bool,
+		reporter: &mut dyn Reporter,
+	) -> Result<()> {
+		let main = self.config.main_file_for(scope);
+		anyhow::ensure!(
+			main.exists(),
+			"{} is missing; create the main {} configuration first",
+			main.display(),
+			scope.label()
+		);
+		let integrate =
+			scope == Target::HomeManager && mode == PackageMode::Profile && home_inside_nixos;
+		let nixos_main = self.config.main_file_for(Target::NixosSystem);
+		anyhow::ensure!(
+			!integrate || nixos_main.exists(),
+			"Home Manager runs inside NixOS, but {} is missing; set `nixos_main_file` so the profile can join PATH",
+			nixos_main.display()
+		);
+
+		self.manifest_for_mut(scope).mode = mode;
+		let managed = self.write_manifest(scope)?;
+		note_import(&main, managed.path(), reporter);
+		git_track(managed.path(), reporter);
+		git_track(&main, reporter);
+
+		let integration = self.config.home_integration_file();
+		if integrate {
+			write_home_integration(&integration, true)?;
+			note_import(&nixos_main, &integration, reporter);
+			git_track(&integration, reporter);
+			git_track(&nixos_main, reporter);
+		} else if scope == Target::HomeManager && integration.exists() {
+			// Keep the import valid, but take the profile off PATH.
+			write_home_integration(&integration, false)?;
+			git_track(&integration, reporter);
+		}
+
+		reporter.info(format!(
+			"Wrote {} for {}.",
+			match mode {
+				PackageMode::Configuration => "configuration-managed packages",
+				PackageMode::Profile => "the independent package profile",
+			},
+			scope.label()
+		));
+		Ok(())
+	}
+
 	/// Applies one op: updates the in-memory manifest, writes every file the
 	/// op touches, makes sure the managed file is imported, and keeps git
 	/// aware of what was generated.
@@ -219,6 +300,19 @@ impl Engine {
 	fn apply_inner(&mut self, op: &Op, reporter: &mut dyn Reporter) -> Result<()> {
 		let scope = op.scope();
 		match op {
+			Op::SetupProfile {
+				home_inside_nixos, ..
+			} => {
+				return self.set_package_mode(
+					scope,
+					PackageMode::Profile,
+					*home_inside_nixos,
+					reporter,
+				);
+			}
+			Op::TeardownProfile { .. } => {
+				return self.set_package_mode(scope, PackageMode::Configuration, false, reporter);
+			}
 			Op::Install { hit, .. } => {
 				self.manifest_for_mut(scope).add(&hit.attr);
 			}
@@ -430,6 +524,48 @@ mod tests {
 	use crate::report::{LogReporter, SilentReporter};
 	use nixbox_config::{Config, Target};
 	use nixbox_nix::{Manifest, scan::ScanTarget};
+
+	#[test]
+	fn startup_upgrades_both_legacy_modules_without_a_package_operation() {
+		let dir = crate::tests::temp_dir("startup-merge-flakes");
+		let config = dir.config();
+		for scope in [Target::HomeManager, Target::NixosSystem] {
+			let managed = nixbox_nix::ManagedFile::new(config.managed_file_for(scope));
+			let mut manifest = Manifest::default();
+			manifest.add("fd");
+			match scope {
+				Target::HomeManager => managed.write_home_manager(&manifest).unwrap(),
+				Target::NixosSystem => managed.write_nixos(&manifest).unwrap(),
+			}
+			let old = config.legacy_flake_manifest_for(scope);
+			let option = match scope {
+				Target::HomeManager => "home.packages",
+				Target::NixosSystem => "environment.systemPackages",
+			};
+			std::fs::write(&old, format!(
+				"{{ inputs, pkgs, ... }}:\n{{\n\t{option} = [\n\t\t# nixbox:flake-packages:start\n\t\tinputs.tools.packages.${{pkgs.system}}.default # github:owner/tools\n\t\t# nixbox:flake-packages:end\n\t];\n}}\n"
+			)).unwrap();
+			std::fs::write(
+				config.main_file_for(scope),
+				format!(
+					"{{ ... }}: {{ imports = [ ./{} ./{} ]; }}\n",
+					managed.path().file_name().unwrap().to_str().unwrap(),
+					old.file_name().unwrap().to_str().unwrap(),
+				),
+			)
+			.unwrap();
+		}
+		let engine = Engine::with_config(config.clone()).unwrap();
+		assert_eq!(engine.managed_packages().len(), 2);
+		assert_eq!(engine.flakes.len(), 2);
+		for scope in [Target::HomeManager, Target::NixosSystem] {
+			assert!(!config.legacy_flake_manifest_for(scope).exists());
+			let source = std::fs::read_to_string(config.main_file_for(scope)).unwrap();
+			assert!(!source.contains("-flakes.nix"));
+			assert_eq!(source.matches("-packages.nix").count(), 1);
+		}
+		assert_eq!(Engine::with_config(config).unwrap().flakes, engine.flakes);
+	}
 
 	fn engine() -> Engine {
 		Engine::from_parts(

@@ -60,8 +60,8 @@ The queued installer performs these mutations:
 	- Home Manager with a standalone `homeManagerConfiguration`: ensure its `extraSpecialArgs` inherits `inputs`.
 	- Home Manager as a NixOS module (`home-manager.nixosModules.home-manager`): ensure `nixosSystem` has `specialArgs` with `inputs`, then ensure `home-manager.extraSpecialArgs` inherits `inputs`, either in `flake.nix` or in the NixOS entry file (usually `configuration.nix`). When it is missing, it is added to the `home-manager = { ... };` block or next to `home-manager.users`, and `inputs` is added to that file's module arguments.
 	An existing setting that lacks `inputs` gets `inherit inputs;` added to it. Settings bound to something other than a literal set are left alone.
-5. Add the selected module path or package attribute to `nixbox-home-flakes.nix` or `nixbox-system-flakes.nix`.
-6. Ensure the target entry module imports the generated flake module.
+5. Add the selected module path or package attribute to `nixbox-home-packages.nix` or `nixbox-system-packages.nix`.
+6. Ensure the target entry module imports the combined package module.
 7. Mark every touched file with `git add --intent-to-add` when it is inside a Git work tree.
 8. Run the target rebuild through the normal queue.
 

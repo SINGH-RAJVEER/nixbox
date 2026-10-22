@@ -100,18 +100,24 @@ pub enum Command {
 	/// Search a nixpkgs channel.
 	Search(commands::search::SearchArgs),
 
-	/// Add packages to your configuration and rebuild.
+	/// Add packages and rebuild, or update the package profile once set up.
 	Install(commands::install::InstallArgs),
 
-	/// Drop packages from your configuration and rebuild.
+	/// Drop packages and rebuild, or update the package profile once set up.
 	#[command(visible_alias = "rm", alias = "uninstall")]
 	Remove(commands::remove::RemoveArgs),
 
 	/// Move hand-declared packages into the file nixbox manages.
 	Migrate(commands::migrate::MigrateArgs),
 
-	/// Rewrite the managed file and rebuild without changing the package set.
+	/// Rewrite the managed file and activate it without changing the package set.
 	Apply(commands::apply::ApplyArgs),
+
+	/// Set up, tear down, list or roll back the independent package profile.
+	Profile {
+		#[command(subcommand)]
+		action: commands::profile::Action,
+	},
 
 	/// Finish work a previous run left behind.
 	Resume(commands::resume::ResumeArgs),
@@ -167,6 +173,9 @@ impl Cli {
 			}
 			Some(Command::Search(args)) => commands::search::run(&args, &self.global).await,
 			Some(Command::Install(args)) => commands::install::run(&args, &self.global).await,
+			Some(Command::Profile { action }) => {
+				commands::profile::run(&action, &self.global).await
+			}
 			Some(Command::Remove(args)) => commands::remove::run(&args, &self.global).await,
 			Some(Command::Migrate(args)) => commands::migrate::run(&args, &self.global).await,
 			Some(Command::Apply(args)) => commands::apply::run(&args, &self.global).await,

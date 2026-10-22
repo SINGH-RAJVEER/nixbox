@@ -11,7 +11,9 @@ use anyhow::{Result, bail};
 use clap::Args;
 use nixbox_config::Target;
 use nixbox_core::rebuild::LogFormat;
-use nixbox_core::{Engine, Escalation, InProgress, Op, PersistedState, Reporter, rebuild};
+use nixbox_core::{
+	Activation, Engine, Escalation, InProgress, Op, PersistedState, Reporter, rebuild,
+};
 use nixbox_nix::build::BuildEvent;
 use tokio::sync::{mpsc, oneshot};
 
@@ -29,8 +31,8 @@ pub struct ApplyOpts {
 	#[arg(long)]
 	pub dry_run: bool,
 
-	/// Write the configuration changes but skip the rebuild.
-	#[arg(long)]
+	/// Write manifests but skip profile updates and configuration activation.
+	#[arg(long, visible_alias = "no-activate")]
 	pub no_rebuild: bool,
 
 	/// Do not ask before changing the configuration.
@@ -60,19 +62,31 @@ impl Reporter for StderrReporter {
 }
 
 pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Result<ExitCode> {
+	execute_with(engine, plan, opts, None).await
+}
+
+/// [`execute`], with `activation` overriding the one the ops call for.
+pub async fn execute_with(
+	engine: &mut Engine,
+	plan: Plan,
+	opts: &ApplyOpts,
+	activation: Option<Activation>,
+) -> Result<ExitCode> {
+	let activation = activation.unwrap_or_else(|| engine.activation_for(&plan.ops));
+	let action = match activation {
+		Activation::Packages => format!("update the {} package profile", plan.scope.label()),
+		Activation::Configuration => format!("rebuild {}", target_name(plan.scope)),
+	};
 	for line in &plan.summary {
 		eprintln!("  {line}");
 	}
 
 	if opts.dry_run {
-		eprintln!(
-			"Dry run: nothing written. Drop --dry-run to apply and rebuild {}.",
-			target_name(plan.scope)
-		);
+		eprintln!("Dry run: nothing written. Drop --dry-run to {action}.");
 		return Ok(ExitCode::SUCCESS);
 	}
 
-	if !confirm(opts, plan.scope)? {
+	if !confirm_action(opts, plan.scope, &action)? {
 		eprintln!("Cancelled.");
 		return Ok(ExitCode::SUCCESS);
 	}
@@ -90,8 +104,10 @@ pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Resul
 
 	if opts.no_rebuild {
 		eprintln!(
-			"Wrote the configuration. Run `{} apply` to rebuild.",
-			crate::program()
+			"Wrote the configuration. Run `{} --target {} {}` to finish.",
+			crate::program(),
+			plan.scope.label(),
+			retry_command(activation)
 		);
 		return Ok(ExitCode::SUCCESS);
 	}
@@ -100,12 +116,12 @@ pub async fn execute(engine: &mut Engine, plan: Plan, opts: &ApplyOpts) -> Resul
 		[only] => only.clone(),
 		rest => format!("{} change(s)", rest.len()),
 	};
-	run_rebuild(engine, plan.scope, &label).await
+	run_activation(engine, plan.scope, &label, activation).await
 }
 
 /// Asks before changing anything. A non-interactive stdin has to pass
 /// `--yes`, so a script can never silently trigger `sudo nixos-rebuild`.
-fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
+fn confirm_action(opts: &ApplyOpts, scope: Target, action: &str) -> Result<bool> {
 	if opts.yes {
 		return Ok(true);
 	}
@@ -116,12 +132,12 @@ fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
 		);
 	}
 
-	let action = if opts.no_rebuild {
-		"Write these changes?"
+	let prompt = if opts.no_rebuild {
+		"Write these changes?".into()
 	} else {
-		"Write these changes and rebuild?"
+		format!("Write these changes and {action}?")
 	};
-	eprint!("{action} [y/N] ");
+	eprint!("{prompt} [y/N] ");
 	std::io::stderr().flush()?;
 
 	let mut answer = String::new();
@@ -135,13 +151,19 @@ fn confirm(opts: &ApplyOpts, scope: Target) -> Result<bool> {
 /// process that dies here leaves files that are correct and a system that has
 /// not been switched. Recording it is what lets `nixbox resume` — or the TUI —
 /// pick that up instead of leaving it to be noticed by accident.
-pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> Result<ExitCode> {
-	mark_in_progress(scope, label);
+pub(crate) async fn run_activation(
+	engine: &Engine,
+	scope: Target,
+	label: &str,
+	activation: Activation,
+) -> Result<ExitCode> {
+	mark_in_progress(scope, label, activation);
 	let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
 	let (cancel_tx, cancel_rx) = oneshot::channel();
-	let task = tokio::spawn(rebuild::run(
+	let task = tokio::spawn(rebuild::run_activation(
 		engine.config.home_manager_dir(),
 		scope,
+		activation,
 		Escalation::Terminal,
 		LogFormat::Plain,
 		build_tx,
@@ -169,9 +191,10 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 						outcome = Outcome::Cancelled;
 						break;
 					}
-					// The sender went away without a verdict; nothing said it
-					// failed, so take the silence as success.
-					None => break,
+					None => {
+						outcome = Outcome::Failed("activation ended without a verdict".into());
+						break;
+					}
 				}
 			}
 			_ = tokio::signal::ctrl_c(), if cancel.is_some() => {
@@ -183,6 +206,7 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 		}
 	}
 	let _ = task.await;
+	let retry = retry_command(activation);
 
 	match &outcome {
 		Outcome::Succeeded => {
@@ -192,15 +216,15 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 		Outcome::Cancelled => {
 			finish_in_progress(None);
 			eprintln!(
-				"Cancelled. Your configuration is already written — run `{} apply` to finish.",
+				"Cancelled. Your manifests are already written — run `{} {retry}` to finish.",
 				crate::program()
 			);
 		}
 		Outcome::Failed(error) => {
 			finish_in_progress(Some(error.clone()));
-			eprintln!("Rebuild failed: {error}");
+			eprintln!("Activation failed: {error}");
 			eprintln!(
-				"Your configuration is written; fix the error and run `{} apply`.",
+				"Your manifests are written; fix the error and run `{} {retry}`.",
 				crate::program()
 			);
 		}
@@ -208,15 +232,24 @@ pub(crate) async fn run_rebuild(engine: &Engine, scope: Target, label: &str) -> 
 	Ok(ExitCode::from(exit_code_for(&outcome)))
 }
 
+/// The subcommand that repeats `activation` from the files on disk.
+fn retry_command(activation: Activation) -> &'static str {
+	match activation {
+		Activation::Packages => "apply",
+		Activation::Configuration => "apply --configuration",
+	}
+}
+
 /// Records the rebuild about to start, leaving any queue the TUI saved alone.
 ///
 /// Failing to write the file is not worth stopping a rebuild over; it only
 /// costs the ability to resume one that gets killed.
-fn mark_in_progress(scope: Target, label: &str) {
+fn mark_in_progress(scope: Target, label: &str, activation: Activation) {
 	let mut state = PersistedState::load().unwrap_or_default();
 	state.in_progress = Some(InProgress {
 		scope,
 		label: label.to_string(),
+		activation,
 	});
 	state.last_error = None;
 	let _ = state.save();
@@ -252,7 +285,7 @@ fn exit_code_for(outcome: &Outcome) -> u8 {
 
 #[cfg(test)]
 mod tests {
-	use super::{ApplyOpts, EXIT_REBUILD_FAILED, Outcome, confirm, exit_code_for};
+	use super::{ApplyOpts, EXIT_REBUILD_FAILED, Outcome, confirm_action, exit_code_for};
 	use nixbox_config::Target;
 
 	#[test]
@@ -272,15 +305,22 @@ mod tests {
 			..ApplyOpts::default()
 		};
 
-		assert!(confirm(&opts, Target::NixosSystem).expect("no prompt needed"));
+		assert!(
+			confirm_action(&opts, Target::NixosSystem, "update the profile")
+				.expect("no prompt needed")
+		);
 	}
 
 	#[test]
 	fn a_non_interactive_run_without_yes_is_refused() {
 		// The test harness runs without a terminal on stdin, which is exactly
 		// the case this guard exists for.
-		let error = confirm(&ApplyOpts::default(), Target::NixosSystem)
-			.expect_err("should refuse without a terminal");
+		let error = confirm_action(
+			&ApplyOpts::default(),
+			Target::NixosSystem,
+			"update the profile",
+		)
+		.expect_err("should refuse without a terminal");
 
 		assert!(error.to_string().contains("--yes"), "{error}");
 	}

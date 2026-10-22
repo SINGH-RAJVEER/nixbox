@@ -1,6 +1,6 @@
 //! Picking the rebuild command for a target, and running it.
 //!
-//! `resolve` evaluates the user's flake, which can take a while, so [`run`]
+//! `resolve` evaluates the user's flake, which can take a while, so [`run_activation`]
 //! races it against the caller's cancel signal as well as the rebuild itself.
 
 use std::path::{Path, PathBuf};
@@ -12,6 +12,8 @@ use nixbox_nix::build::{
 };
 use nixbox_nix::nix_log::STRUCTURED_ARGS;
 use tokio::sync::{mpsc, oneshot};
+
+use crate::profile::{self, Activation};
 
 /// Emitted when a home-manager change has to be applied through
 /// `nixos-rebuild` because there is no standalone home configuration.
@@ -39,6 +41,13 @@ pub enum LogFormat {
 	Plain,
 	/// Nix's structured log, which [`crate::progress::BuildProgress`] reads.
 	Structured,
+}
+
+/// True when [`VM_BUILD_ENV`] sends rebuilds to a VM. Package profiles live on
+/// the host, so nothing may build or roll them back while it is set.
+#[must_use]
+pub fn builds_vm() -> bool {
+	std::env::var_os(VM_BUILD_ENV).is_some()
 }
 
 /// How a rebuild that needs root gets it.
@@ -124,7 +133,7 @@ impl RebuildCommand {
 /// `home-manager switch` and `nixos-rebuild switch`.
 /// [`VM_BUILD_ENV`] routes both targets to a VM build without activation.
 pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
-	if std::env::var_os(VM_BUILD_ENV).is_some() {
+	if builds_vm() {
 		return nixos(config_dir);
 	}
 	match scope {
@@ -184,49 +193,237 @@ fn vm_build(config_dir: &Path, output: &Path) -> RebuildCommand {
 	}
 }
 
-/// Resolves and runs the rebuild for `scope`, sending its output and exactly
-/// one closing [`BuildEvent::Finished`] or [`BuildEvent::Cancelled`] to `tx`.
+/// Runs `activation` for `scope`: a profile build, or a configuration switch,
+/// which also sets a profile-mode target's profile. Sends its output and
+/// exactly one closing [`BuildEvent::Finished`] or [`BuildEvent::Cancelled`]
+/// to `tx`; cancellation stops whichever step is running.
 ///
-/// The command line goes out first as a `$ ...` line, followed by
+/// Each command line goes out first as a `$ ...` line, preceded by
 /// [`HOME_FALLBACK_NOTE`] when a home rebuild goes through `nixos-rebuild`.
-pub async fn run(
+pub async fn run_activation(
 	config_dir: PathBuf,
 	scope: Target,
+	activation: Activation,
 	escalation: Escalation,
 	log: LogFormat,
 	tx: mpsc::Sender<BuildEvent>,
 	mut cancel: oneshot::Receiver<()>,
 ) {
-	let command = tokio::select! {
-		command = resolve(&config_dir, scope) => command.escalated(&escalation).with_log(log),
-		_ = &mut cancel => {
-			let _ = tx.send(BuildEvent::Cancelled).await;
-			return;
+	// The VM build carries the profile inside its own system instead.
+	let activation = if builds_vm() {
+		Activation::Configuration
+	} else {
+		activation
+	};
+	let commands = match activation {
+		Activation::Packages => {
+			if let Err(error) = profile_parent(scope) {
+				let _ = tx
+					.send(BuildEvent::Finished(Err(format!("{error:#}"))))
+					.await;
+				return;
+			}
+			let build = tokio::select! {
+				command = profile::command(&config_dir, scope) => command,
+				_ = &mut cancel => {
+					let _ = tx.send(BuildEvent::Cancelled).await;
+					return;
+				}
+			};
+			match build {
+				Ok(build) => vec![
+					profile::lock_command(&config_dir),
+					build.escalated(&escalation).with_log(log),
+				],
+				Err(error) => {
+					let _ = tx
+						.send(BuildEvent::Finished(Err(format!("{error:#}"))))
+						.await;
+					return;
+				}
+			}
+		}
+		Activation::Configuration => {
+			let command = tokio::select! {
+				command = resolve(&config_dir, scope) => command.escalated(&escalation).with_log(log),
+				_ = &mut cancel => {
+					let _ = tx.send(BuildEvent::Cancelled).await;
+					return;
+				}
+			};
+			vec![command]
 		}
 	};
-	if command.via_nixos_fallback {
-		let _ = tx.send(BuildEvent::Line(HOME_FALLBACK_NOTE.into())).await;
+	if !run_commands(commands, &tx, cancel).await {
+		return;
 	}
-	let _ = tx
-		.send(BuildEvent::Line(format!("$ {}", command.display())))
-		.await;
-	if let Err(e) = rebuild(
-		&command.program,
-		&command.arg_refs(),
-		&command.envs,
-		tx.clone(),
-		cancel,
-	)
-	.await
-	{
-		let _ = tx.send(BuildEvent::Finished(Err(e.to_string()))).await;
+	let status = profile::activation_status(scope);
+	if activation == Activation::Packages && status != profile::SetupStatus::Active {
+		let _ = tx
+			.send(BuildEvent::Line(format!(
+				"Package profile updated. Profile setup: {}.",
+				status.describe(scope)
+			)))
+			.await;
 	}
+	let _ = tx.send(BuildEvent::Finished(Ok(()))).await;
+}
+
+/// `nix build --profile` does not create the directory a user profile lives
+/// in; the system's already exists and belongs to root.
+fn profile_parent(scope: Target) -> anyhow::Result<()> {
+	if scope == Target::HomeManager {
+		let path = profile::profile_path(scope)?;
+		if let Some(parent) = path.parent() {
+			std::fs::create_dir_all(parent)?;
+		}
+	}
+	Ok(())
+}
+
+async fn run_commands(
+	commands: Vec<RebuildCommand>,
+	tx: &mpsc::Sender<BuildEvent>,
+	mut cancel: oneshot::Receiver<()>,
+) -> bool {
+	for command in commands {
+		if cancel.try_recv() != Err(oneshot::error::TryRecvError::Empty) {
+			let _ = tx.send(BuildEvent::Cancelled).await;
+			return false;
+		}
+		if command.via_nixos_fallback {
+			let _ = tx.send(BuildEvent::Line(HOME_FALLBACK_NOTE.into())).await;
+		}
+		let _ = tx
+			.send(BuildEvent::Line(format!("$ {}", command.display())))
+			.await;
+		let (step_tx, mut step_rx) = mpsc::channel(64);
+		let (stop_tx, stop_rx) = oneshot::channel();
+		let mut stop_tx = Some(stop_tx);
+		let task = tokio::spawn(async move {
+			if let Err(error) = rebuild(
+				&command.program,
+				&command.arg_refs(),
+				&command.envs,
+				step_tx.clone(),
+				stop_rx,
+			)
+			.await
+			{
+				let _ = step_tx
+					.send(BuildEvent::Finished(Err(error.to_string())))
+					.await;
+			}
+		});
+		let succeeded = loop {
+			tokio::select! {
+				_ = &mut cancel, if stop_tx.is_some() => {
+					if let Some(stop) = stop_tx.take() {
+						let _ = stop.send(());
+					}
+				}
+				event = step_rx.recv() => match event {
+					Some(event @ (BuildEvent::Line(_) | BuildEvent::Nix(_))) => { let _ = tx.send(event).await; }
+					Some(BuildEvent::Finished(Ok(()))) if stop_tx.is_some() => break true,
+					Some(BuildEvent::Finished(Ok(())) | BuildEvent::Cancelled) => {
+						let _ = tx.send(BuildEvent::Cancelled).await;
+						break false;
+					}
+					Some(BuildEvent::Finished(Err(error))) => {
+						let _ = tx.send(BuildEvent::Finished(Err(error))).await;
+						break false;
+					}
+					None => {
+						let _ = tx.send(BuildEvent::Finished(Err("activation ended without a verdict".into()))).await;
+						break false;
+					}
+				}
+			}
+		};
+		let _ = task.await;
+		if !succeeded {
+			return false;
+		}
+	}
+	true
 }
 
 #[cfg(test)]
 mod tests {
-	use super::{Escalation, LogFormat, RebuildCommand, nixos, vm_build};
+	use super::{Escalation, LogFormat, RebuildCommand, nixos, run_commands, vm_build};
+	use nixbox_nix::BuildEvent;
 	use std::path::{Path, PathBuf};
+	use tokio::sync::{mpsc, oneshot};
+
+	fn shell(script: &str) -> RebuildCommand {
+		RebuildCommand {
+			program: "sh".into(),
+			args: vec!["-c".into(), script.into()],
+			envs: vec![],
+			via_nixos_fallback: false,
+		}
+	}
+
+	#[tokio::test]
+	async fn steps_do_not_emit_intermediate_success_or_run_after_failure() {
+		let (tx, mut rx) = mpsc::channel(64);
+		let (_cancel, stop) = oneshot::channel();
+		assert!(
+			run_commands(
+				vec![shell("echo package"), shell("echo configuration")],
+				&tx,
+				stop
+			)
+			.await
+		);
+		let mut lines = Vec::new();
+		while let Ok(event) = rx.try_recv() {
+			let BuildEvent::Line(line) = event else {
+				panic!("an intermediate step emitted a final verdict");
+			};
+			lines.push(line);
+		}
+		assert!(lines.iter().any(|line| line == "package"));
+		assert!(lines.iter().any(|line| line == "configuration"));
+
+		let (_cancel, stop) = oneshot::channel();
+		assert!(!run_commands(vec![shell("exit 1"), shell("echo must-not-run")], &tx, stop).await);
+		let mut failed = 0;
+		while let Ok(event) = rx.try_recv() {
+			match event {
+				BuildEvent::Finished(Err(_)) => failed += 1,
+				BuildEvent::Line(line) => assert!(!line.contains("must-not-run")),
+				_ => panic!("unexpected verdict"),
+			}
+		}
+		assert_eq!(failed, 1);
+	}
+
+	#[tokio::test]
+	async fn cancellation_stops_the_step_and_prevents_configuration_activation() {
+		let (tx, mut rx) = mpsc::channel(64);
+		let (cancel, stop) = oneshot::channel();
+		let job = tokio::spawn(async move {
+			run_commands(
+				vec![
+					shell("echo ready; exec sleep 30"),
+					shell("echo must-not-run"),
+				],
+				&tx,
+				stop,
+			)
+			.await
+		});
+		loop {
+			if matches!(rx.recv().await, Some(BuildEvent::Line(line)) if line == "ready") {
+				break;
+			}
+		}
+		cancel.send(()).unwrap();
+		assert!(!job.await.unwrap());
+		assert!(matches!(rx.recv().await, Some(BuildEvent::Cancelled)));
+		assert!(rx.recv().await.is_none());
+	}
 
 	#[test]
 	fn nixos_command_targets_the_config_dir() {

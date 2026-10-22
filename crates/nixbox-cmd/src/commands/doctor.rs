@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use nixbox_config::Target;
+use nixbox_core::profile::SetupStatus;
 use nixbox_core::{Engine, ImportState};
 use serde_json::json;
 use tokio::process::Command;
@@ -49,6 +50,7 @@ pub async fn run(global: &GlobalArgs) -> Result<ExitCode> {
 		flake_file(&engine),
 		main_file(&engine, scope),
 		imported(&engine, scope),
+		profile_setup(&engine, scope),
 	];
 	if scope == Target::HomeManager {
 		checks.push(home_configuration(&config_dir).await);
@@ -87,6 +89,18 @@ pub async fn run(global: &GlobalArgs) -> Result<ExitCode> {
 		Ok(ExitCode::from(EXIT_FAILURE))
 	} else {
 		Ok(ExitCode::SUCCESS)
+	}
+}
+
+fn profile_setup(engine: &Engine, scope: Target) -> Check {
+	let status = nixbox_core::profile::setup_status(engine, scope);
+	Check {
+		name: "package profile",
+		level: match status {
+			SetupStatus::Configuration | SetupStatus::Active => Level::Ok,
+			SetupStatus::NotActivated | SetupStatus::NotOnPath => Level::Warn,
+		},
+		detail: status.describe(scope),
 	}
 }
 

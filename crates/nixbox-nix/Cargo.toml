@@ -19,3 +19,4 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
+rnix = "0.14"
