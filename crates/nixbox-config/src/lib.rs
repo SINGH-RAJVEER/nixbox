@@ -211,8 +211,14 @@ impl Config {
 		}
 	}
 
-	/// Returns the generated module that imports flake modules for `target`.
+	/// Flake outputs share the target's package module.
 	pub fn flake_manifest_for(&self, target: Target) -> PathBuf {
+		self.managed_file_for(target)
+	}
+
+	/// Previous releases kept flake outputs in a separate module. Only the
+	/// automatic upgrade uses this path; new writes use `managed_file_for`.
+	pub fn legacy_flake_manifest_for(&self, target: Target) -> PathBuf {
 		match target {
 			Target::HomeManager => self.config_root().join("nixbox-home-flakes.nix"),
 			Target::NixosSystem => self.config_root().join("nixbox-system-flakes.nix"),

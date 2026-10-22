@@ -174,7 +174,7 @@ The generated module remains on disk, but the main entry file was missing or its
 }
 ```
 
-Use `nixbox-system-packages.nix`, `nixbox-home-flakes.nix`, or `nixbox-system-flakes.nix` for the corresponding operation.
+Use `nixbox-system-packages.nix` for the NixOS target. Flake outputs share these package files.
 
 ## An external package is marked inline and cannot migrate
 

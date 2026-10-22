@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::wiring::attr_name;
 
+mod migration;
+pub use migration::migrate_flake_file;
+
 /// Creates a minimal `home.nix` in `dir` if one doesn't already exist,
 /// importing `nixbox-packages.nix` alongside it.
 pub fn ensure_home_nix(dir: &Path) -> Result<()> {
@@ -210,11 +213,17 @@ impl ManagedFile {
 	}
 
 	pub fn write_home_manager(&self, manifest: &Manifest) -> Result<()> {
-		self.write(render_home_manager(manifest))
+		self.write(render_home_manager(
+			manifest,
+			&ManagedFlakeFile::new(&self.path).load()?,
+		))
 	}
 
 	pub fn write_nixos(&self, manifest: &Manifest) -> Result<()> {
-		self.write(render_nixos(manifest))
+		self.write(render_nixos(
+			manifest,
+			&ManagedFlakeFile::new(&self.path).load()?,
+		))
 	}
 
 	fn write(&self, content: String) -> Result<()> {
@@ -244,108 +253,100 @@ impl ManagedFlakeFile {
 		}
 		let raw = fs::read_to_string(&self.path)
 			.with_context(|| format!("reading {}", self.path.display()))?;
-		let mut manifest = FlakeManifest::default();
-		let mut in_module_block = false;
-		let mut in_package_block = false;
-		for line in raw.lines() {
-			let line = line.trim();
-			match line {
-				"# nixbox:flakes:start" => in_module_block = true,
-				"# nixbox:flakes:end" => in_module_block = false,
-				"# nixbox:flake-packages:start" => in_package_block = true,
-				"# nixbox:flake-packages:end" => in_package_block = false,
-				_ => {}
-			}
-			let Some((input, output, repo)) = parse_flake_line(line) else {
-				continue;
-			};
-			if in_module_block {
-				manifest
-					.modules
-					.entry(repo.clone())
-					.or_default()
-					.insert(output.to_string());
-			} else if in_package_block
-				&& let Some(package) = PACKAGE_PREFIXES
-					.iter()
-					.find_map(|prefix| output.strip_prefix(prefix))
-			{
-				manifest
-					.packages
-					.entry(repo.clone())
-					.or_default()
-					.insert(unquote(package));
-			} else {
-				continue;
-			}
-			manifest.inputs.insert(repo, input.to_string());
-		}
-		Ok(manifest)
+		Ok(parse_flakes(&raw))
 	}
 
-	/// `mode` is that of the target's package file: in profile mode, flake
-	/// packages join `nixbox.packages`, which the package file declares.
+	/// Updates flake outputs while preserving the nixpkgs entries and profile
+	/// wiring in the same package module.
 	pub fn write_home_manager(&self, manifest: &FlakeManifest, mode: PackageMode) -> Result<()> {
-		self.write(
-			manifest,
-			match mode {
-				PackageMode::Configuration => "home.packages",
-				PackageMode::Profile => "nixbox.packages",
-			},
-		)
+		let managed = ManagedFile::new(&self.path);
+		let mut packages = managed.load()?;
+		packages.mode = mode;
+		managed.write(render_home_manager(&packages, manifest))
 	}
 
 	pub fn write_nixos(&self, manifest: &FlakeManifest, mode: PackageMode) -> Result<()> {
-		self.write(
-			manifest,
-			match mode {
-				PackageMode::Configuration => "environment.systemPackages",
-				PackageMode::Profile => "nixbox.packages",
-			},
-		)
+		let managed = ManagedFile::new(&self.path);
+		let mut packages = managed.load()?;
+		packages.mode = mode;
+		managed.write(render_nixos(&packages, manifest))
 	}
+}
 
-	/// Sections without entries are left out, along with the module
-	/// arguments only they use, so an empty file is a plain `{ ... }: { }`.
-	fn write(&self, manifest: &FlakeManifest, package_option: &str) -> Result<()> {
-		if let Some(parent) = self.path.parent() {
-			fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+fn parse_flakes(raw: &str) -> FlakeManifest {
+	let mut manifest = FlakeManifest::default();
+	let mut in_module_block = false;
+	let mut in_package_block = false;
+	for line in raw.lines() {
+		let line = line.trim();
+		match line {
+			"# nixbox:flakes:start" => in_module_block = true,
+			"# nixbox:flakes:end" => in_module_block = false,
+			"# nixbox:flake-packages:start" => in_package_block = true,
+			"# nixbox:flake-packages:end" => in_package_block = false,
+			_ => {}
 		}
-		let mut body = String::new();
-		if !manifest.modules.is_empty() {
-			body.push_str("\timports = [\n\t\t# nixbox:flakes:start\n");
-			for (repo, modules) in &manifest.modules {
-				let input = manifest.input_for(repo);
-				for module in modules {
-					body.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
-				}
-			}
-			body.push_str("\t\t# nixbox:flakes:end\n\t];\n");
-		}
-		if !manifest.packages.is_empty() {
-			body.push_str(&format!(
-				"\t{package_option} = [\n\t\t# nixbox:flake-packages:start\n"
-			));
-			for (repo, attrs) in &manifest.packages {
-				let input = manifest.input_for(repo);
-				for package in attrs {
-					body.push_str(&format!(
-						"\t\tinputs.{input}.{}{} # github:{repo}\n",
-						PACKAGE_PREFIXES[0],
-						attr_name(package)
-					));
-				}
-			}
-			body.push_str("\t\t# nixbox:flake-packages:end\n\t];\n");
-		}
-		let args = match (manifest.modules.is_empty(), manifest.packages.is_empty()) {
-			(true, true) => "{ ... }",
-			(false, true) => "{ inputs, ... }",
-			(_, false) => "{ inputs, pkgs, ... }",
+		let Some((input, output, repo)) = parse_flake_line(line) else {
+			continue;
 		};
-		let content = format!("# Managed by nixbox. Do not edit by hand.\n{args}:\n{{\n{body}}}\n");
-		fs::write(&self.path, content).with_context(|| format!("writing {}", self.path.display()))
+		if in_module_block {
+			manifest
+				.modules
+				.entry(repo.clone())
+				.or_default()
+				.insert(output.to_string());
+		} else if in_package_block
+			&& let Some(package) = PACKAGE_PREFIXES
+				.iter()
+				.find_map(|prefix| output.strip_prefix(prefix))
+		{
+			manifest
+				.packages
+				.entry(repo.clone())
+				.or_default()
+				.insert(unquote(package));
+		} else {
+			continue;
+		}
+		manifest.inputs.insert(repo, input.to_string());
 	}
+	manifest
+}
+
+fn render_legacy_flakes(manifest: &FlakeManifest, package_option: &str) -> String {
+	let mut body = String::new();
+	if !manifest.modules.is_empty() {
+		body.push_str("\timports = [\n\t\t# nixbox:flakes:start\n");
+		for (repo, modules) in &manifest.modules {
+			let input = manifest.input_for(repo);
+			for module in modules {
+				body.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
+			}
+		}
+		body.push_str("\t\t# nixbox:flakes:end\n\t];\n");
+	}
+	if !manifest.packages.is_empty() {
+		body.push_str(&format!(
+			"\t{package_option} = [\n\t\t# nixbox:flake-packages:start\n"
+		));
+		for (repo, attrs) in &manifest.packages {
+			let input = manifest.input_for(repo);
+			for package in attrs {
+				body.push_str(&format!(
+					"\t\tinputs.{input}.{}{} # github:{repo}\n",
+					PACKAGE_PREFIXES[0],
+					attr_name(package)
+				));
+			}
+		}
+		body.push_str("\t\t# nixbox:flake-packages:end\n\t];\n");
+	}
+	let args = match (manifest.modules.is_empty(), manifest.packages.is_empty()) {
+		(true, true) => "{ ... }",
+		(false, true) => "{ inputs, ... }",
+		(_, false) => "{ inputs, pkgs, ... }",
+	};
+	format!("# Managed by nixbox. Do not edit by hand.\n{args}:\n{{\n{body}}}\n")
 }
 
 /// How a package output is reached from its input. The first form is the
@@ -424,43 +425,91 @@ fn render_packages(manifest: &Manifest, indent: &str) -> String {
 	out
 }
 
-fn render_home_manager(manifest: &Manifest) -> String {
+fn flake_args(manifest: &FlakeManifest) -> &'static str {
+	if manifest.modules.is_empty() && manifest.packages.is_empty() {
+		""
+	} else {
+		"inputs, "
+	}
+}
+
+fn render_flake_imports(manifest: &FlakeManifest) -> String {
+	if manifest.modules.is_empty() {
+		return String::new();
+	}
+	let mut out = String::from("\timports = [\n\t\t# nixbox:flakes:start\n");
+	for (repo, modules) in &manifest.modules {
+		let input = manifest.input_for(repo);
+		for module in modules {
+			out.push_str(&format!("\t\tinputs.{input}.{module} # github:{repo}\n"));
+		}
+	}
+	out.push_str("\t\t# nixbox:flakes:end\n\t];\n");
+	out
+}
+
+fn render_flake_packages(manifest: &FlakeManifest, indent: &str) -> String {
+	if manifest.packages.is_empty() {
+		return String::new();
+	}
+	let mut out = format!("{indent}# nixbox:flake-packages:start\n");
+	for (repo, packages) in &manifest.packages {
+		let input = manifest.input_for(repo);
+		for package in packages {
+			out.push_str(&format!(
+				"{indent}inputs.{input}.{}{} # github:{repo}\n",
+				PACKAGE_PREFIXES[0],
+				attr_name(package)
+			));
+		}
+	}
+	out.push_str(&format!("{indent}# nixbox:flake-packages:end\n"));
+	out
+}
+
+fn render_home_manager(manifest: &Manifest, flakes: &FlakeManifest) -> String {
 	match manifest.mode {
 		PackageMode::Configuration => format!(
-			"{header}\n{{ pkgs, ... }}:\n{{\n  home.packages = [\n{body}  ];\n}}\n",
+			"{header}\n{{ {inputs}pkgs, ... }}:\n{{\n{imports}\thome.packages = [\n{body}{flake_packages}\t];\n}}\n",
 			header = MANIFEST_HEADER,
-			body = render_packages(manifest, "    "),
+			body = render_packages(manifest, "\t\t"),
+			inputs = flake_args(flakes),
+			imports = render_flake_imports(flakes),
+			flake_packages = render_flake_packages(flakes, "\t\t"),
 		),
 		PackageMode::Profile => {
-			render_profile_module(manifest, HOME_PROFILE_LET, HOME_PROFILE_WIRING)
+			render_profile_module(manifest, flakes, HOME_PROFILE_LET, HOME_PROFILE_WIRING)
 		}
 	}
 }
 
-fn render_nixos(manifest: &Manifest) -> String {
+fn render_nixos(manifest: &Manifest, flakes: &FlakeManifest) -> String {
 	match manifest.mode {
 		PackageMode::Configuration => format!(
-			"{header}\n{{ pkgs, ... }}:\n{{\n  environment.systemPackages = [\n{body}  ];\n}}\n",
+			"{header}\n{{ {inputs}pkgs, ... }}:\n{{\n{imports}\tenvironment.systemPackages = [\n{body}{flake_packages}\t];\n}}\n",
 			header = MANIFEST_HEADER,
-			body = render_packages(manifest, "    "),
+			body = render_packages(manifest, "\t\t"),
+			inputs = flake_args(flakes),
+			imports = render_flake_imports(flakes),
+			flake_packages = render_flake_packages(flakes, "\t\t"),
 		),
 		PackageMode::Profile => {
-			render_profile_module(manifest, NIXOS_PROFILE_LET, NIXOS_PROFILE_WIRING)
+			render_profile_module(manifest, flakes, NIXOS_PROFILE_LET, NIXOS_PROFILE_WIRING)
 		}
 	}
 }
 
-/// A profile-mode package module. It declares `nixbox.packages`, which the
-/// flake-output module also contributes to, and `nixbox.profile`, the one
+/// A profile-mode package module. It declares `nixbox.packages` for both
+/// nixpkgs and flake packages, and `nixbox.profile`, the one
 /// environment both the profile build (`nix build --profile`) and the
 /// activation script use, so they always agree on its store path.
 const PROFILE_MODULE: &str = r##"@HEADER@
 @MARKER@
-{ config, lib, pkgs, ... }:
+{ config, lib, @INPUTS@pkgs, ... }:
 let
 @LET@in
 {
-	options.nixbox = {
+@IMPORTS@	options.nixbox = {
 		packages = lib.mkOption {
 			type = lib.types.listOf lib.types.package;
 			default = [ ];
@@ -474,7 +523,7 @@ let
 	};
 	config = {
 		nixbox.packages = [
-@PACKAGES@		];
+@PACKAGES@@FLAKE_PACKAGES@		];
 		nixbox.profile = pkgs.buildEnv {
 			name = "nixbox-packages";
 			paths = config.nixbox.packages;
@@ -519,10 +568,18 @@ const NIXOS_PROFILE_WIRING: &str = r##"		environment.profiles = [ profile ];
 		environment.etc."nixbox/profile-ready".text = profile;
 "##;
 
-fn render_profile_module(manifest: &Manifest, bindings: &str, wiring: &str) -> String {
+fn render_profile_module(
+	manifest: &Manifest,
+	flakes: &FlakeManifest,
+	bindings: &str,
+	wiring: &str,
+) -> String {
 	PROFILE_MODULE
 		.replace("@HEADER@", MANIFEST_HEADER)
 		.replace("@MARKER@", PROFILE_MODE_MARKER)
+		.replace("@INPUTS@", flake_args(flakes))
+		.replace("@IMPORTS@", &render_flake_imports(flakes))
+		.replace("@FLAKE_PACKAGES@", &render_flake_packages(flakes, "\t\t\t"))
 		.replace("@LET@", bindings)
 		.replace("@PACKAGES@", &render_packages(manifest, "\t\t\t"))
 		.replace("@WIRING@", wiring)
@@ -816,7 +873,7 @@ mod tests {
 		m.add("fd");
 		for mode in [PackageMode::Configuration, PackageMode::Profile] {
 			m.mode = mode;
-			let parsed = parse(&render_home_manager(&m));
+			let parsed = parse(&render_home_manager(&m, &FlakeManifest::default()));
 			assert_eq!(parsed.packages, m.packages);
 			assert_eq!(parsed.mode, mode);
 		}
@@ -828,19 +885,19 @@ mod tests {
 		m.add("htop");
 		for mode in [PackageMode::Configuration, PackageMode::Profile] {
 			m.mode = mode;
-			let parsed = parse(&render_nixos(&m));
+			let parsed = parse(&render_nixos(&m, &FlakeManifest::default()));
 			assert_eq!(parsed.packages, m.packages);
 			assert_eq!(parsed.mode, mode);
 		}
 	}
 
 	#[test]
-	fn configuration_mode_writes_what_earlier_releases_wrote() {
+	fn configuration_mode_uses_tab_indentation() {
 		let mut m = Manifest::default();
 		m.add("fd");
 		assert_eq!(
-			render_home_manager(&m),
-			"# Managed by nixbox. Do not edit by hand.\n{ pkgs, ... }:\n{\n  home.packages = [\n    # nixbox:packages:start\n    pkgs.fd\n    # nixbox:packages:end\n  ];\n}\n"
+			render_home_manager(&m, &FlakeManifest::default()),
+			"# Managed by nixbox. Do not edit by hand.\n{ pkgs, ... }:\n{\n\thome.packages = [\n\t\t# nixbox:packages:start\n\t\tpkgs.fd\n\t\t# nixbox:packages:end\n\t];\n}\n"
 		);
 	}
 
@@ -851,12 +908,12 @@ mod tests {
 			..Manifest::default()
 		};
 		m.add("fd");
-		let home = render_home_manager(&m);
+		let home = render_home_manager(&m, &FlakeManifest::default());
 		assert!(home.contains("\t\t\tpkgs.fd\n"));
 		assert!(home.contains("--set ${config.nixbox.profile}"));
 		assert!(home.contains("programs.nushell.extraEnv"));
 		assert!(!home.contains("home.packages"));
-		let nixos = render_nixos(&m);
+		let nixos = render_nixos(&m, &FlakeManifest::default());
 		assert!(nixos.contains("environment.profiles = [ profile ];"));
 		assert!(nixos.contains("--set ${config.nixbox.profile}"));
 		assert!(!nixos.contains("environment.systemPackages"));
@@ -1026,7 +1083,7 @@ mod tests {
 			.unwrap();
 		assert_eq!(
 			fs::read_to_string(&path).unwrap(),
-			"# Managed by nixbox. Do not edit by hand.\n{ ... }:\n{\n}\n"
+			render_nixos(&Manifest::default(), &FlakeManifest::default())
 		);
 		assert!(managed.load().unwrap().outputs().is_empty());
 		let _ = fs::remove_file(path);

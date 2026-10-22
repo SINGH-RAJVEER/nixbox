@@ -896,7 +896,7 @@ pub(crate) fn operation_files(config: &Config) -> BTreeMap<PathBuf, Option<Vec<u
 		files.extend([
 			config.main_file_for(scope),
 			config.managed_file_for(scope),
-			config.flake_manifest_for(scope),
+			config.legacy_flake_manifest_for(scope),
 			config.settings_file_for(scope),
 		]);
 	}

@@ -225,7 +225,7 @@ def uninstall(package: str) -> dict:
 
 
 def managed_flakes() -> str:
-	return read("nixbox-system-flakes.nix")
+	return read("nixbox-system-packages.nix")
 
 
 def tui(keys: str) -> None:
@@ -255,9 +255,9 @@ with subtest("a queued flake package is wired in as a person would write it"):
 	assert flake.count("specialArgs") == 1, flake
 	line = f"inputs.helium-browser.packages.${{pkgs.stdenv.hostPlatform.system}}.default # github:{REPO}"
 	assert line in managed_flakes(), managed_flakes()
-	assert "./nixbox-system-flakes.nix" in main_config(), main_config()
+	assert "./nixbox-system-packages.nix" in main_config(), main_config()
 	tracked = machine.succeed("su -l tester -c 'git -C ~/.config/nixos ls-files'")
-	assert "nixbox-system-flakes.nix" in tracked, tracked
+	assert "nixbox-system-packages.nix" in tracked, tracked
 
 with subtest("flake list reports the managed package, as text and as json"):
 	listed = nixbox("flake list")

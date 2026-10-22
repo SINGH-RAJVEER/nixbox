@@ -123,7 +123,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 ### `nixbox-nix`
 
 - `search.rs` owns live search, the locked-revision catalog, cache serialization, bounded subprocess output, package-attribute normalization, and relevance ranking.
-- `manifest.rs` owns generated package and flake-module files, package marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list.
+- `manifest.rs` owns the combined package modules, nixpkgs and flake marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list. Its `manifest/migration.rs` submodule upgrades separate flake-output files on engine startup, validates generated code with rnix, updates literal imports, and deletes obsolete files after successful writes.
 - `settings.rs` owns the generated settings modules: `SettingValue`, the `SettingsManifest` map from option path to value, rendering, and the strict line parser.
 - `options.rs` and `options.nix` evaluate a package's module options from the user's flake. The query goes to Nix as JSON in an environment variable, and the result is decoded into an `OptionSet` of `OptionEntry` values with an `OptionKind`, the evaluated value, and the files that define each option.
 - `system_options.rs` and `system_options.nix` discover NixOS output names, index host-wide schema metadata, and inspect one option on demand. `NixosConfiguration` binds each inspection to its root and output key, independently of the package-operation target. Schema traversal does not read option values or defaults; it includes nested templates and flags bounded or failed submodule expansion. Selected-value previews have bounded depth and size and withhold credential fields.

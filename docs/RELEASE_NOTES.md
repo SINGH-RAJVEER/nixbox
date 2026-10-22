@@ -4,13 +4,13 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
-- Added opt-in package profiles. `nixbox profile setup` moves a target's packages into an independent Nix profile and rebuilds once; installs and removals then build only the profile. Modules, options and migrations still rebuild. `nixbox profile teardown` moves the packages back, writing exactly the package file earlier releases wrote.
+- Added opt-in package profiles. `nixbox profile setup` moves a target's packages into an independent Nix profile and rebuilds once; installs and removals then build only the profile. Modules, options and migrations still rebuild. `nixbox profile teardown` moves the packages back into the combined configuration module.
 - Made every rebuild set the profile to the configuration's package set, so fresh installs, `nixos-rebuild --rollback`, the boot menu and `nix flake update` carry the profile along. The profile build and the rebuild share one `nixbox.profile` option and produce the same store path.
 - Put the profile on PATH through PAM on NixOS, and through `home.sessionPath` and nushell's `env.nu` for Home Manager. When Home Manager runs inside NixOS, setup also adds the profile to the NixOS PAM environment.
 - Added `nixbox profile generations` and `nixbox profile rollback [--to <generation>]`, `apply --configuration`, and setup status in `status` and `doctor`.
 - Recorded the profile mode in the generated package file, so it travels with the configuration repository.
 - Made the desktop NixOS page a settings editor. Selecting an option opens it with its sibling options, each with a control for its type: switches, choice buttons or menus, and text fields for strings, numbers, and string lists. Edits are staged, marked in the list and editor, and applied together as one NixOS rebuild. Options you define yourself, options set by other modules, credentials, and complex types stay read-only with a short reason. Editing is limited to the `nixos` host that nixbox rebuilds.
-- Left empty sections out of `nixbox-home-flakes.nix` and `nixbox-system-flakes.nix`. A file without flake modules has no `imports` list, one without flake packages has no package list or `pkgs` argument, and a file with neither no longer asks for `inputs`.
+- Combined flake outputs and nixpkgs packages in `nixbox-home-packages.nix` and `nixbox-system-packages.nix`. Existing configurations upgrade automatically on startup: NixBox merges the old flake-output files, updates imports, preserves profile mode, and deletes the obsolete files. Unexpected custom edits stop the migration without discarding them.
 - Tidied the desktop Version control page. The header shows the repository root with a backend tag, plus a subdirectory tag when the configuration is part of a larger repository. Explanations for disabled controls moved into tooltips, and button labels are shorter. Every control is unchanged.
 
 ## 0.4.0 - 2026-10-16

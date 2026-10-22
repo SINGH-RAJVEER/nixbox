@@ -536,7 +536,7 @@ mod tests {
 			std::fs::read_to_string(engine.config.main_file_for(Target::HomeManager)).unwrap();
 		assert!(!home.contains(".chatgpt"));
 		assert!(home.contains(".claude-code"));
-		assert!(home.contains("nixbox-home-flakes.nix"));
+		assert!(home.contains("nixbox-home-packages.nix"));
 		let managed =
 			std::fs::read_to_string(engine.config.flake_manifest_for(Target::HomeManager)).unwrap();
 		assert!(

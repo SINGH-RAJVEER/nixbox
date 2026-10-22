@@ -83,7 +83,7 @@ in
 }
 ```
 
-The NixOS file has the same options. Its wiring is `environment.profiles`, a `system.activationScripts.nixboxProfile` entry with the same `readlink` guard, and `/etc/nixbox/profile-ready`. The flake-output module adds its packages to `nixbox.packages` instead of `home.packages` or `environment.systemPackages`, so they join the same environment.
+The NixOS file has the same options. Its wiring is `environment.profiles`, a `system.activationScripts.nixboxProfile` entry with the same `readlink` guard, and `/etc/nixbox/profile-ready`. Flake packages share the same `nixbox.packages` list as nixpkgs packages, so they join the same environment.
 
 | Target | Profile | Owner |
 | --- | --- | --- |
@@ -136,13 +136,13 @@ Start a new login session after setup. `status` and `doctor` report one of four 
 
 ### Teardown
 
-Teardown rewrites the package and flake-output files in configuration mode and rebuilds. The package file is byte-for-byte what earlier releases wrote; the flake-output file takes the trimmed form described below. The profile and its generations stay on disk and off PATH. Delete them with `rm ~/.local/state/nix/profiles/nixbox*` or `sudo rm /nix/var/nix/profiles/nixbox*`, then collect garbage.
+Teardown rewrites the combined package module in configuration mode and rebuilds. Nixpkgs packages, flake packages and flake module imports stay in that one file. The profile and its generations stay on disk and off PATH. Delete them with `rm ~/.local/state/nix/profiles/nixbox*` or `sudo rm /nix/var/nix/profiles/nixbox*`, then collect garbage.
 
-## Generated flake-output modules
+## Flake outputs in package modules
 
-`nixbox-home-flakes.nix` and `nixbox-system-flakes.nix` store outputs selected from external flake inputs. Each file has an import marker block backed by a `BTreeMap` from the `owner/repository` key to a module output path. The manifest format also has a package marker block backed by a second `BTreeMap` from the repository to its set of package attributes, so one flake can contribute several packages; Home Manager renders that block as `home.packages`, while NixOS renders it as `environment.systemPackages`. A third map records the root flake input each repository is referenced through, such as `zen-browser`.
+`nixbox-home-packages.nix` and `nixbox-system-packages.nix` also store outputs selected from external flake inputs. Each file can have an import marker block backed by a `BTreeMap` from the `owner/repository` key to a module output path. The manifest format also has a package marker block backed by a second `BTreeMap` from the repository to its set of package attributes, so one flake can contribute several packages; Home Manager renders that block as `home.packages`, while NixOS renders it as `environment.systemPackages`. A third map records the root flake input each repository is referenced through, such as `zen-browser`.
 
-The inputs themselves stay in the root `flake.nix`, the only place Nix accepts them; these files reach them as `inputs.<name>`. Sections without entries are left out, along with the module arguments only they use: a file with packages and no modules has no `imports` list, one with modules and no packages takes no `pkgs`, and an empty file is just `{ ... }: { }`. A file with both looks like this:
+The input declarations stay in the root `flake.nix`. The package modules reference them as `inputs.<name>` and request the `inputs` argument only when flake outputs are present. Module outputs go in a top-level `imports` list. Nixpkgs and flake packages share one package list, with separate marker blocks so changing either preserves the other. A combined Home Manager file looks like this:
 
 ```nix
 # Managed by nixbox. Do not edit by hand.
@@ -154,6 +154,9 @@ The inputs themselves stay in the root `flake.nix`, the only place Nix accepts t
 		# nixbox:flakes:end
 	];
 	home.packages = [
+		# nixbox:packages:start
+		pkgs.fd
+		# nixbox:packages:end
 		# nixbox:flake-packages:start
 		inputs.package.packages.${pkgs.stdenv.hostPlatform.system}.default # github:owner/package
 		# nixbox:flake-packages:end
@@ -161,7 +164,15 @@ The inputs themselves stay in the root `flake.nix`, the only place Nix accepts t
 }
 ```
 
-Input and package attribute names are quoted and escaped only when they are not plain Nix identifiers. Each line ends with a `# github:<owner>/<repository>` comment that ties it back to its repository. The loader also reads lines written by earlier releases, which used the quoted repository as the input name, had no trailing comment, and used `${pkgs.system}`; those keep working until the flake is reinstalled. On the Home Manager target the Flakes tab enqueues a flake-package operation whenever the selected repository has packages, and on the NixOS target when it has no default module, using the first package from the evaluated and ranked package list.
+Input and package attribute names are quoted and escaped only when they are not plain Nix identifiers. Each line ends with a `# github:<owner>/<repository>` comment that ties it back to its repository. The loader also reads lines written by earlier releases, which used the quoted repository as the input name, had no trailing comment, and used `${pkgs.system}`; those are accepted during the automatic upgrade and rewritten with the current system selector. On the Home Manager target the Flakes tab enqueues a flake-package operation whenever the selected repository has packages, and on the NixOS target when it has no default module, using the first package from the evaluated and ranked package list.
+
+### Upgrading existing configurations
+
+When the shared engine starts, NixBox automatically folds `nixbox-home-flakes.nix` into `nixbox-home-packages.nix` and `nixbox-system-flakes.nix` into `nixbox-system-packages.nix`. This runs for both targets in the CLI, TUI and GUI, including when opening the application or listing packages. It preserves nixpkgs packages, flake packages, module outputs, repository comments, input names and profile mode. Input declarations and `flake.lock` stay unchanged, and the migration itself does not build or activate anything.
+
+The upgrade scans Nix files under the configured root and the configured Home Manager and NixOS entry files. It updates literal path entries in import lists, including relative paths in nested files, and removes redundant imports when the combined module is already in that binding. Comments, unrelated strings and other configuration text stay in place. The old generated files are deleted after the combined contents and import edits have been written. Missing package files are created, and repeated startup does not duplicate entries. Newly created package files are made visible to Git-backed flakes.
+
+Before writing, NixBox checks that the generated files contain only recognised generated code and that the import edits are supported. Unexpected hand edits, incomplete markers, conflicting input names, string or computed imports, and imports through symlinked Nix files stop the upgrade with an error instead of deleting the source files. Move those custom declarations into a user-owned module or use literal import paths, then start NixBox again. References outside the configured root and entry files must be updated separately. A write failure restores the files already changed during that target's migration.
 
 ## Generated settings modules
 
