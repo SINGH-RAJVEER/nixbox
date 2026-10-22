@@ -174,6 +174,8 @@ The upgrade scans Nix files under the configured root and the configured Home Ma
 
 Before writing, NixBox checks that the generated files contain only recognised generated code and that the import edits are supported. Unexpected hand edits, incomplete markers, conflicting input names, string or computed imports, and imports through symlinked Nix files stop the upgrade with an error instead of deleting the source files. Move those custom declarations into a user-owned module or use literal import paths, then start NixBox again. References outside the configured root and entry files must be updated separately. A write failure restores the files already changed during that target's migration.
 
+`just vm-test` boots a guest and exercises this upgrade with the packaged CLI, real Home Manager and NixOS modules, and a local flake fixture. It checks migration in configuration and profile mode, package and flake-output edits after migration, repeated startup, and profile builds that install runnable commands inside the guest.
+
 ## Generated settings modules
 
 Package options set from the [options panel](PACKAGE_OPTIONS.md) are written to `<configuration-root>/nixbox-home-settings.nix` for Home Manager and `<configuration-root>/nixbox-system-settings.nix` for NixOS:
