@@ -99,6 +99,8 @@ environment.systemPackages = [ pkgs.nixbox ];
 
 Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The desktop GUI is built for the Linux systems only.
 
+Nix builds reuse compiled dependency artifacts after application source edits. Installation packages build separately from their test checks. The public [NixBox binary cache](docs/TROUBLESHOOTING.md#using-the-binary-cache) can supply matching builds without local compilation; downstream NixOS configurations must enable its cache and verification key explicitly.
+
 NixBox's flake packages build with every core Nix allows, including test compilation. On a machine with little RAM, cap the package with `(nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default.override { buildJobs = 2; })`, or `pkgs.nixbox.override { buildJobs = 2; }` when using the overlay. The Cargo launcher inherits your Nix settings. To cap direct native Cargo installs, use `cargo install nixbox --features native --locked --jobs 2`; the same `--jobs` option applies to `nixbox-tui` and `nixbox-cli`. See [build resource limits](docs/TROUBLESHOOTING.md#builds-use-too-much-memory) for tuning and the distinction between package and system-wide limits.
 
 ## Run

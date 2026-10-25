@@ -194,9 +194,62 @@ jobs:
       - name: Check package build limits
         run: nix build --no-link --print-build-logs --max-jobs 1 --cores 2 .#checks.x86_64-linux.build-jobs .#checks.x86_64-linux.release-channels
 
+      - name: Check dependency reuse and source filtering
+        run: uv run --no-project python scripts/check_nix_cache.py
+
+  nix-packages:
+    name: Nix packages (${{ matrix.system }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            system: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+          - runner: macos-14
+            system: aarch64-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Apply release version
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: uv run scripts/version.py "--$RELEASE_CHANNEL" --version "$RELEASE_VERSION"
+      - name: Install Nix
+        uses: cachix/install-nix-action@3c6342b75005b9cc7c7d4069c3e9179247c89012 # v31
+      - name: Use the NixBox binary cache
+        uses: cachix/cachix-action@v16
+        with:
+          name: nixbox
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ github.event_name != 'push' || env.CACHIX_AUTH_TOKEN == '' }}
+      - name: Build packages and run their separate tests
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          NIX_SYSTEM: ${{ matrix.system }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          interfaces=(nixbox-tui nixbox-cli)
+          if [[ "$NIX_SYSTEM" == *-linux ]]; then interfaces+=(nixbox); fi
+          for interface in "${interfaces[@]}"; do
+            nix build --accept-flake-config --no-link --print-build-logs \
+              ".#packages.$NIX_SYSTEM.$interface-$RELEASE_CHANNEL" \
+              ".#checks.$NIX_SYSTEM.$interface-$RELEASE_CHANNEL"
+          done
+      - name: Explain read-only cache access
+        if: github.event_name == 'push' && env.CACHIX_AUTH_TOKEN == ''
+        run: echo 'Set the CACHIX_AUTH_TOKEN repository secret to enable binary cache uploads.'
+
   publish:
     name: Publish workspace crates
-    needs: [prepare, test, gui, nix]
+    needs: [prepare, test, gui, nix, nix-packages]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

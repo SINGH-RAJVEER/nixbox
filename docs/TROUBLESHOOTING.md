@@ -46,6 +46,19 @@ CARGO_BUILD_JOBS=1 devenv shell -- just ci
 CARGO_BUILD_JOBS=2 devenv shell -- just gui
 ```
 
+## Using the binary cache
+
+The public cache at `https://nixbox.cachix.org` stores compiled Nix outputs so matching downstream installations can download them. Direct builds of this flake can accept its cache settings with `nix build --accept-flake-config .#nixbox-nightly`. Using NixBox as an input of another flake does not automatically enable its cache. For a NixOS configuration, add:
+
+```nix
+nix.settings = {
+	extra-substituters = [ "https://nixbox.cachix.org" ];
+	extra-trusted-public-keys = [ "nixbox.cachix.org-1:aAlStGW7Q18EIEW91Ql9Iebuu/MsyXC/WKg/TlOxn0A=" ];
+};
+```
+
+Apply the NixOS configuration to configure the daemon for later builds. These extra settings retain existing caches and trusted keys. Downloads require no account or private token. CI uploads require the repository's `CACHIX_AUTH_TOKEN` secret; the public key above verifies downloads and cannot upload. A missing cache entry falls back to a local build. Crane's dependency outputs can still be reused locally after application edits even without a remote cache. Different nixpkgs, compiler, features, or package overrides can produce a different output and miss the cache. A standalone Home Manager configuration must configure cache trust on the machine's Nix daemon separately.
+
 ## Rust linker wrapper points to a missing Nix store path
 
 An error such as `ld.lld: ... /nix/store/.../nix-support/ld-wrapper.sh: No such file or directory` means the active Rustup toolchain contains a linker wrapper tied to a Nix store path that no longer exists. It is not a Rust source or NixBox linker-flag error when the same build succeeds in devenv.
