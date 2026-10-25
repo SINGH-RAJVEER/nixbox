@@ -163,7 +163,16 @@ impl NixboxApp {
 					}),
 			)
 			.when(self.session.engine.config.close_button, |row| {
-				row.child(div().absolute().top_2().right_2().child(close_button(cx)))
+				row.child(
+					div()
+						.absolute()
+						.top_0()
+						.bottom_0()
+						.right_2()
+						.flex()
+						.items_center()
+						.child(close_button(cx)),
+				)
 			})
 	}
 
