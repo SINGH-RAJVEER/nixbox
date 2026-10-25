@@ -16,6 +16,7 @@ in
 		# Build, lint, and test commands.
 		pkgs.bash
 		pkgs.just
+		pkgs.uv
 		pkgs.cargo-nextest
 		pkgs.nixd
 		pkgs.nil

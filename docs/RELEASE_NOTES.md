@@ -2,6 +2,12 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Added separate stable and nightly flake packages, apps, and overlay attributes for all interfaces. The default uses the stable GUI on Linux; stable builds are pinned to the actual `0.4.5` release, while nightly builds use the checkout's `0.4.6` prerelease.
+
+- Added stable and nightly build and installation channels, shared workspace versioning flags, and checked nightly publication from `dev` with matching immutable Nix tags.
+
 ## 0.4.6 - 2026-10-23
 
 - Added a round GTK-style close button at the top right of the desktop GUI that quits NixBox like Ctrl-Q. Settings has a switch to hide it, saved as `close_button`, and `nixbox config set close-button false` does the same.

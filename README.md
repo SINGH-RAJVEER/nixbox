@@ -49,6 +49,10 @@ cargo install nixbox-tui
 cargo install nixbox-cli
 ```
 
+Stable releases use plain versions such as `0.4.5`. Nightly builds from `dev` use prerelease versions such as `0.4.6-nightly.20261025.123`. Install a published nightly explicitly with `cargo install nixbox --version '=0.4.6-nightly.20261025.123'`, or pin its Nix tag with `nix profile install github:SINGH-RAJVEER/nixbox/v0.4.6-nightly.20261025.123#nixbox-nightly`. Replace the example identifier with an existing published version. Both channels support the separate `nixbox-tui` and `nixbox-cli` packages. See [release preparation](docs/DEVELOPMENT.md#release-preparation) for the `--stable` and `--nightly` versioning flags.
+
+The flake defaults to the stable GUI on Linux. Select the GUI explicitly with `#nixbox-stable` or `#nixbox-nightly`; terminal outputs are `#nixbox-tui-stable`, `#nixbox-tui-nightly`, `#nixbox-cli-stable`, and `#nixbox-cli-nightly`. For example, `nix run .#nixbox-nightly` runs this checkout's GUI, while `nix run .` runs the pinned stable `0.4.5` GUI. The unsuffixed interface outputs select stable. On macOS, the default is the stable TUI because the GUI is not packaged there. Nightly version tags require `#nixbox-nightly` to select the nightly GUI.
+
 Run NixBox directly from its flake:
 
 ```sh
