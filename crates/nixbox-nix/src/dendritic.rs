@@ -1,7 +1,7 @@
 //! Conservative integration with import-tree/flake-parts configurations.
 //!
 //! Discovery never evaluates Nix or writes files. Only literal import trees
-//! and a single, statically connected `nixos` host are writable for now.
+//! and statically connected classed modules are writable.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -24,6 +24,7 @@ pub struct Layout {
 	pub host: String,
 	pub host_module: String,
 	pub home_user: Option<String>,
+	pub standalone: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,8 +39,16 @@ pub struct Discovery {
 	pub root: PathBuf,
 	pub tree: PathBuf,
 	pub hosts: Vec<HostInfo>,
+	pub homes: Vec<HomeInfo>,
 	#[serde(skip)]
 	files: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HomeInfo {
+	pub output: String,
+	pub module: String,
+	pub user: Option<String>,
 }
 
 pub fn encode_name(name: &str) -> String {
@@ -411,12 +420,87 @@ impl Layout {
 				users: users.into_iter().collect(),
 			});
 		}
-		ensure!(!hosts.is_empty(), "no supported NixOS output was found");
+		let mut homes = Vec::new();
+		for (path, constructor) in &entries {
+			if path.len() != 3 || !matches_path(&path[..2], &["flake", "homeConfigurations"]) {
+				continue;
+			}
+			let constructor = unparen(constructor.clone());
+			ensure!(
+				constructor.kind() == Kind::NODE_APPLY
+					&& constructor
+						.children()
+						.next()
+						.and_then(select)
+						.is_some_and(|path| matches_path(
+							&path,
+							&["inputs", "home-manager", "lib", "homeManagerConfiguration"]
+						)),
+				"unsupported Home Manager constructor for {}",
+				path[2]
+			);
+			let mut args = Vec::new();
+			bindings(
+				constructor
+					.children()
+					.nth(1)
+					.context("missing homeManagerConfiguration arguments")?,
+				&[],
+				&mut args,
+			);
+			let modules = args
+				.iter()
+				.find(|(path, _)| matches_path(path, &["modules"]))
+				.context("missing Home Manager modules")?;
+			let reference = modules
+				.1
+				.children()
+				.next()
+				.and_then(select)
+				.context("missing Home Manager classed reference")?;
+			ensure!(
+				modules.1.kind() == Kind::NODE_LIST
+					&& modules.1.children().count() == 1
+					&& reference.len() == 5
+					&& matches_path(
+						&reference[..4],
+						&["config", "flake", "modules", "homeManager"]
+					),
+				"Home Manager modules must contain one classed reference"
+			);
+			ensure!(
+				entries
+					.iter()
+					.any(|(path, _)| path == &["flake", "modules", "homeManager", &reference[4]]),
+				"Home Manager module is not defined in the import tree"
+			);
+			let mut home_entries = Vec::new();
+			for (_, value) in entries
+				.iter()
+				.filter(|(path, _)| path == &["flake", "modules", "homeManager", &reference[4]])
+			{
+				bindings(value.clone(), &[], &mut home_entries);
+			}
+			let user = home_entries
+				.iter()
+				.find(|(path, _)| matches_path(path, &["home", "username"]))
+				.and_then(|(_, value)| serde_json::from_str::<String>(&value.to_string()).ok());
+			homes.push(HomeInfo {
+				output: path[2].clone(),
+				module: reference[4].clone(),
+				user,
+			});
+		}
+		ensure!(
+			!hosts.is_empty() || !homes.is_empty(),
+			"no supported configuration output was found"
+		);
 		hosts.sort_by(|left, right| left.output.cmp(&right.output));
 		Ok(Some(Discovery {
 			root: root.to_path_buf(),
 			tree: root.join(&trees[0]),
 			hosts,
+			homes,
 			files,
 		}))
 	}
@@ -426,9 +510,55 @@ impl Layout {
 	}
 
 	pub fn select(root: &Path, host: Option<&str>, user: Option<&str>) -> Result<Option<Self>> {
+		Self::select_output(root, host, user, None)
+	}
+
+	pub fn select_output(
+		root: &Path,
+		host: Option<&str>,
+		user: Option<&str>,
+		home: Option<&str>,
+	) -> Result<Option<Self>> {
 		let Some(discovery) = Self::inspect(root)? else {
 			return Ok(None);
 		};
+		if home.is_some() || (host.is_none() && discovery.hosts.is_empty()) {
+			ensure!(
+				host.is_none(),
+				"select either a NixOS host or a standalone Home Manager output"
+			);
+			let selected = match home {
+				Some(name) => discovery
+					.homes
+					.iter()
+					.find(|entry| entry.output == name)
+					.with_context(|| format!("Home Manager output {name} was not found"))?,
+				None => {
+					ensure!(
+						discovery.homes.len() == 1,
+						"multiple Home Manager outputs found; select --home-configuration"
+					);
+					&discovery.homes[0]
+				}
+			};
+			ensure!(
+				discovery
+					.homes
+					.iter()
+					.filter(|entry| entry.module == selected.module)
+					.count() == 1,
+				"shared standalone Home Manager modules require a distinct output module before editing"
+			);
+			return Ok(Some(Self {
+				root: discovery.root,
+				tree: discovery.tree,
+				files: discovery.files,
+				host: selected.output.clone(),
+				host_module: selected.module.clone(),
+				home_user: selected.user.clone(),
+				standalone: true,
+			}));
+		}
 		let selected = match host {
 			Some(name) => discovery
 				.hosts
@@ -470,6 +600,7 @@ impl Layout {
 			host: selected.output.clone(),
 			host_module: selected.module.clone(),
 			home_user,
+			standalone: false,
 		}))
 	}
 
@@ -494,6 +625,12 @@ impl Layout {
 				continue;
 			}
 			let discovery = Self::inspect(root)?.context("dendritic layout disappeared")?;
+			if let Ok(relative) = file.strip_prefix(discovery.tree.join("nixbox/homes")) {
+				let parts: Vec<_> = relative.components().collect();
+				ensure!(parts.len() == 2, "invalid standalone managed path");
+				let output = decode_name(&parts[0].as_os_str().to_string_lossy())?;
+				return Self::select_output(root, None, None, Some(&output));
+			}
 			let native = discovery.tree.join("nixbox").join("hosts");
 			if let Ok(relative) = file.strip_prefix(&native) {
 				let parts: Vec<_> = relative
@@ -565,12 +702,16 @@ impl Layout {
 	pub fn require_home(&self) -> Result<&str> {
 		self.home_user
 			.as_deref()
+			.or_else(|| self.standalone.then_some(self.host.as_str()))
 			.context("select --home-user: no unique Home Manager user was resolved for this host")
 	}
 
 	/// Read only the module contributions reachable through literal classed
 	/// references. Source removal deliberately remains disabled.
 	fn connected_sources(&self, home: bool) -> Result<Vec<(String, usize, String)>> {
+		if self.standalone && !home {
+			return Ok(Vec::new());
+		}
 		let class = if home { "homeManager" } else { "nixos" };
 		let mut definitions = Vec::new();
 		let mut roots = BTreeSet::new();
@@ -611,7 +752,7 @@ impl Layout {
 				}
 			}
 		}
-		if !home {
+		if !home || self.standalone {
 			roots.insert(self.host_module.clone());
 		}
 		let mut pending: Vec<_> = roots.into_iter().collect();
@@ -685,7 +826,9 @@ impl Layout {
 	}
 
 	fn updated_imports(&self, file: &Path) -> Result<Option<String>> {
-		if file.starts_with(self.tree.join("nixbox").join("hosts")) {
+		if file.starts_with(self.tree.join("nixbox/hosts"))
+			|| file.starts_with(self.tree.join("nixbox/homes"))
+		{
 			ensure!(
 				!file
 					.strip_prefix(&self.tree)?
@@ -761,7 +904,12 @@ impl Layout {
 				path.starts_with(&[
 					"flake".into(),
 					"modules".into(),
-					"nixos".into(),
+					if self.standalone {
+						"homeManager"
+					} else {
+						"nixos"
+					}
+					.into(),
 					self.host_module.clone(),
 				]) && path.last().is_some_and(|last| last == "imports")
 			}))
@@ -839,7 +987,10 @@ impl Layout {
 		let header = &content[..usize::from(expression.text_range().start())];
 		let class = if home { "homeManager" } else { "nixos" };
 		let host = attr_name(&self.host_module);
-		let attachment = if home {
+		let attachment = if self.standalone {
+			ensure!(home, "standalone Home Manager has no NixOS scope");
+			format!("flake.modules.homeManager.{host}.imports")
+		} else if home {
 			format!(
 				"flake.modules.nixos.{host}.home-manager.users.{}.imports",
 				attr_name(self.require_home()?)

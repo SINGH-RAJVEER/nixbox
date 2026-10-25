@@ -73,12 +73,19 @@ impl Engine {
 		config.native_modules_dir = None;
 		config.legacy_system_module = false;
 		config.legacy_home_module = false;
-		if let Some(layout) = nixbox_nix::dendritic::Layout::select(
+		if let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
 			&config.config_root(),
 			config.nixos_host.as_deref(),
 			config.home_user.as_deref(),
+			config.home_configuration.as_deref(),
 		)? {
-			config.nixos_host = Some(layout.host.clone());
+			if layout.standalone {
+				config.home_configuration = Some(layout.host.clone());
+				config.nixos_host = None;
+				config.target = Target::HomeManager;
+			} else {
+				config.nixos_host = Some(layout.host.clone());
+			}
 			config.home_user.clone_from(&layout.home_user);
 			config.native_modules_dir = Some(layout.tree.clone());
 			config.legacy_system_module =
@@ -102,10 +109,11 @@ impl Engine {
 	#[must_use]
 	pub fn integration_file_for(&self, scope: Target) -> std::path::PathBuf {
 		if matches!(
-			nixbox_nix::dendritic::Layout::select(
+			nixbox_nix::dendritic::Layout::select_output(
 				&self.config.config_root(),
 				self.config.nixos_host.as_deref(),
-				self.config.home_user.as_deref()
+				self.config.home_user.as_deref(),
+				self.config.home_configuration.as_deref()
 			),
 			Ok(Some(_))
 		) {
@@ -125,10 +133,11 @@ impl Engine {
 	/// used when a front-end overrides the target or channel per invocation.
 	pub fn with_config(config: Config) -> Result<Self> {
 		let config = Self::resolve_config(config)?;
-		if nixbox_nix::dendritic::Layout::select(
+		if nixbox_nix::dendritic::Layout::select_output(
 			&config.config_root(),
 			config.nixos_host.as_deref(),
 			config.home_user.as_deref(),
+			config.home_configuration.as_deref(),
 		)?
 		.is_some()
 		{
@@ -248,12 +257,17 @@ impl Engine {
 	/// across into it needs to be imported from.
 	#[must_use]
 	pub fn has_main_file(&self, scope: Target) -> bool {
-		if let Ok(Some(layout)) = nixbox_nix::dendritic::Layout::select(
+		if let Ok(Some(layout)) = nixbox_nix::dendritic::Layout::select_output(
 			&self.config.config_root(),
 			self.config.nixos_host.as_deref(),
 			self.config.home_user.as_deref(),
+			self.config.home_configuration.as_deref(),
 		) {
-			return scope == Target::NixosSystem || layout.home_user.is_some();
+			return if layout.standalone {
+				scope == Target::HomeManager
+			} else {
+				scope == Target::NixosSystem || layout.home_user.is_some()
+			};
 		}
 		self.config.main_file_for(scope).exists()
 	}
@@ -262,10 +276,11 @@ impl Engine {
 	/// anything — [`Engine::apply`] is what repairs a missing import.
 	#[must_use]
 	pub fn import_state(&self, scope: Target) -> ImportState {
-		match nixbox_nix::dendritic::Layout::select(
+		match nixbox_nix::dendritic::Layout::select_output(
 			&self.config.config_root(),
 			self.config.nixos_host.as_deref(),
 			self.config.home_user.as_deref(),
+			self.config.home_configuration.as_deref(),
 		) {
 			Ok(Some(layout)) => {
 				return if layout
@@ -307,15 +322,20 @@ impl Engine {
 	/// Writes `scope`'s manifest to its managed file in the right format.
 	pub fn write_manifest(&self, scope: Target) -> Result<ManagedFile> {
 		self.ensure_identity()?;
+		anyhow::ensure!(
+			self.config.home_configuration.is_none() || scope == Target::HomeManager,
+			"standalone Home Manager has no NixOS scope"
+		);
 		let managed = ManagedFile::new(self.config.managed_file_for(scope));
 		match scope {
 			Target::HomeManager => managed.write_home_manager(self.manifest_for(scope))?,
 			Target::NixosSystem => managed.write_nixos(self.manifest_for(scope))?,
 		}
-		if nixbox_nix::dendritic::Layout::select(
+		if nixbox_nix::dendritic::Layout::select_output(
 			&self.config.config_root(),
 			self.config.nixos_host.as_deref(),
 			self.config.home_user.as_deref(),
+			self.config.home_configuration.as_deref(),
 		)?
 		.is_some()
 		{
@@ -389,12 +409,17 @@ impl Engine {
 	/// recovery is just re-running the rebuild.
 	pub fn apply(&mut self, op: &Op, reporter: &mut dyn Reporter) -> Result<()> {
 		self.ensure_identity()?;
-		let dendritic = nixbox_nix::dendritic::Layout::select(
+		let dendritic = nixbox_nix::dendritic::Layout::select_output(
 			&self.config.config_root(),
 			self.config.nixos_host.as_deref(),
 			self.config.home_user.as_deref(),
+			self.config.home_configuration.as_deref(),
 		)?;
 		if let Some(layout) = &dendritic {
+			anyhow::ensure!(
+				!layout.standalone || op.scope() == Target::HomeManager,
+				"standalone Home Manager has no NixOS scope"
+			);
 			if op.scope() == Target::HomeManager {
 				layout.require_home()?;
 			}
@@ -583,10 +608,11 @@ pub fn scan_externals(
 	nixos_manifest: &Manifest,
 ) -> Vec<ExternalPackage> {
 	let mut out: Vec<ExternalPackage> = Vec::new();
-	match nixbox_nix::dendritic::Layout::select(
+	match nixbox_nix::dendritic::Layout::select_output(
 		&config.config_root(),
 		config.nixos_host.as_deref(),
 		config.home_user.as_deref(),
+		config.home_configuration.as_deref(),
 	) {
 		Ok(Some(layout)) => {
 			for (home, manifest) in [(true, home_manifest), (false, nixos_manifest)] {

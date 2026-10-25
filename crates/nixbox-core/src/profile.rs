@@ -228,10 +228,11 @@ pub async fn command(config_dir: &Path, scope: Target) -> Result<RebuildCommand>
 
 /// Build the profile from the same selected host/user as mutation and recovery.
 pub async fn command_for(config: &nixbox_config::Config, scope: Target) -> Result<RebuildCommand> {
-	let Some(layout) = nixbox_nix::dendritic::Layout::select(
+	let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
 		&config.config_root(),
 		config.nixos_host.as_deref(),
 		config.home_user.as_deref(),
+		config.home_configuration.as_deref(),
 	)?
 	else {
 		return command(&config.config_root(), scope).await;
@@ -245,12 +246,20 @@ pub async fn command_for(config: &nixbox_config::Config, scope: Target) -> Resul
 		);
 	}
 	let host = attr_name(&layout.host);
-	let attribute = match scope {
-		Target::NixosSystem => format!("nixosConfigurations.{host}.config.nixbox.profile"),
-		Target::HomeManager => format!(
-			"nixosConfigurations.{host}.config.home-manager.users.{}.nixbox.profile",
-			attr_name(layout.require_home()?)
-		),
+	let attribute = if layout.standalone {
+		anyhow::ensure!(
+			scope == Target::HomeManager,
+			"standalone Home Manager has no NixOS scope"
+		);
+		format!("homeConfigurations.{host}.config.nixbox.profile")
+	} else {
+		match scope {
+			Target::NixosSystem => format!("nixosConfigurations.{host}.config.nixbox.profile"),
+			Target::HomeManager => format!(
+				"nixosConfigurations.{host}.config.home-manager.users.{}.nixbox.profile",
+				attr_name(layout.require_home()?)
+			),
+		}
 	};
 	Ok(as_owner(
 		scope,

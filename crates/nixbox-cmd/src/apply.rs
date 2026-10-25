@@ -274,6 +274,9 @@ fn selection_flags(config: &nixbox_config::Config) -> String {
 	if config.native_modules_dir.is_none() {
 		return String::new();
 	}
+	if let Some(output) = &config.home_configuration {
+		return format!(" --home-configuration '{}'", output.replace('\'', "'\\''"));
+	}
 	let mut flags = String::new();
 	for (flag, value) in [
 		("--host", &config.nixos_host),

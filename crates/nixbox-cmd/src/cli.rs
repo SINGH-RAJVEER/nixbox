@@ -55,6 +55,9 @@ pub struct GlobalArgs {
 	/// Select the Home Manager user attached to that host.
 	#[arg(long, global = true)]
 	pub home_user: Option<String>,
+	/// Select a standalone Home Manager output instead of a NixOS host.
+	#[arg(long, global = true, conflicts_with_all = ["host", "home_user"])]
+	pub home_configuration: Option<String>,
 
 	/// Use this nixpkgs channel instead of the saved one.
 	#[arg(long, short = 'c', global = true, value_name = "CHANNEL")]
@@ -73,6 +76,7 @@ impl GlobalArgs {
 	/// `settings.json` — `nixbox config set` is the only thing that persists.
 	pub fn apply(&self, config: &mut Config) {
 		if let Some(host) = &self.host {
+			config.home_configuration = None;
 			config.nixos_host = Some(host.clone());
 			if self.home_user.is_none() {
 				config.home_user = None;
@@ -80,6 +84,12 @@ impl GlobalArgs {
 		}
 		if let Some(user) = &self.home_user {
 			config.home_user = Some(user.clone());
+		}
+		if let Some(home) = &self.home_configuration {
+			config.home_configuration = Some(home.clone());
+			config.nixos_host = None;
+			config.home_user = None;
+			config.target = Target::HomeManager;
 		}
 		if let Some(target) = self.target {
 			config.target = target.into();

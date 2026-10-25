@@ -19,6 +19,7 @@ Neither interface is required. See [Three packages](#three-packages) for the bui
 | `--target`, `-t` | Act on `home-manager` or `nixos` instead of the saved target. Accepts `hm` and `system` as aliases. |
 | `--channel`, `-c` | Search a different nixpkgs channel for this invocation only. |
 | `--json` | Print JSON instead of a table. |
+| `--home-configuration <name>` | Select a standalone dendritic Home Manager output. Mutually exclusive with host/user flags. |
 | `--host <name>` | Select a discovered dendritic NixOS output. Required when several hosts exist. |
 | `--home-user <name>` | Select a directly attached Home Manager user on that host. Required for Home Manager writes when several users exist. |
 

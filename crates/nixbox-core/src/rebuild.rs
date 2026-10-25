@@ -159,16 +159,49 @@ pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
 
 /// Resolve a command using the selection frozen into the engine/session.
 pub async fn resolve_for(config: &Config, scope: Target) -> anyhow::Result<RebuildCommand> {
-	if let Some(layout) = nixbox_nix::dendritic::Layout::select(
+	if let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
 		&config.config_root(),
 		config.nixos_host.as_deref(),
 		config.home_user.as_deref(),
+		config.home_configuration.as_deref(),
 	)? {
 		if scope == Target::HomeManager {
 			layout.require_home()?;
 		}
 		let root = config.config_root();
 		let host = nixbox_nix::wiring::attr_name(&layout.host);
+		if layout.standalone {
+			anyhow::ensure!(
+				scope == Target::HomeManager,
+				"standalone Home Manager has no NixOS scope"
+			);
+			if let Some(output) = std::env::var_os(VM_BUILD_ENV) {
+				return Ok(RebuildCommand {
+					program: "nix".into(),
+					args: vec![
+						"build".into(),
+						"--out-link".into(),
+						output.to_string_lossy().into_owned(),
+						format!(
+							"{}#homeConfigurations.{host}.activationPackage",
+							root.display()
+						),
+					],
+					envs: Vec::new(),
+					via_nixos_fallback: false,
+				});
+			}
+			return Ok(RebuildCommand {
+				program: "home-manager".into(),
+				args: vec![
+					"switch".into(),
+					"--flake".into(),
+					format!("{}#{host}", root.display()),
+				],
+				envs: Vec::new(),
+				via_nixos_fallback: false,
+			});
+		}
 		if let Some(output) = std::env::var_os(VM_BUILD_ENV) {
 			return Ok(RebuildCommand {
 				program: "nix".into(),

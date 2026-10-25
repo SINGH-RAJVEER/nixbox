@@ -26,6 +26,69 @@ fn fixture(dir: &crate::tests::TempConfigDir) {
 	}
 }
 
+#[tokio::test]
+async fn standalone_home_outputs_use_their_own_class_and_activation() {
+	let dir = crate::tests::temp_dir("dendritic-standalone");
+	fixture(&dir);
+	std::fs::write(
+		dir.config().config_root().join("modules/standalone.nix"),
+		r#"
+{ config, inputs, ... }: {
+	flake.homeConfigurations."alice@work" = inputs.home-manager.lib.homeManagerConfiguration {
+		modules = [ config.flake.modules.homeManager.work ];
+	};
+	flake.modules.homeManager.work = { home.username = "alice"; };
+}
+"#,
+	)
+	.unwrap();
+	let mut config = dir.config();
+	config.home_configuration = Some("alice@work".into());
+	let mut engine = Engine::with_config(config).unwrap();
+	assert_eq!(engine.config.home_user.as_deref(), Some("alice"));
+	assert_eq!(engine.config.target, Target::HomeManager);
+	engine
+		.apply(
+			&Op::Install {
+				hit: crate::tests::hit("hello"),
+				scope: Target::HomeManager,
+			},
+			&mut SilentReporter,
+		)
+		.unwrap();
+	assert!(
+		engine
+			.config
+			.managed_file_for(Target::HomeManager)
+			.starts_with(engine.config.config_root().join("modules/nixbox/homes"))
+	);
+	assert_eq!(
+		engine.import_state(Target::HomeManager),
+		ImportState::Imported
+	);
+	let source =
+		std::fs::read_to_string(engine.config.managed_file_for(Target::HomeManager)).unwrap();
+	assert!(source.contains("flake.modules.homeManager.work.imports"));
+	assert!(!source.contains("flake.modules.nixos"));
+	assert!(engine.write_manifest(Target::NixosSystem).is_err());
+	assert!(
+		Engine::with_config(engine.config.clone())
+			.unwrap()
+			.home_manifest
+			.packages
+			.contains("hello")
+	);
+	let command = crate::rebuild::resolve_for(&engine.config, Target::HomeManager)
+		.await
+		.unwrap();
+	assert!(command.args.iter().any(|arg| arg.contains("alice@work")));
+	assert!(
+		crate::profile::command_for(&engine.config, Target::HomeManager)
+			.await
+			.is_err()
+	);
+}
+
 fn multiple_targets(dir: &crate::tests::TempConfigDir) {
 	fixture(dir);
 	let path = dir.config().config_root().join("modules/host.nix");

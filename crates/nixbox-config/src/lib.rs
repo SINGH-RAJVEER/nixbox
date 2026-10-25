@@ -120,6 +120,8 @@ pub struct ConfigurationIdentity {
 	pub root: PathBuf,
 	pub host: Option<String>,
 	pub user: Option<String>,
+	#[serde(default)]
+	pub home_configuration: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +162,8 @@ pub struct Config {
 	pub nixos_host: Option<String>,
 	#[serde(default)]
 	pub home_user: Option<String>,
+	#[serde(default)]
+	pub home_configuration: Option<String>,
 	/// Resolved import-tree directory; discovered afresh, never persisted.
 	#[serde(skip)]
 	pub native_modules_dir: Option<PathBuf>,
@@ -208,6 +212,7 @@ impl Default for Config {
 			nixos_main_file: None,
 			nixos_host: None,
 			home_user: None,
+			home_configuration: None,
 			native_modules_dir: None,
 			legacy_system_module: false,
 			legacy_home_module: false,
@@ -228,6 +233,7 @@ impl Config {
 			}),
 			host: self.nixos_host.clone(),
 			user: self.home_user.clone(),
+			home_configuration: self.home_configuration.clone(),
 		}
 	}
 
@@ -285,6 +291,9 @@ impl Config {
 				.map(|byte| format!("{byte:02x}"))
 				.collect::<String>()
 		};
+		if let Some(output) = &self.home_configuration {
+			return tree.join("nixbox").join("homes").join(encoded(output));
+		}
 		let mut directory = tree
 			.join("nixbox")
 			.join("hosts")

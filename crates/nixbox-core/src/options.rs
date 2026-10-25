@@ -48,6 +48,7 @@ impl OptionChange {
 pub async fn load_options(config: Config, scope: Target, package: String) -> Result<OptionSet> {
 	let root = config.home_manager_dir();
 	let source = match scope {
+		Target::HomeManager if config.home_configuration.is_some() => OptionSource::Home,
 		Target::NixosSystem => OptionSource::Nixos,
 		Target::HomeManager if flake_has_home_configuration(&root).await => OptionSource::Home,
 		Target::HomeManager => OptionSource::HomeInNixos,
@@ -64,12 +65,15 @@ pub async fn load_options(config: Config, scope: Target, package: String) -> Res
 			.nixos_host
 			.clone()
 			.unwrap_or_else(|| NIXOS_HOST.into()),
-		user: nixbox_nix::dendritic::Layout::select(
+		user: nixbox_nix::dendritic::Layout::select_output(
 			&config.config_root(),
 			config.nixos_host.as_deref(),
 			config.home_user.as_deref(),
+			config.home_configuration.as_deref(),
 		)?
 		.and_then(|layout| layout.home_user)
+		.map(|user| config.home_configuration.clone().unwrap_or(user))
+		.or_else(|| config.home_configuration.clone())
 		.unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "user".into())),
 		package,
 		settings_file,

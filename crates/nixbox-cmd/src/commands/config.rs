@@ -16,7 +16,7 @@ use crate::commands::target_name;
 use crate::render;
 
 /// Every key `get`/`set` understands, in the order `show` prints them.
-const KEYS: [&str; 12] = [
+const KEYS: [&str; 13] = [
 	"channel",
 	"target",
 	"theme",
@@ -29,6 +29,7 @@ const KEYS: [&str; 12] = [
 	"nixos-main-file",
 	"nixos-host",
 	"home-user",
+	"home-configuration",
 ];
 
 #[derive(Subcommand, Debug)]
@@ -87,6 +88,7 @@ fn show(global: &GlobalArgs) -> Result<ExitCode> {
 				"nixos-main-file": config.nixos_main_file,
 				"nixos-host": config.nixos_host,
 				"home-user": config.home_user,
+				"home-configuration": config.home_configuration,
 			}))?
 		);
 		return Ok(ExitCode::SUCCESS);
@@ -143,14 +145,24 @@ fn set(key: &str, value: &str) -> Result<ExitCode> {
 			config.config_dir = parse_path(value);
 			config.nixos_host = None;
 			config.home_user = None;
+			config.home_configuration = None;
 		}
 		"home-manager-main-file" => config.home_manager_main_file = parse_path(value),
 		"nixos-main-file" => config.nixos_main_file = parse_path(value),
 		"nixos-host" => {
+			config.home_configuration = None;
 			config.nixos_host = optional_name(value);
 			config.home_user = None;
 		}
 		"home-user" => config.home_user = optional_name(value),
+		"home-configuration" => {
+			config.home_configuration = optional_name(value);
+			config.nixos_host = None;
+			config.home_user = None;
+			if config.home_configuration.is_some() {
+				config.target = Target::HomeManager;
+			}
+		}
 		other => bail!(
 			"unknown setting `{other}`. Known settings: {}",
 			KEYS.join(", ")
@@ -175,6 +187,10 @@ fn read(config: &Config, key: &str) -> Option<String> {
 		"nixos-main-file" => path_value(config.nixos_main_file.as_ref()),
 		"nixos-host" => config.nixos_host.clone().unwrap_or_else(|| "(auto)".into()),
 		"home-user" => config.home_user.clone().unwrap_or_else(|| "(auto)".into()),
+		"home-configuration" => config
+			.home_configuration
+			.clone()
+			.unwrap_or_else(|| "(auto)".into()),
 		_ => return None,
 	};
 	Some(value)
