@@ -19,10 +19,16 @@ Neither interface is required. See [Three packages](#three-packages) for the bui
 | `--target`, `-t` | Act on `home-manager` or `nixos` instead of the saved target. Accepts `hm` and `system` as aliases. |
 | `--channel`, `-c` | Search a different nixpkgs channel for this invocation only. |
 | `--json` | Print JSON instead of a table. |
+| `--host <name>` | Select a discovered dendritic NixOS output. Required when several hosts exist. |
+| `--home-user <name>` | Select a directly attached Home Manager user on that host. Required for Home Manager writes when several users exist. |
 
 None of these are written back to the settings file. `nixbox config set` is the only command that persists a change.
 
 ## Reading state
+
+`nixbox config inspect` discovers hosts and users and reports the selected identity, managed-file paths, placement, and unsupported-layout diagnostics without writing configuration or loading migrations. Add `--json` for machine-readable output. Save a selection with `nixbox config set nixos-host <name>` and `nixbox config set home-user <name>`; an empty value returns to automatic selection. Changing the saved host clears the saved user. Changing the saved root clears both. Pending recovery work remains bound to its original root, host, and user; select those again or explicitly discard that work.
+
+For supported dendritic configurations, `status` and `doctor` report `flake.nix` as the integration entry point. `scan` includes packages in connected classed feature modules and marks those external entries read-only. Installs, managed removals, and profile operations use generated flake-parts modules. Unsupported layouts fail with a discovery diagnostic. See [Dendritic support](DENDRITIC_PLAN.md).
 
 | Command | Purpose |
 | --- | --- |

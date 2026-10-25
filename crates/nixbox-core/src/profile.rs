@@ -39,6 +39,12 @@ impl Engine {
 	#[must_use]
 	pub fn activation_for(&self, ops: &[Op]) -> Activation {
 		let configuration = crate::rebuild::builds_vm()
+			|| (self
+				.config
+				.home_user
+				.as_deref()
+				.is_some_and(|user| user != home_configuration_name())
+				&& ops.iter().any(|op| op.scope() == Target::HomeManager))
 			|| ops.iter().any(|op| {
 				self.manifest_for(op.scope()).mode == PackageMode::Configuration
 					|| match op {
@@ -138,6 +144,12 @@ pub fn setup_status(engine: &Engine, scope: Target) -> SetupStatus {
 	if engine.manifest_for(scope).mode == PackageMode::Configuration {
 		return SetupStatus::Configuration;
 	}
+	if scope == Target::HomeManager
+		&& engine.config.native_modules_dir.is_some()
+		&& engine.config.home_user.as_deref() != Some(home_configuration_name().as_str())
+	{
+		return SetupStatus::NotActivated;
+	}
 	activation_status(scope)
 }
 
@@ -175,7 +187,12 @@ fn on_path(profile: &Path, path: Option<&OsStr>) -> bool {
 #[must_use]
 pub fn installable(config_dir: &Path, scope: Target, standalone_home: bool) -> String {
 	let nixos = attr_name(NIXOS_HOST);
-	let user = attr_name(&home_configuration_name());
+	let user = nixbox_nix::dendritic::Layout::discover(config_dir)
+		.ok()
+		.flatten()
+		.and_then(|layout| layout.home_user)
+		.unwrap_or_else(home_configuration_name);
+	let user = attr_name(&user);
 	let attr = match scope {
 		Target::NixosSystem => format!("nixosConfigurations.{nixos}.config.nixbox.profile"),
 		Target::HomeManager if standalone_home => {
@@ -207,6 +224,45 @@ pub fn lock_command(config_dir: &Path) -> RebuildCommand {
 pub async fn command(config_dir: &Path, scope: Target) -> Result<RebuildCommand> {
 	let standalone = scope == Target::HomeManager && flake_has_home_configuration(config_dir).await;
 	build_command(config_dir, scope, standalone)
+}
+
+/// Build the profile from the same selected host/user as mutation and recovery.
+pub async fn command_for(config: &nixbox_config::Config, scope: Target) -> Result<RebuildCommand> {
+	let Some(layout) = nixbox_nix::dendritic::Layout::select(
+		&config.config_root(),
+		config.nixos_host.as_deref(),
+		config.home_user.as_deref(),
+	)?
+	else {
+		return command(&config.config_root(), scope).await;
+	};
+	// Applying a different user's profile locally would modify the invoking
+	// user's profile. Such changes must activate through the owning host.
+	if scope == Target::HomeManager {
+		anyhow::ensure!(
+			layout.require_home()? == home_configuration_name(),
+			"the selected Home Manager user differs from the invoking user; use configuration activation"
+		);
+	}
+	let host = attr_name(&layout.host);
+	let attribute = match scope {
+		Target::NixosSystem => format!("nixosConfigurations.{host}.config.nixbox.profile"),
+		Target::HomeManager => format!(
+			"nixosConfigurations.{host}.config.home-manager.users.{}.nixbox.profile",
+			attr_name(layout.require_home()?)
+		),
+	};
+	Ok(as_owner(
+		scope,
+		"nix",
+		vec![
+			"build".into(),
+			"--no-link".into(),
+			"--profile".into(),
+			profile_path(scope)?.display().to_string(),
+			format!("{}#{attribute}", config.config_root().display()),
+		],
+	))
 }
 
 fn build_command(

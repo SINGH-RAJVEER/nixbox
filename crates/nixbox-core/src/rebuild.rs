@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nixbox_config::Target;
+use nixbox_config::{Config, Target};
 use nixbox_nix::build::{
 	BuildEvent, NIXOS_HOST, flake_has_home_configuration, home_manager_switch_cmd,
 	nixos_rebuild_switch_cmd, rebuild,
@@ -157,6 +157,50 @@ pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
 	}
 }
 
+/// Resolve a command using the selection frozen into the engine/session.
+pub async fn resolve_for(config: &Config, scope: Target) -> anyhow::Result<RebuildCommand> {
+	if let Some(layout) = nixbox_nix::dendritic::Layout::select(
+		&config.config_root(),
+		config.nixos_host.as_deref(),
+		config.home_user.as_deref(),
+	)? {
+		if scope == Target::HomeManager {
+			layout.require_home()?;
+		}
+		let root = config.config_root();
+		let host = nixbox_nix::wiring::attr_name(&layout.host);
+		if let Some(output) = std::env::var_os(VM_BUILD_ENV) {
+			return Ok(RebuildCommand {
+				program: "nix".into(),
+				args: vec![
+					"build".into(),
+					"--print-build-logs".into(),
+					"--out-link".into(),
+					output.to_string_lossy().into_owned(),
+					format!(
+						"{}#nixosConfigurations.{host}.config.system.build.vm",
+						root.display()
+					),
+				],
+				envs: Vec::new(),
+				via_nixos_fallback: false,
+			});
+		}
+		return Ok(RebuildCommand {
+			program: "sudo".into(),
+			args: vec![
+				"nixos-rebuild".into(),
+				"switch".into(),
+				"--flake".into(),
+				format!("{}#{host}", root.display()),
+			],
+			envs: Vec::new(),
+			via_nixos_fallback: scope == Target::HomeManager,
+		});
+	}
+	Ok(resolve(&config.config_root(), scope).await)
+}
+
 /// The NixOS switch or, with [`VM_BUILD_ENV`], VM build for `config_dir`,
 /// without evaluating anything.
 #[must_use]
@@ -207,8 +251,25 @@ pub async fn run_activation(
 	escalation: Escalation,
 	log: LogFormat,
 	tx: mpsc::Sender<BuildEvent>,
+	cancel: oneshot::Receiver<()>,
+) {
+	let config = Config {
+		config_dir: Some(config_dir),
+		..Config::default()
+	};
+	run_activation_for(config, scope, activation, escalation, log, tx, cancel).await;
+}
+
+pub async fn run_activation_for(
+	config: Config,
+	scope: Target,
+	activation: Activation,
+	escalation: Escalation,
+	log: LogFormat,
+	tx: mpsc::Sender<BuildEvent>,
 	mut cancel: oneshot::Receiver<()>,
 ) {
+	let config_dir = config.config_root();
 	// The VM build carries the profile inside its own system instead.
 	let activation = if builds_vm() {
 		Activation::Configuration
@@ -224,7 +285,7 @@ pub async fn run_activation(
 				return;
 			}
 			let build = tokio::select! {
-				command = profile::command(&config_dir, scope) => command,
+				command = profile::command_for(&config, scope) => command,
 				_ = &mut cancel => {
 					let _ = tx.send(BuildEvent::Cancelled).await;
 					return;
@@ -245,7 +306,10 @@ pub async fn run_activation(
 		}
 		Activation::Configuration => {
 			let command = tokio::select! {
-				command = resolve(&config_dir, scope) => command.escalated(&escalation).with_log(log),
+				command = resolve_for(&config, scope) => match command {
+					Ok(command) => command.escalated(&escalation).with_log(log),
+					Err(error) => { let _ = tx.send(BuildEvent::Finished(Err(error.to_string()))).await; return; }
+				},
 				_ = &mut cancel => {
 					let _ = tx.send(BuildEvent::Cancelled).await;
 					return;

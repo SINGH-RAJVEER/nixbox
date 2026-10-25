@@ -109,6 +109,8 @@ Either way, NixBox then removes the root input only when nothing else uses it: t
 
 ## Required root-flake shape
 
+The supported dendritic shape is `outputs = inputs: inputs.flake-parts.lib.mkFlake { inherit inputs; } (inputs.import-tree ./modules);`, with a single `nixos` host constructed in that tree and at most one directly attached Home Manager user. Generated modules capture inputs lexically, so constructors can remain in feature files without global special arguments. The root input editor still requires hand-maintained input declarations. See [Dendritic support](DENDRITIC_PLAN.md) for scope and unsupported layouts. The conventional shape below remains supported.
+
 The text editor expects conventional literal text similar to:
 
 ```nix

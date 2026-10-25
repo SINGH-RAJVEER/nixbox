@@ -227,10 +227,8 @@ impl ManagedFile {
 	}
 
 	fn write(&self, content: String) -> Result<()> {
-		if let Some(parent) = self.path.parent() {
-			fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-		}
-		fs::write(&self.path, content).with_context(|| format!("writing {}", self.path.display()))
+		crate::dendritic::write(&self.path, content)
+			.with_context(|| format!("writing {}", self.path.display()))
 	}
 }
 
@@ -599,7 +597,7 @@ pub fn write_home_integration(path: &Path, enabled: bool) -> Result<()> {
 	if let Some(parent) = path.parent() {
 		fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
 	}
-	fs::write(path, format!("{MANIFEST_HEADER}\n{body}"))
+	crate::dendritic::write(path, format!("{MANIFEST_HEADER}\n{body}"))
 		.with_context(|| format!("writing {}", path.display()))
 }
 
@@ -619,6 +617,9 @@ pub enum ImportStatus {
 /// Ensures `managed_file` is imported by `main_file`. Inserts the import
 /// idempotently. Returns a status describing what (if anything) was done.
 pub fn ensure_imported(main_file: &Path, managed_file: &Path) -> Result<ImportStatus> {
+	if let Some(layout) = crate::dendritic::Layout::for_file(managed_file)? {
+		return layout.ensure_loaded(managed_file);
+	}
 	if !main_file.exists() {
 		return Ok(ImportStatus::MainFileMissing);
 	}

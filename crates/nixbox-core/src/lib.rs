@@ -131,3 +131,5 @@ pub(crate) mod tests {
 		}
 	}
 }
+#[cfg(test)]
+mod dendritic_tests;

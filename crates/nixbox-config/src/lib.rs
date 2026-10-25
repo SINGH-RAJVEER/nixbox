@@ -114,6 +114,14 @@ impl Target {
 const MAX_RECENT_SEARCHES: usize = 20;
 pub const DEFAULT_CHANNEL: &str = "nixpkgs-26.05";
 
+/// Identity shared by every operation in one session and its recovery file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfigurationIdentity {
+	pub root: PathBuf,
+	pub host: Option<String>,
+	pub user: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
 	pub channel: String,
@@ -147,6 +155,18 @@ pub struct Config {
 	/// `configuration.nix` if present, else `/etc/nixos/configuration.nix`).
 	#[serde(default)]
 	pub nixos_main_file: Option<PathBuf>,
+	/// Selected flake output and attached Home Manager user.
+	#[serde(default)]
+	pub nixos_host: Option<String>,
+	#[serde(default)]
+	pub home_user: Option<String>,
+	/// Resolved import-tree directory; discovered afresh, never persisted.
+	#[serde(skip)]
+	pub native_modules_dir: Option<PathBuf>,
+	#[serde(skip)]
+	pub legacy_system_module: bool,
+	#[serde(skip)]
+	pub legacy_home_module: bool,
 }
 
 /// Every theme name `theme` accepts.
@@ -186,11 +206,31 @@ impl Default for Config {
 			config_dir: None,
 			home_manager_main_file: None,
 			nixos_main_file: None,
+			nixos_host: None,
+			home_user: None,
+			native_modules_dir: None,
+			legacy_system_module: false,
+			legacy_home_module: false,
 		}
 	}
 }
 
 impl Config {
+	pub fn identity(&self) -> ConfigurationIdentity {
+		let root = self.config_root();
+		ConfigurationIdentity {
+			root: root.canonicalize().unwrap_or_else(|_| {
+				if root.is_absolute() {
+					root.clone()
+				} else {
+					std::env::current_dir().unwrap_or_default().join(&root)
+				}
+			}),
+			host: self.nixos_host.clone(),
+			user: self.home_user.clone(),
+		}
+	}
+
 	/// Pushes a query to the front of recent_searches, dedups, caps the list.
 	pub fn push_recent(&mut self, query: String) {
 		let trimmed = query.trim().to_string();
@@ -222,9 +262,39 @@ impl Config {
 	/// Returns the managed packages file for an arbitrary target.
 	pub fn managed_file_for(&self, target: Target) -> PathBuf {
 		match target {
-			Target::HomeManager => self.config_root().join("nixbox-home-packages.nix"),
-			Target::NixosSystem => self.config_root().join("nixbox-system-packages.nix"),
+			Target::HomeManager => self
+				.generated_dir_for(target)
+				.join("nixbox-home-packages.nix"),
+			Target::NixosSystem => self
+				.generated_dir_for(target)
+				.join("nixbox-system-packages.nix"),
 		}
+	}
+
+	pub fn generated_dir_for(&self, target: Target) -> PathBuf {
+		let legacy = match target {
+			Target::NixosSystem => self.legacy_system_module,
+			Target::HomeManager => self.legacy_home_module,
+		};
+		let Some(tree) = self.native_modules_dir.as_ref().filter(|_| !legacy) else {
+			return self.config_root();
+		};
+		let encoded = |name: &str| {
+			name.as_bytes()
+				.iter()
+				.map(|byte| format!("{byte:02x}"))
+				.collect::<String>()
+		};
+		let mut directory = tree
+			.join("nixbox")
+			.join("hosts")
+			.join(encoded(self.nixos_host.as_deref().unwrap_or("nixos")));
+		if target == Target::HomeManager {
+			directory = directory
+				.join("users")
+				.join(encoded(self.home_user.as_deref().unwrap_or("unselected")));
+		}
+		directory
 	}
 
 	/// Flake outputs share the target's package module.
@@ -244,15 +314,20 @@ impl Config {
 	/// Returns the generated module that sets package options for `target`.
 	pub fn settings_file_for(&self, target: Target) -> PathBuf {
 		match target {
-			Target::HomeManager => self.config_root().join("nixbox-home-settings.nix"),
-			Target::NixosSystem => self.config_root().join("nixbox-system-settings.nix"),
+			Target::HomeManager => self
+				.generated_dir_for(target)
+				.join("nixbox-home-settings.nix"),
+			Target::NixosSystem => self
+				.generated_dir_for(target)
+				.join("nixbox-system-settings.nix"),
 		}
 	}
 
 	/// Returns the NixOS module that puts the Home Manager package profile on
 	/// PATH when Home Manager runs inside NixOS.
 	pub fn home_integration_file(&self) -> PathBuf {
-		self.config_root().join("nixbox-home-integration.nix")
+		self.generated_dir_for(Target::HomeManager)
+			.join("nixbox-home-integration.nix")
 	}
 
 	/// Returns the root flake that owns the inputs used by nixbox modules.

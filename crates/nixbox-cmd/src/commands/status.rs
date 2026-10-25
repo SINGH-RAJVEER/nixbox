@@ -35,7 +35,7 @@ pub fn run(global: &GlobalArgs) -> Result<ExitCode> {
 			.iter()
 			.map(|&target| {
 				let managed = engine.config.managed_file_for(target);
-				let main = engine.config.main_file_for(target);
+				let main = engine.integration_file_for(target);
 				json!({
 					"target": target_name(target),
 					"active": target == engine.config.target,
@@ -87,7 +87,7 @@ pub fn run(global: &GlobalArgs) -> Result<ExitCode> {
 
 fn target_block(engine: &Engine, target: Target) -> String {
 	let managed = engine.config.managed_file_for(target);
-	let main = engine.config.main_file_for(target);
+	let main = engine.integration_file_for(target);
 	let active = if target == engine.config.target {
 		" (active)"
 	} else {

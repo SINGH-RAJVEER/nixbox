@@ -16,7 +16,7 @@ use crate::commands::target_name;
 use crate::render;
 
 /// Every key `get`/`set` understands, in the order `show` prints them.
-const KEYS: [&str; 10] = [
+const KEYS: [&str; 12] = [
 	"channel",
 	"target",
 	"theme",
@@ -27,10 +27,14 @@ const KEYS: [&str; 10] = [
 	"config-dir",
 	"home-manager-main-file",
 	"nixos-main-file",
+	"nixos-host",
+	"home-user",
 ];
 
 #[derive(Subcommand, Debug)]
 pub enum Action {
+	/// Inspect detected targets, diagnostics, and managed-file placement without writing.
+	Inspect,
 	/// Print every setting.
 	Show,
 	/// Print the path of the settings file.
@@ -51,6 +55,7 @@ pub enum Action {
 
 pub fn run(action: &Action, global: &GlobalArgs) -> Result<ExitCode> {
 	match action {
+		Action::Inspect => inspect(global),
 		Action::Path => {
 			println!("{}", settings_path()?.display());
 			Ok(ExitCode::SUCCESS)
@@ -80,6 +85,8 @@ fn show(global: &GlobalArgs) -> Result<ExitCode> {
 				"config-dir": config.config_dir,
 				"home-manager-main-file": config.home_manager_main_file,
 				"nixos-main-file": config.nixos_main_file,
+				"nixos-host": config.nixos_host,
+				"home-user": config.home_user,
 			}))?
 		);
 		return Ok(ExitCode::SUCCESS);
@@ -132,9 +139,18 @@ fn set(key: &str, value: &str) -> Result<ExitCode> {
 		"input-mode" => config.input_mode = parse_input_mode(value)?,
 		"tab-labels" => config.tab_labels = parse_tab_labels(value)?,
 		"close-button" => config.close_button = parse_close_button(value)?,
-		"config-dir" => config.config_dir = parse_path(value),
+		"config-dir" => {
+			config.config_dir = parse_path(value);
+			config.nixos_host = None;
+			config.home_user = None;
+		}
 		"home-manager-main-file" => config.home_manager_main_file = parse_path(value),
 		"nixos-main-file" => config.nixos_main_file = parse_path(value),
+		"nixos-host" => {
+			config.nixos_host = optional_name(value);
+			config.home_user = None;
+		}
+		"home-user" => config.home_user = optional_name(value),
 		other => bail!(
 			"unknown setting `{other}`. Known settings: {}",
 			KEYS.join(", ")
@@ -157,9 +173,92 @@ fn read(config: &Config, key: &str) -> Option<String> {
 		"config-dir" => path_value(config.config_dir.as_ref()),
 		"home-manager-main-file" => path_value(config.home_manager_main_file.as_ref()),
 		"nixos-main-file" => path_value(config.nixos_main_file.as_ref()),
+		"nixos-host" => config.nixos_host.clone().unwrap_or_else(|| "(auto)".into()),
+		"home-user" => config.home_user.clone().unwrap_or_else(|| "(auto)".into()),
 		_ => return None,
 	};
 	Some(value)
+}
+
+fn optional_name(value: &str) -> Option<String> {
+	(!value.trim().is_empty()).then(|| value.to_string())
+}
+
+fn inspect(global: &GlobalArgs) -> Result<ExitCode> {
+	let mut config = Config::load_or_default()?;
+	global.apply(&mut config);
+	let root = config.config_root();
+	let discovery = nixbox_nix::dendritic::Layout::inspect(&root);
+	let mut diagnostics = Vec::new();
+	let (layout, discovered) = match discovery {
+		Ok(Some(discovery)) => ("dendritic", json!(discovery)),
+		Ok(None) => ("conventional", json!(null)),
+		Err(error) => {
+			diagnostics.push(error.to_string());
+			("unsupported", json!(null))
+		}
+	};
+	let selected = if diagnostics.is_empty() {
+		match nixbox_core::Engine::resolve_config(config) {
+			Ok(config) => Some(config),
+			Err(error) => {
+				diagnostics.push(error.to_string());
+				None
+			}
+		}
+	} else {
+		None
+	};
+	let files: Vec<_> = selected.as_ref().map(|config| [nixbox_config::Target::NixosSystem, nixbox_config::Target::HomeManager].into_iter().map(|target| {
+		let path = config.managed_file_for(target);
+		json!({ "target": target_name(target), "path": path, "exists": path.exists(), "placement": if path.parent() == Some(root.as_path()) { "root import" } else { "import-tree" }, "available": target != nixbox_config::Target::HomeManager || config.native_modules_dir.is_none() || config.home_user.is_some() })
+	}).collect()).unwrap_or_default();
+	let report = json!({ "layout": layout, "root": root, "discovery": discovered, "selected": selected.as_ref().map(Config::identity), "managed_files": files, "diagnostics": diagnostics, "writes": false });
+	if global.json {
+		println!("{}", serde_json::to_string_pretty(&report)?);
+	} else {
+		println!("Layout: {layout}\nRoot: {}", root.display());
+		if let Some(hosts) = report["discovery"]["hosts"].as_array() {
+			for host in hosts {
+				println!(
+					"Discovered host: {} (module: {}, users: {})",
+					host["output"].as_str().unwrap_or_default(),
+					host["module"].as_str().unwrap_or_default(),
+					host["users"]
+						.as_array()
+						.map(|users| users
+							.iter()
+							.filter_map(|user| user.as_str())
+							.collect::<Vec<_>>()
+							.join(", "))
+						.unwrap_or_default()
+				);
+			}
+		}
+		if let Some(config) = &selected {
+			println!(
+				"Host: {}\nHome Manager user: {}",
+				config.nixos_host.as_deref().unwrap_or("default"),
+				config.home_user.as_deref().unwrap_or("unselected")
+			);
+		}
+		for file in &files {
+			println!(
+				"{}: {} [{}]",
+				file["target"].as_str().unwrap_or_default(),
+				file["path"].as_str().unwrap_or_default(),
+				file["placement"].as_str().unwrap_or_default()
+			);
+		}
+		for diagnostic in &diagnostics {
+			println!("Diagnostic: {diagnostic}");
+		}
+	}
+	Ok(if diagnostics.is_empty() {
+		ExitCode::SUCCESS
+	} else {
+		ExitCode::from(crate::cli::EXIT_FAILURE)
+	})
 }
 
 fn path_value(path: Option<&PathBuf>) -> String {

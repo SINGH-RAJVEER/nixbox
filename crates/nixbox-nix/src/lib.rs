@@ -1,4 +1,5 @@
 pub mod build;
+pub mod dendritic;
 pub mod flakes;
 pub mod hardware;
 pub mod manifest;

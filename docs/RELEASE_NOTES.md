@@ -4,6 +4,8 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added dendritic support for a literal import-tree with named NixOS hosts and directly attached Home Manager users. `--host`, `--home-user`, and read-only `config inspect` expose selection and diagnostics. New managed flake-parts modules live inside the tree in separate host/user directories; existing root files retain their placement. Rebuilds and recovery use the selected identity. Connected feature packages are scanned read-only. Added a disposable VM workflow; standalone Home Manager, computed layouts, mixed-host queues, and conversion of existing managed modules remain unsupported.
+
 - Nix builds now reuse compiled dependencies through Crane, filter documentation and unrelated interface implementations from build sources, and run tests as separate flake checks. CI builds packages for the supported Linux and macOS systems and can publish them to `nixbox.cachix.org` when its upload secret is configured. Development builds retain line backtraces with less debug information; the `debugging` profile restores full variable inspection.
 - The desktop NixOS settings editor now uses dropdowns for all enumerated choices and labels boolean toggles Enabled or Disabled. Nullable booleans retain an explicit null choice in a dropdown; controls stage changes until Apply.
 - Builds now use every CPU core by default. The flake packages no longer cap compilation at two jobs, and checkout Cargo builds drop the two-job `.cargo/config.toml` default. A positive `buildJobs` package override, `--jobs`, or `CARGO_BUILD_JOBS` still sets a lower limit for machines with little RAM.

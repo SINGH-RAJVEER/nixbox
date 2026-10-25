@@ -99,6 +99,9 @@ pub async fn execute_with(
 	}
 
 	let mut reporter = StderrReporter;
+	if let Some(saved) = PersistedState::load() {
+		saved.ensure_context(&engine.config)?;
+	}
 	for op in &plan.ops {
 		engine.apply(op, &mut reporter)?;
 	}
@@ -111,8 +114,9 @@ pub async fn execute_with(
 
 	if opts.no_rebuild {
 		eprintln!(
-			"Wrote the configuration. Run `{} --target {} {}` to finish.",
+			"Wrote the configuration. Run `{}{} --target {} {}` to finish.",
 			crate::program(),
+			selection_flags(&engine.config),
 			plan.scope.label(),
 			retry_command(activation)
 		);
@@ -166,11 +170,14 @@ pub(crate) async fn run_activation(
 	telemetry: &Telemetry,
 ) -> Result<ExitCode> {
 	let attempt = telemetry.begin_activation(scope, activation);
-	mark_in_progress(scope, label, activation);
+	if let Some(saved) = PersistedState::load() {
+		saved.ensure_context(&engine.config)?;
+	}
+	mark_in_progress(&engine.config, scope, label, activation);
 	let (build_tx, mut build_rx) = mpsc::channel::<BuildEvent>(64);
 	let (cancel_tx, cancel_rx) = oneshot::channel();
-	let task = tokio::spawn(rebuild::run_activation(
-		engine.config.home_manager_dir(),
+	let task = tokio::spawn(rebuild::run_activation_for(
+		engine.config.clone(),
 		scope,
 		activation,
 		Escalation::Terminal,
@@ -224,7 +231,12 @@ pub(crate) async fn run_activation(
 	if let (Some(attempt), Some(outcome)) = (attempt, terminal_outcome) {
 		attempt.finish(outcome);
 	}
-	let retry = retry_command(activation);
+	let retry = format!(
+		"{} --target {} {}",
+		selection_flags(&engine.config),
+		scope.label(),
+		retry_command(activation)
+	);
 
 	match &outcome {
 		Outcome::Succeeded => {
@@ -258,12 +270,34 @@ fn retry_command(activation: Activation) -> &'static str {
 	}
 }
 
+fn selection_flags(config: &nixbox_config::Config) -> String {
+	if config.native_modules_dir.is_none() {
+		return String::new();
+	}
+	let mut flags = String::new();
+	for (flag, value) in [
+		("--host", &config.nixos_host),
+		("--home-user", &config.home_user),
+	] {
+		if let Some(value) = value {
+			flags.push_str(&format!(" {flag} '{}'", value.replace('\'', "'\\''")));
+		}
+	}
+	flags
+}
+
 /// Records the rebuild about to start, leaving any queue the TUI saved alone.
 ///
 /// Failing to write the file is not worth stopping a rebuild over; it only
 /// costs the ability to resume one that gets killed.
-fn mark_in_progress(scope: Target, label: &str, activation: Activation) {
+fn mark_in_progress(
+	config: &nixbox_config::Config,
+	scope: Target,
+	label: &str,
+	activation: Activation,
+) {
 	let mut state = PersistedState::load().unwrap_or_default();
+	state.context = Some(config.identity());
 	state.in_progress = Some(InProgress {
 		scope,
 		label: label.to_string(),

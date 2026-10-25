@@ -10,7 +10,7 @@ use nixbox_config::Target;
 use nixbox_core::hardware::HardwareFilter;
 use nixbox_core::options::parse_text;
 use nixbox_core::system_options::{
-	Category, default_host, edit_lock, filter_options, host_is_editable, sibling_group,
+	Category, default_host, edit_lock, filter_options, sibling_group,
 };
 use nixbox_core::{Op, OptionChange};
 use nixbox_nix::hardware::HardwareInventory;
@@ -28,6 +28,7 @@ const EVALUATION_LIMIT: Duration = Duration::from_secs(120);
 
 #[derive(Default)]
 pub struct NixosView {
+	pub applied_host: Option<String>,
 	pub initialized: bool,
 	pub hosts: Vec<String>,
 	pub configuration: Option<NixosConfiguration>,
@@ -129,9 +130,13 @@ impl NixosView {
 
 	/// Whether the open host is the one nixbox's NixOS rebuild applies.
 	pub fn editable_host(&self) -> bool {
-		self.configuration
-			.as_ref()
-			.is_some_and(|configuration| host_is_editable(&configuration.host))
+		self.configuration.as_ref().is_some_and(|configuration| {
+			configuration.host
+				== self
+					.applied_host
+					.as_deref()
+					.unwrap_or(nixbox_core::options::NIXOS_HOST)
+		})
 	}
 
 	/// Why `option` cannot be changed here, or `None` when it can.
@@ -152,12 +157,14 @@ impl Drop for NixosView {
 
 impl NixboxApp {
 	pub fn reload_nixos(&mut self, cx: &mut Context<Self>) {
+		self.nixos.applied_host = self.session.engine.config.nixos_host.clone();
 		self.nixos.cancel();
 		let previous = self
 			.nixos
 			.configuration
 			.as_ref()
-			.map(|configuration| configuration.host.clone());
+			.map(|configuration| configuration.host.clone())
+			.or_else(|| self.nixos.applied_host.clone());
 		self.nixos.initialized = true;
 		self.nixos.loading = true;
 		self.nixos.error = None;

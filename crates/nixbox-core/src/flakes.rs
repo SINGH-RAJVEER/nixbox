@@ -60,6 +60,11 @@ impl InstalledFlake {
 /// removes both.
 #[must_use]
 pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
+	let dendritic = nixbox_nix::dendritic::Layout::select(
+		&config.config_root(),
+		config.nixos_host.as_deref(),
+		config.home_user.as_deref(),
+	);
 	let repos = input_repos(&config.flake_file());
 	let mut out = Vec::new();
 	for scope in [Target::HomeManager, Target::NixosSystem] {
@@ -78,8 +83,12 @@ pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
 				migratable: false,
 			});
 		}
-		let Ok(found) = scan_flake_packages(&config.main_file_for(scope), scan_target(scope))
-		else {
+		let found = match &dendritic {
+			Ok(Some(layout)) => layout.scan_flake_packages(scope == Target::HomeManager),
+			Ok(None) => scan_flake_packages(&config.main_file_for(scope), scan_target(scope)),
+			Err(_) => continue,
+		};
+		let Ok(found) = found else {
 			continue;
 		};
 		for entry in found {
@@ -196,10 +205,28 @@ impl Engine {
 		reporter: &mut dyn Reporter,
 	) -> Result<()> {
 		let flake_file = self.config.flake_file();
+		if self.flakes.iter().any(|flake| {
+			flake.scope == scope
+				&& !flake.is_managed()
+				&& flake.repo.as_deref() == Some(repo)
+				&& &flake.output == output
+		}) {
+			reporter.info(format!(
+				"{} is already declared in the selected configuration; nothing added.",
+				output.display(repo)
+			));
+			return Ok(());
+		}
 		let input = ensure_flake_input(&flake_file, repo)?;
 		let main_file = self.config.main_file_for(scope);
 
 		if let FlakeOutput::Package(package) = output
+			&& nixbox_nix::dendritic::Layout::select(
+				&self.config.config_root(),
+				self.config.nixos_host.as_deref(),
+				self.config.home_user.as_deref(),
+			)?
+			.is_none()
 			&& scan_flake_packages(&main_file, scan_target(scope))?
 				.iter()
 				.any(|entry| entry.input == input && &entry.package == package)
@@ -257,6 +284,16 @@ impl Engine {
 	/// goes through `specialArgs` into the system configuration and on from
 	/// there through `home-manager.extraSpecialArgs`.
 	fn pass_inputs(&self, scope: Target) -> Result<Option<PathBuf>> {
+		if let Some(layout) = nixbox_nix::dendritic::Layout::select(
+			&self.config.config_root(),
+			self.config.nixos_host.as_deref(),
+			self.config.home_user.as_deref(),
+		)? {
+			if scope == Target::HomeManager {
+				layout.require_home()?;
+			}
+			return Ok(None);
+		}
 		let flake_file = self.config.flake_file();
 		let source = std::fs::read_to_string(&flake_file)?;
 		if scope == Target::NixosSystem {
@@ -351,7 +388,14 @@ impl Engine {
 		}
 
 		let main_file = self.config.main_file_for(scope);
+		let dendritic = nixbox_nix::dendritic::Layout::select(
+			&self.config.config_root(),
+			self.config.nixos_host.as_deref(),
+			self.config.home_user.as_deref(),
+		)?
+		.is_some();
 		let removed_by_hand = match output {
+			_ if dendritic => false,
 			FlakeOutput::Package(package) => {
 				remove_flake_package_from_source(&main_file, scan_target(scope), input, package)?
 			}

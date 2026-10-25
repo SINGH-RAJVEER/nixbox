@@ -22,7 +22,9 @@ The complete shape is:
 	"config_dir": null,
 	"recent_searches": [],
 	"home_manager_main_file": null,
-	"nixos_main_file": null
+	"nixos_main_file": null,
+	"nixos_host": null,
+	"home_user": null
 }
 ```
 
@@ -51,6 +53,8 @@ The consent foundation honors `NIXBOX_NO_TELEMETRY=1` and `DO_NOT_TRACK=1` as di
 GUI Settings, TUI Settings > Usage data, and `nixbox config set telemetry-enabled true|false` share the consent function. `nixbox telemetry status` shows saved consent, effective status, disclosure, and recipient. `nixbox telemetry preview` prints a synthetic example without collecting or sending anything. All interfaces use the fixed HTTPS recipient `https://nixb.duckdns.org:58443/v1/telemetry`; it has no runtime environment override. Collection requires explicit saved consent and remains suppressed in debug, CI, and VM builds. Version 1 and 2 consent need renewal because it did not disclose this recipient. The collector and optional Axum receiver are implemented and verified against controlled local receivers. See the [telemetry implementation plan](TELEMETRY_PLAN.md) for the allowed fields, Docker/Nginx deployment, and remaining public-service checks.
 
 ## Configuration root
+
+NixBox detects the supported import-tree/flake-parts layout under this root. Named NixOS outputs and their directly attached Home Manager users are discovered from classed modules. `nixos_host` and `home_user` select a target; a unique host/user is selected automatically. Multiple hosts require an explicit host, and Home Manager writes require an explicit user when several are attached. New generated flake-parts modules live under the import-tree with a separate directory for each host/user. Existing root-level dendritic managed files retain their placement. Conventional main-file settings continue to describe conventional configurations. See [Dendritic support](DENDRITIC_PLAN.md).
 
 The configuration root is, in order: `NIXBOX_CONFIG_DIR` when it is set, then the saved `config_dir` setting, then `$XDG_CONFIG_HOME/nixos`, normally `~/.config/nixos`. Change the saved location in GUI Settings or with `nixbox config set config-dir <path>`; an empty value returns to the default.
 

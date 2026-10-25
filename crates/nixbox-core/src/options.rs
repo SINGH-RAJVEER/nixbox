@@ -60,8 +60,17 @@ pub async fn load_options(config: Config, scope: Target, package: String) -> Res
 	let query = OptionQuery {
 		root,
 		source,
-		host: NIXOS_HOST.into(),
-		user: std::env::var("USER").unwrap_or_else(|_| "user".into()),
+		host: config
+			.nixos_host
+			.clone()
+			.unwrap_or_else(|| NIXOS_HOST.into()),
+		user: nixbox_nix::dendritic::Layout::select(
+			&config.config_root(),
+			config.nixos_host.as_deref(),
+			config.home_user.as_deref(),
+		)?
+		.and_then(|layout| layout.home_user)
+		.unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "user".into())),
 		package,
 		settings_file,
 	};

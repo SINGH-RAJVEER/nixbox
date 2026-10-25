@@ -48,6 +48,14 @@ pub struct GlobalArgs {
 	#[arg(long, short = 't', global = true, value_name = "TARGET")]
 	pub target: Option<TargetArg>,
 
+	/// Select the NixOS flake output for dendritic operations.
+	#[arg(long, global = true)]
+	pub host: Option<String>,
+
+	/// Select the Home Manager user attached to that host.
+	#[arg(long, global = true)]
+	pub home_user: Option<String>,
+
 	/// Use this nixpkgs channel instead of the saved one.
 	#[arg(long, short = 'c', global = true, value_name = "CHANNEL")]
 	pub channel: Option<String>,
@@ -64,6 +72,15 @@ impl GlobalArgs {
 	/// Applies per-invocation overrides. Nothing here is written back to
 	/// `settings.json` — `nixbox config set` is the only thing that persists.
 	pub fn apply(&self, config: &mut Config) {
+		if let Some(host) = &self.host {
+			config.nixos_host = Some(host.clone());
+			if self.home_user.is_none() {
+				config.home_user = None;
+			}
+		}
+		if let Some(user) = &self.home_user {
+			config.home_user = Some(user.clone());
+		}
 		if let Some(target) = self.target {
 			config.target = target.into();
 		}

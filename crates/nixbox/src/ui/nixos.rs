@@ -149,10 +149,11 @@ fn header(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 		.as_ref()
 		.map(|configuration| configuration.host.clone());
 	let root = app.session.config_dir();
+	let applied_host = app.nixos.applied_host.as_deref().unwrap_or(NIXOS_HOST);
 	let subtitle = match &host {
 		Some(host) if app.nixos.editable_host() => format!("Host {host} in {}", root.display()),
 		Some(host) => format!(
-			"Host {host} in {}. Read-only: nixbox rebuilds the {NIXOS_HOST} host.",
+			"Host {host} in {}. Read-only: nixbox rebuilds the {applied_host} host.",
 			root.display()
 		),
 		None => format!("System settings in {}", root.display()),

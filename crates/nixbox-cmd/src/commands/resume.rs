@@ -37,6 +37,8 @@ pub async fn run(args: &ResumeArgs, global: &GlobalArgs) -> Result<ExitCode> {
 		eprintln!("Discarded the saved work.");
 		return Ok(ExitCode::SUCCESS);
 	}
+	let selected = global.engine()?;
+	saved.ensure_context(&selected.config)?;
 
 	if let Some(error) = &saved.last_error {
 		eprintln!("The previous run reported: {error}");

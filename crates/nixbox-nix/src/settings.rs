@@ -110,10 +110,7 @@ impl SettingsFile {
 	}
 
 	pub fn write(&self, manifest: &SettingsManifest) -> Result<()> {
-		if let Some(parent) = self.path.parent() {
-			fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-		}
-		fs::write(&self.path, render(manifest))
+		crate::dendritic::write(&self.path, render(manifest))
 			.with_context(|| format!("writing {}", self.path.display()))
 	}
 }

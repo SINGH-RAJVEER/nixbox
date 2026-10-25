@@ -101,6 +101,7 @@ pub struct Session {
 	escalation: Escalation,
 	runtime: Option<Handle>,
 	persistent: bool,
+	recovery_blocked: bool,
 }
 
 impl Session {
@@ -122,6 +123,7 @@ impl Session {
 			escalation: Escalation::default(),
 			runtime: Handle::try_current().ok(),
 			persistent: true,
+			recovery_blocked: false,
 		};
 		(session, build_rx)
 	}
@@ -221,6 +223,10 @@ impl Session {
 	/// Queues every op in `ops`, skipping any already waiting, then starts
 	/// the queue if nothing else is running.
 	pub fn enqueue_all(&mut self, ops: Vec<Op>) -> Enqueued {
+		if !self.context_available() {
+			self.log.push("Configuration identity changed or recovery belongs to another target; reload with the original selection.".into());
+			return Enqueued::NotWritten;
+		}
 		let mut added = false;
 		for op in ops {
 			let op = match self.merge_settings(op) {
@@ -263,6 +269,9 @@ impl Session {
 	/// one rebuild for them. Returns the rebuild's label, or `None` when
 	/// something is already running or nothing could be written.
 	pub fn drain(&mut self) -> Option<String> {
+		if !self.context_available() {
+			return None;
+		}
 		loop {
 			if self.is_building() {
 				return None;
@@ -327,6 +336,11 @@ impl Session {
 		label: String,
 		activation: crate::Activation,
 	) {
+		if !self.context_available() {
+			self.last_error =
+				Some("Activation refused because the configuration identity changed.".into());
+			return;
+		}
 		let (cancel_tx, cancel_rx) = oneshot::channel();
 		self.log.clear();
 		self.progress.start(&label);
@@ -339,7 +353,7 @@ impl Session {
 		});
 		self.persist();
 
-		let config_dir = self.engine.config.home_manager_dir();
+		let config = self.engine.config.clone();
 		let escalation = self.escalation.clone();
 		let session_tx = self.build_tx.clone();
 		let task = async move {
@@ -352,8 +366,8 @@ impl Session {
 				}
 			};
 			tokio::join!(
-				rebuild::run_activation(
-					config_dir,
+				rebuild::run_activation_for(
+					config,
 					scope,
 					activation,
 					escalation,
@@ -477,6 +491,12 @@ impl Session {
 		let Some(saved) = PersistedState::load() else {
 			return Restored::Nothing;
 		};
+		if let Err(error) = saved.ensure_context(&self.engine.config) {
+			self.recovery_blocked = true;
+			self.last_error = Some(error.to_string());
+			self.log.push(error.to_string());
+			return Restored::Nothing;
+		}
 		self.last_error = saved.last_error;
 		self.queue.extend(saved.pending_queue);
 
@@ -543,10 +563,11 @@ impl Session {
 	/// Writes the part of the session that must survive a crash. Failing to
 	/// is swallowed: it only costs the ability to resume.
 	pub fn persist(&self) {
-		if !self.persistent {
+		if !self.persistent || !self.context_available() {
 			return;
 		}
 		let snapshot = PersistedState {
+			context: Some(self.engine.config.identity()),
 			pending_queue: self.queue.iter().cloned().collect(),
 			in_progress: self.build.as_ref().map(|build| InProgress {
 				scope: build.scope,
@@ -556,6 +577,14 @@ impl Session {
 			last_error: self.last_error.clone(),
 		};
 		let _ = snapshot.save();
+	}
+
+	fn context_available(&self) -> bool {
+		!self.recovery_blocked
+			&& self.engine.ensure_identity().is_ok()
+			&& (!self.persistent
+				|| PersistedState::load()
+					.is_none_or(|saved| saved.ensure_context(&self.engine.config).is_ok()))
 	}
 
 	/// The directory the rebuild evaluates, for display.
