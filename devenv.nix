@@ -43,14 +43,13 @@ in
 
 	languages.rust = {
 		enable = true;
-		channel = "stable";
+		channel = "nixpkgs";
 		components = [
 			"rustc"
 			"cargo"
 			"clippy"
 			"rustfmt"
 			"rust-analyzer"
-			"rust-src"
 		];
 	};
 

@@ -19,7 +19,6 @@
 ├── flake.nix
 ├── flake.lock
 ├── devenv.nix
-├── devenv.yaml
 ├── devenv.lock
 ├── justfile
 └── .github/workflows/publish.yml
@@ -80,7 +79,7 @@ The supported development path is the pinned devenv shell:
 devenv shell
 ```
 
-`devenv.nix` enables stable Rust with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. It supplies Bash, `just`, and `cargo-nextest` for build and test recipes; Nix, `nixd`, and `nil` for Nix development; `nixos-rebuild` and `home-manager` for rebuild commands and the VM recipes; and Git, Jujutsu, GitHub CLI, and OpenSSH for configuration repositories and remotes. The native GUI has pkg-config, fontconfig, freetype, Vulkan, Wayland, xkbcommon, X11, and xcb, with runtime libraries on `LD_LIBRARY_PATH`. `desktop-file-validate` checks the packaged desktop entry. `devenv.lock` pins the Nix inputs. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
+`devenv.nix` defines the project's development environment, including stable Rust from nixpkgs with `rustc`, Cargo, Clippy, rustfmt, Rust Analyzer, and Rust source. No `devenv.yaml` is needed: devenv supplies its default package input and records its exact revision in the generated `devenv.lock`. The Rust source path comes from nixpkgs through the Rust module, without a separate Rust overlay input. The environment supplies Bash, `just`, and `cargo-nextest` for build and test recipes; Nix, `nixd`, and `nil` for Nix development; `nixos-rebuild` and `home-manager` for rebuild commands and the VM recipes; and Git, Jujutsu, GitHub CLI, and OpenSSH for configuration repositories and remotes. The native GUI has pkg-config, fontconfig, freetype, Vulkan, Wayland, xkbcommon, X11, and xcb, with runtime libraries on `LD_LIBRARY_PATH`. `desktop-file-validate` checks the packaged desktop entry. With direnv installed, `.envrc` can enter this environment automatically after `direnv allow`.
 
 Privileged rebuilds use the host's configured sudo wrapper. The VM launcher and NixOS test driver obtain QEMU and their Python environment from the Nix derivations, so they do not require separate shell packages. Running the native GUI requires a desktop session and a working host Vulkan driver.
 
@@ -309,7 +308,7 @@ The `publish` job declares `needs: [prepare, test, gui, nix]` and runs only on p
 
 Install a specific version with `cargo install nixbox --version 0.4.5` or `cargo install nixbox --version '=0.4.6-nightly.20261025.123'`. Substitute `nixbox-cli` or `nixbox-tui` for either terminal interface. Nix installations use the same immutable tags, for example `nix profile install github:SINGH-RAJVEER/nixbox/v0.4.5` or `nix profile install github:SINGH-RAJVEER/nixbox/v0.4.6-nightly.20261025.123#nixbox-cli-nightly`. The nightly identifier is illustrative; use a tag that has actually been published. Unversioned Nix references follow the repository's default branch, so pin a version tag when selecting a release.
 
-The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell and release workflow both run stable. The shell pins its toolchain through `devenv.lock`, so refresh the pinned inputs when CI advances to a newer stable release.
+The workspace denies every `pedantic` and `nursery` lint, and those sets change between Rust releases. The development shell uses nixpkgs's stable Rust packages and the release workflow installs upstream stable Rust. The shell's package versions are pinned through `devenv.lock`; use `devenv update nixpkgs` to refresh them when needed. Run rustc and Clippy from the same shell so they remain compatible.
 
 Before merging a release into `master`, confirm the workspace version is newer than every published crate version. Publishing skips a version that already exists on crates.io.
 
