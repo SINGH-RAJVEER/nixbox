@@ -84,6 +84,8 @@ devenv shell
 
 Privileged rebuilds use the host's configured sudo wrapper. The VM launcher and NixOS test driver obtain QEMU and their Python environment from the Nix derivations, so they do not require separate shell packages. Running the native GUI requires a desktop session and a working host Vulkan driver.
 
+The development environment sets `cachix.push = "nixbox"`, which also enables downloads from that cache. Devenv can upload Nix store outputs built while preparing the environment when authenticated with a write-capable Cachix token, supplied through `CACHIX_AUTH_TOKEN` or a supported credential store. This does not upload Cargo's local `target/` artifacts from `devenv shell -- cargo build`. Application packages and their compiled dependency artifacts are uploaded by the separate Nix package CI job. Local authentication and GitHub's `CACHIX_AUTH_TOKEN` Actions secret must be configured separately; keep tokens out of repository files.
+
 Using the shell matters on NixOS because a Rustup toolchain can retain linker wrappers that point at garbage-collected Nix store paths. If plain Cargo fails inside a Rust linker wrapper while the devenv build succeeds, treat that as a host toolchain problem rather than changing NixBox source.
 
 ## Commands

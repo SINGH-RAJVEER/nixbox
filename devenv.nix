@@ -11,6 +11,7 @@ let
 in
 {
 	dotenv.disableHint = true;
+	cachix.push = "nixbox";
 
 	packages = [
 		# Build, lint, and test commands.
