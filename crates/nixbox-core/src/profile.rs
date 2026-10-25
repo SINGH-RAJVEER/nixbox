@@ -241,7 +241,7 @@ pub async fn command_for(config: &nixbox_config::Config, scope: Target) -> Resul
 	// user's profile. Such changes must activate through the owning host.
 	if scope == Target::HomeManager {
 		anyhow::ensure!(
-			layout.require_home()? == home_configuration_name(),
+			layout.home_user.as_deref() == Some(home_configuration_name().as_str()),
 			"the selected Home Manager user differs from the invoking user; use configuration activation"
 		);
 	}

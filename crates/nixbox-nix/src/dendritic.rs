@@ -15,6 +15,10 @@ use crate::manifest::ImportStatus;
 use crate::wiring::attr_name;
 
 const MARKER: &str = "# nixbox:layout dendritic";
+mod migration;
+pub use migration::SourceEdit;
+mod managed_migration;
+pub use managed_migration::FileChange;
 
 #[derive(Debug, Clone)]
 pub struct Layout {
@@ -25,6 +29,7 @@ pub struct Layout {
 	pub host_module: String,
 	pub home_user: Option<String>,
 	pub standalone: bool,
+	predicates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,8 +45,19 @@ pub struct Discovery {
 	pub tree: PathBuf,
 	pub hosts: Vec<HostInfo>,
 	pub homes: Vec<HomeInfo>,
+	pub sources: Vec<SourceInfo>,
+	pub generated_inputs: bool,
 	#[serde(skip)]
 	files: Vec<PathBuf>,
+	#[serde(skip)]
+	predicates: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SourceInfo {
+	pub path: PathBuf,
+	pub modules: Vec<String>,
+	pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,10 +110,42 @@ fn unparen(mut node: SyntaxNode) -> SyntaxNode {
 	node
 }
 
+fn resolve(mut node: SyntaxNode) -> SyntaxNode {
+	for _ in 0..32 {
+		node = unparen(node);
+		if node.kind() == Kind::NODE_LET_IN {
+			node = node.children().last().expect("parsed let expression");
+			continue;
+		}
+		if node.kind() != Kind::NODE_IDENT {
+			break;
+		}
+		let name = node.to_string();
+		let value = node
+			.ancestors()
+			.filter(|ancestor| ancestor.kind() == Kind::NODE_LET_IN)
+			.find_map(|scope| {
+				scope
+					.children()
+					.filter(|entry| entry.kind() == Kind::NODE_ATTRPATH_VALUE)
+					.find_map(|entry| {
+						let mut children = entry.children();
+						let path = attrpath(&children.next()?)?;
+						(path == [name.as_str()]).then(|| children.next()).flatten()
+					})
+			});
+		let Some(value) = value else {
+			break;
+		};
+		node = value;
+	}
+	node
+}
+
 fn body(node: SyntaxNode) -> SyntaxNode {
-	let node = unparen(node);
+	let node = resolve(node);
 	if node.kind() == Kind::NODE_LAMBDA {
-		node.children().last().expect("parsed lambda body")
+		resolve(node.children().last().expect("parsed lambda body"))
 	} else {
 		node
 	}
@@ -138,7 +186,7 @@ fn bindings(node: SyntaxNode, prefix: &[String], out: &mut Vec<(Vec<String>, Syn
 }
 
 fn select(node: SyntaxNode) -> Option<Vec<String>> {
-	let node = unparen(node);
+	let node = resolve(node);
 	if node.kind() == Kind::NODE_IDENT {
 		return Some(vec![node.to_string()]);
 	}
@@ -176,7 +224,7 @@ fn root_module(source: &str) -> Result<Option<SyntaxNode>> {
 		return Ok(None);
 	}
 	let mut children = expression.children();
-	let call = unparen(children.next().context("missing flake constructor")?);
+	let call = resolve(children.next().context("missing flake constructor")?);
 	if call.kind() != Kind::NODE_APPLY {
 		ensure!(
 			!candidate,
@@ -197,31 +245,92 @@ fn root_module(source: &str) -> Result<Option<SyntaxNode>> {
 	}
 	ensure!(
 		outputs.kind() == Kind::NODE_LAMBDA
-			&& outputs
-				.children()
-				.next()
-				.is_some_and(|param| param.to_string() == "inputs"),
+			&& outputs.children().next().is_some_and(|param| param
+				.descendants_with_tokens()
+				.filter_map(|item| item.into_token())
+				.any(|token| token.text() == "inputs")),
 		"dendritic outputs must bind the input set as `inputs` for automatic integration"
 	);
 	Ok(Some(children.next().context("missing flake-parts module")?))
 }
 
 fn tree_path(node: SyntaxNode) -> Option<String> {
-	let node = unparen(node);
+	let node = resolve(node);
 	if node.kind() != Kind::NODE_APPLY {
 		return None;
 	}
 	let mut children = node.children();
-	let function = select(children.next()?)?;
-	if !matches_path(&function, &["inputs", "import-tree"]) {
-		return None;
-	}
+	tree_predicates(children.next()?)?;
 	let path = children.next()?;
 	(path.kind() == Kind::NODE_PATH_REL && path.children().count() == 0).then(|| path.to_string())
 }
 
+fn tree_predicates(node: SyntaxNode) -> Option<Vec<String>> {
+	let node = resolve(node);
+	if select(node.clone()).is_some_and(|path| matches_path(&path, &["inputs", "import-tree"])) {
+		return Some(Vec::new());
+	}
+	if node.kind() != Kind::NODE_APPLY {
+		return None;
+	}
+	let mut children = node.children();
+	let function = resolve(children.next()?);
+	if function.kind() != Kind::NODE_SELECT {
+		return None;
+	}
+	let (mut predicates, method) = if let Some(path) = select(function.clone())
+		.filter(|path| path.len() == 3 && matches_path(&path[..2], &["inputs", "import-tree"]))
+	{
+		(Vec::new(), vec![path[2].clone()])
+	} else {
+		let mut parts = function.children();
+		(tree_predicates(parts.next()?)?, attrpath(&parts.next()?)?)
+	};
+	let argument = children.next()?.to_string();
+	predicates.push(match method.as_slice() {
+		[method] if method == "filter" => argument,
+		[method] if method == "filterNot" => format!("path: !(({argument}) path)"),
+		[method] if method == "match" => format!("path: builtins.match ({argument}) path != null"),
+		[method] if method == "matchNot" => {
+			format!("path: builtins.match ({argument}) path == null")
+		}
+		_ => return None,
+	});
+	Some(predicates)
+}
+
+fn accepted_paths(root: &Path, predicates: &[String], paths: &[String]) -> Result<Vec<String>> {
+	if predicates.is_empty() {
+		return Ok(paths.to_vec());
+	}
+	let expression = format!(
+		"let inputs = (builtins.getFlake {}).inputs; lib = inputs.nixpkgs.lib; predicates = [ {} ]; paths = [ {} ]; in builtins.filter (path: builtins.all (f: f path) predicates) paths",
+		serde_json::to_string(&root.canonicalize()?.to_string_lossy())?,
+		predicates
+			.iter()
+			.map(|predicate| format!("({predicate})"))
+			.collect::<Vec<_>>()
+			.join(" "),
+		paths
+			.iter()
+			.map(serde_json::to_string)
+			.collect::<std::result::Result<Vec<_>, _>>()?
+			.join(" ")
+	);
+	let output = std::process::Command::new("nix")
+		.args(["eval", "--json", "--impure", "--expr", &expression])
+		.output()
+		.context("evaluating import-tree filters")?;
+	ensure!(
+		output.status.success(),
+		"import-tree filter evaluation failed: {}",
+		String::from_utf8_lossy(&output.stderr)
+	);
+	Ok(serde_json::from_slice(&output.stdout)?)
+}
+
 fn module_items(module: &SyntaxNode) -> Result<Vec<SyntaxNode>> {
-	let module = unparen(module.clone());
+	let module = body(module.clone());
 	if tree_path(module.clone()).is_some() {
 		return Ok(vec![module]);
 	}
@@ -231,10 +340,6 @@ fn module_items(module: &SyntaxNode) -> Result<Vec<SyntaxNode>> {
 	);
 	let mut entries = Vec::new();
 	bindings(module, &[], &mut entries);
-	ensure!(
-		entries.len() == 1,
-		"inline flake-parts definitions need explicit target discovery; only a root imports list is supported currently"
-	);
 	let imports: Vec<_> = entries
 		.into_iter()
 		.filter(|(path, _)| matches_path(path, &["imports"]))
@@ -300,21 +405,59 @@ impl Layout {
 			root.join(&trees[0]).canonicalize()? != root.canonicalize()?,
 			"an import-tree covering the configuration root would load generated modules twice; use a dedicated modules directory"
 		);
-		ensure!(
-			items.iter().all(|item| tree_path(item.clone()).is_some()
-				|| (item.kind() == Kind::NODE_PATH_REL
-					&& [
-						"./nixbox-system-packages.nix",
-						"./nixbox-home-packages.nix",
-						"./nixbox-system-settings.nix",
-						"./nixbox-home-settings.nix",
-						"./nixbox-home-integration.nix"
-					]
-					.contains(&item.to_string().as_str()))),
-			"additional root flake-parts imports require connected-target discovery before automatic edits"
-		);
 		let mut files = Vec::new();
 		collect(&root.join(&trees[0]), &root.canonicalize()?, &mut files, 0)?;
+		let predicates = items
+			.iter()
+			.find(|item| tree_path((*item).clone()).is_some())
+			.and_then(|item| resolve(item.clone()).children().next())
+			.and_then(tree_predicates)
+			.unwrap_or_default();
+		let tree = root.join(&trees[0]);
+		if !predicates.is_empty() {
+			let relative: Vec<_> = files
+				.iter()
+				.map(|file| {
+					format!(
+						"/{}",
+						file.strip_prefix(&tree)
+							.expect("collected tree path")
+							.display()
+					)
+				})
+				.collect();
+			let accepted = accepted_paths(root, &predicates, &relative)?;
+			files.retain(|file| {
+				accepted.contains(&format!(
+					"/{}",
+					file.strip_prefix(&tree)
+						.expect("collected tree path")
+						.display()
+				))
+			});
+		}
+		for item in &items {
+			if tree_path(item.clone()).is_some() {
+				continue;
+			}
+			if select(item.clone()).is_some_and(|path| {
+				path.len() >= 4 && path[0] == "inputs" && path[2] == "flakeModules"
+			}) {
+				continue;
+			}
+			ensure!(
+				item.kind() == Kind::NODE_PATH_REL && item.children().count() == 0,
+				"computed root imports require an explicit discovery adapter"
+			);
+			let path = root.join(item.to_string());
+			ensure!(
+				!fs::symlink_metadata(&path)?.is_symlink()
+					&& path.canonicalize()?.starts_with(root.canonicalize()?),
+				"root import escapes the configuration or is symlinked"
+			);
+			files.push(path);
+		}
+		files.push(flake);
 		files.retain(|file| {
 			!fs::read_to_string(file).is_ok_and(|source| {
 				source.starts_with("# Managed by nixbox. Do not edit by hand.\n")
@@ -322,21 +465,67 @@ impl Layout {
 			})
 		});
 		files.sort();
+		files.dedup();
 		let mut entries = Vec::new();
+		let mut sources = Vec::new();
 		for file in &files {
 			let source = fs::read_to_string(file)?;
 			bindings(
-				parsed(&source).with_context(|| format!("reading {}", file.display()))?,
+				if file == &root.join("flake.nix") {
+					module.clone()
+				} else {
+					parsed(&source).with_context(|| format!("reading {}", file.display()))?
+				},
 				&[],
 				&mut entries,
 			);
-		}
-		ensure!(
-			!entries
+			let mut local = Vec::new();
+			bindings(
+				if file == &root.join("flake.nix") {
+					module.clone()
+				} else {
+					parsed(&source)?
+				},
+				&[],
+				&mut local,
+			);
+			let modules = local
 				.iter()
-				.any(|(path, _)| path.starts_with(&["flake-file".into()])),
-			"generated flake inputs are not supported yet; edit their source declarations"
-		);
+				.filter(|(path, _)| {
+					path.len() == 4 && matches_path(&path[..2], &["flake", "modules"])
+				})
+				.map(|(path, _)| path[2..].join("."))
+				.collect();
+			let diagnostics = local
+				.iter()
+				.filter(|(path, value)| {
+					path.last().is_some_and(|name| name == "imports")
+						&& resolve(value.clone()).kind() != Kind::NODE_LIST
+				})
+				.map(|(path, _)| {
+					format!(
+						"{} is computed; connected-source scanning is incomplete",
+						path.join(".")
+					)
+				})
+				.collect();
+			sources.push(SourceInfo {
+				path: file.strip_prefix(root)?.to_path_buf(),
+				modules,
+				diagnostics,
+			});
+		}
+		let generated_inputs = source
+			.lines()
+			.take(5)
+			.any(|line| line.starts_with('#') && line.contains("flake-file"))
+			|| entries.iter().any(|(path, value)| {
+				path.first().is_some_and(|name| name == "flake-file")
+					|| value.descendants().filter_map(select).any(|path| {
+						path.len() >= 3
+							&& matches_path(&path[..3], &["inputs", "flake-file", "flakeModules"])
+					})
+			});
 		ensure!(
 			!entries.iter().any(|(path, _)| path.len() >= 4
 				&& matches_path(&path[..2], &["flake", "modules"])
@@ -353,7 +542,7 @@ impl Layout {
 			.collect();
 		let mut hosts = Vec::new();
 		for (output, constructor) in outputs {
-			let constructor = unparen(constructor.clone());
+			let constructor = resolve(constructor.clone());
 			ensure!(
 				constructor.kind() == Kind::NODE_APPLY
 					&& constructor
@@ -380,16 +569,20 @@ impl Layout {
 				.iter()
 				.find(|(path, _)| matches_path(path, &["modules"]))
 				.context("missing host modules")?;
-			ensure!(
-				modules.1.kind() == Kind::NODE_LIST && modules.1.children().count() == 1,
-				"host modules must contain one explicit flake.modules.nixos reference"
-			);
-			let reference = modules
+			let references: Vec<_> = modules
 				.1
 				.children()
-				.next()
-				.and_then(select)
-				.context("unsupported host module reference")?;
+				.filter_map(select)
+				.filter(|path| {
+					path.len() == 5
+						&& matches_path(&path[..4], &["config", "flake", "modules", "nixos"])
+				})
+				.collect();
+			ensure!(
+				modules.1.kind() == Kind::NODE_LIST && references.len() == 1,
+				"host modules must contain exactly one host-specific classed reference"
+			);
+			let reference = &references[0];
 			ensure!(
 				reference.len() == 5
 					&& matches_path(&reference[..4], &["config", "flake", "modules", "nixos"]),
@@ -425,7 +618,7 @@ impl Layout {
 			if path.len() != 3 || !matches_path(&path[..2], &["flake", "homeConfigurations"]) {
 				continue;
 			}
-			let constructor = unparen(constructor.clone());
+			let constructor = resolve(constructor.clone());
 			ensure!(
 				constructor.kind() == Kind::NODE_APPLY
 					&& constructor
@@ -501,6 +694,9 @@ impl Layout {
 			tree: root.join(&trees[0]),
 			hosts,
 			homes,
+			sources,
+			generated_inputs,
+			predicates,
 			files,
 		}))
 	}
@@ -557,6 +753,7 @@ impl Layout {
 				host_module: selected.module.clone(),
 				home_user: selected.user.clone(),
 				standalone: true,
+				predicates: discovery.predicates,
 			}));
 		}
 		let selected = match host {
@@ -601,6 +798,7 @@ impl Layout {
 			host_module: selected.module.clone(),
 			home_user,
 			standalone: false,
+			predicates: discovery.predicates,
 		}))
 	}
 
@@ -676,9 +874,9 @@ impl Layout {
 		}
 		let mut entries = Vec::new();
 		bindings(parsed(&source)?, &[], &mut entries);
-		let home = file
-			.file_name()
-			.is_some_and(|name| name == "nixbox-home-packages.nix");
+		let home = file.file_name().is_some_and(|name| {
+			name == "nixbox-home-packages.nix" || name == "nixbox-home-settings.nix"
+		});
 		let mut path = vec![
 			"flake".into(),
 			"modules".into(),
@@ -718,7 +916,15 @@ impl Layout {
 		for file in &self.files {
 			let source = fs::read_to_string(file)?;
 			let mut entries = Vec::new();
-			bindings(parsed(&source)?, &[], &mut entries);
+			bindings(
+				if file == &self.root.join("flake.nix") {
+					root_module(&source)?.context("root module disappeared")?
+				} else {
+					parsed(&source)?
+				},
+				&[],
+				&mut entries,
+			);
 			for (path, value) in entries {
 				if home
 					&& path
@@ -792,11 +998,12 @@ impl Layout {
 			crate::scan::ScanTarget::Nixos
 		};
 		let mut out = Vec::new();
+		let shared = self.shared_sources(home)?;
 		for (file, offset, source) in self.connected_sources(home)? {
 			for mut entry in crate::scan::parse(&source, target) {
 				entry.source_attr = format!("{file}: {}", entry.source_attr);
 				entry.line += offset;
-				entry.migratable = false;
+				entry.migratable &= !shared.contains(&(file.clone(), offset));
 				out.push(entry);
 			}
 		}
@@ -813,12 +1020,13 @@ impl Layout {
 			crate::scan::ScanTarget::Nixos
 		};
 		let mut out = Vec::new();
+		let shared = self.shared_sources(home)?;
 		for (file, offset, source) in self.connected_sources(home)? {
 			for mut entry in crate::scan::parse_flake_packages(&source, target) {
 				entry.source_attr = format!("{file}: {}", entry.source_attr);
 				entry.line += offset;
-				entry.migratable = false;
-				entry.removable = false;
+				entry.migratable &= !shared.contains(&(file.clone(), offset));
+				entry.removable &= !shared.contains(&(file.clone(), offset));
 				out.push(entry);
 			}
 		}
@@ -886,6 +1094,18 @@ impl Layout {
 	}
 
 	pub fn is_loaded(&self, file: &Path) -> Result<bool> {
+		if let Ok(relative) = file.strip_prefix(&self.tree) {
+			let candidate = format!("/{}", relative.display());
+			if !accepted_paths(
+				&self.root,
+				&self.predicates,
+				std::slice::from_ref(&candidate),
+			)?
+			.contains(&candidate)
+			{
+				return Ok(false);
+			}
+		}
 		if self.updated_imports(file)?.is_some() {
 			return Ok(false);
 		}
@@ -916,6 +1136,19 @@ impl Layout {
 	}
 
 	pub fn validate_import(&self, file: &Path) -> Result<()> {
+		if let Ok(relative) = file.strip_prefix(&self.tree) {
+			let candidate = format!("/{}", relative.display());
+			ensure!(
+				accepted_paths(
+					&self.root,
+					&self.predicates,
+					std::slice::from_ref(&candidate)
+				)?
+				.contains(&candidate),
+				"the import-tree filter excludes the proposed managed module {}",
+				file.display()
+			);
+		}
 		for path in [file.to_path_buf(), self.root.join("flake.nix")] {
 			if let Ok(metadata) = fs::symlink_metadata(&path) {
 				ensure!(
@@ -958,6 +1191,8 @@ impl Layout {
 			"nixbox-system-settings.nix" => (false, "nixboxSettings"),
 			"nixbox-home-settings.nix" => (true, "nixboxSettings"),
 			"nixbox-home-integration.nix" => (false, "nixboxHomeIntegration"),
+			"nixbox-system-custom.nix" => (false, "nixboxCustom"),
+			"nixbox-home-custom.nix" => (true, "nixboxCustom"),
 			_ => bail!("unsupported dendritic managed file: {name}"),
 		};
 		let suffix = if home || key == "nixboxHomeIntegration" {
@@ -1061,4 +1296,23 @@ pub(crate) fn write(path: &Path, content: String) -> Result<()> {
 		fs::write(path, content)?;
 	}
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn filtered_tree_calls_keep_their_predicates_and_reject_mapping() {
+		for method in ["filter", "filterNot", "match", "matchNot"] {
+			let source = format!("(inputs.import-tree.{method} (path: true) ./modules)");
+			let expression = parsed(&source).unwrap();
+			assert_eq!(tree_path(expression.clone()).as_deref(), Some("./modules"));
+			let function = resolve(expression).children().next().unwrap();
+			assert_eq!(tree_predicates(function).unwrap().len(), 1);
+		}
+		assert!(
+			tree_path(parsed("(inputs.import-tree.map (path: path) ./modules)").unwrap()).is_none()
+		);
+	}
 }

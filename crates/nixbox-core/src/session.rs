@@ -105,6 +105,9 @@ pub struct Session {
 }
 
 impl Session {
+	pub(crate) fn clear_recovery_block(&mut self) {
+		self.recovery_blocked = false;
+	}
 	/// Wraps `engine`, returning the session and the receiver its rebuilds
 	/// report to. Rebuilds are spawned on the tokio runtime this is called
 	/// from, if any; see [`Session::with_runtime`] otherwise.

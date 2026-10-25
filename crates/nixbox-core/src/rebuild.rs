@@ -191,13 +191,14 @@ pub async fn resolve_for(config: &Config, scope: Target) -> anyhow::Result<Rebui
 					via_nixos_fallback: false,
 				});
 			}
+			let (program, mut args) = home_manager_switch_cmd(&root);
+			*args
+				.last_mut()
+				.expect("Home Manager command includes a flake reference") =
+				format!("{}#{}", root.display(), layout.host);
 			return Ok(RebuildCommand {
-				program: "home-manager".into(),
-				args: vec![
-					"switch".into(),
-					"--flake".into(),
-					format!("{}#{host}", root.display()),
-				],
+				program,
+				args,
 				envs: Vec::new(),
 				via_nixos_fallback: false,
 			});

@@ -34,6 +34,16 @@ const KEYS: [&str; 13] = [
 
 #[derive(Subcommand, Debug)]
 pub enum Action {
+	/// Preview or apply conversion of owned modules into native flake-parts files.
+	MigrateDendritic {
+		#[arg(long)]
+		dry_run: bool,
+		#[arg(long)]
+		yes: bool,
+		/// Also move existing root-level flake-parts files into the tree.
+		#[arg(long)]
+		relocate: bool,
+	},
 	/// Inspect detected targets, diagnostics, and managed-file placement without writing.
 	Inspect,
 	/// Print every setting.
@@ -56,6 +66,53 @@ pub enum Action {
 
 pub fn run(action: &Action, global: &GlobalArgs) -> Result<ExitCode> {
 	match action {
+		Action::MigrateDendritic {
+			dry_run,
+			yes,
+			relocate,
+		} => {
+			let mut config = Config::load_or_default()?;
+			global.apply(&mut config);
+			let layout = nixbox_nix::dendritic::Layout::select_output(
+				&config.config_root(),
+				config.nixos_host.as_deref(),
+				config.home_user.as_deref(),
+				config.home_configuration.as_deref(),
+			)?
+			.ok_or_else(|| anyhow::anyhow!("no dendritic configuration was detected"))?;
+			let changes = layout.plan_managed_migration(*relocate)?;
+			if global.json {
+				println!("{}", serde_json::to_string_pretty(&changes)?);
+			} else {
+				for change in &changes {
+					println!(
+						"{} {}",
+						if change.after.is_none() {
+							"Remove"
+						} else if change.before.is_none() {
+							"Create"
+						} else {
+							"Update"
+						},
+						change.path.display()
+					);
+				}
+			}
+			if !dry_run && !changes.is_empty() {
+				anyhow::ensure!(
+					*yes,
+					"review with --dry-run --json, then pass --yes to apply this migration"
+				);
+				if let Some(saved) = nixbox_core::PersistedState::load() {
+					anyhow::ensure!(
+						saved.pending_queue.is_empty() && saved.in_progress.is_none(),
+						"finish or discard saved work before migrating managed modules"
+					);
+				}
+				nixbox_core::apply_managed_migration(&config, &changes)?;
+			}
+			Ok(ExitCode::SUCCESS)
+		}
 		Action::Inspect => inspect(global),
 		Action::Path => {
 			println!("{}", settings_path()?.display());
@@ -227,7 +284,7 @@ fn inspect(global: &GlobalArgs) -> Result<ExitCode> {
 	};
 	let files: Vec<_> = selected.as_ref().map(|config| [nixbox_config::Target::NixosSystem, nixbox_config::Target::HomeManager].into_iter().map(|target| {
 		let path = config.managed_file_for(target);
-		json!({ "target": target_name(target), "path": path, "exists": path.exists(), "placement": if path.parent() == Some(root.as_path()) { "root import" } else { "import-tree" }, "available": target != nixbox_config::Target::HomeManager || config.native_modules_dir.is_none() || config.home_user.is_some() })
+		json!({ "target": target_name(target), "path": path, "exists": path.exists(), "placement": if path.parent() == Some(root.as_path()) { "root import" } else { "import-tree" }, "available": match target { nixbox_config::Target::NixosSystem => config.home_configuration.is_none(), nixbox_config::Target::HomeManager => config.home_configuration.is_some() || config.native_modules_dir.is_none() || config.home_user.is_some() } })
 	}).collect()).unwrap_or_default();
 	let report = json!({ "layout": layout, "root": root, "discovery": discovered, "selected": selected.as_ref().map(Config::identity), "managed_files": files, "diagnostics": diagnostics, "writes": false });
 	if global.json {

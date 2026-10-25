@@ -27,7 +27,7 @@ None of these are written back to the settings file. `nixbox config set` is the 
 
 ## Reading state
 
-`nixbox config inspect` discovers hosts and users and reports the selected identity, managed-file paths, placement, and unsupported-layout diagnostics without writing configuration or loading migrations. Add `--json` for machine-readable output. Save a selection with `nixbox config set nixos-host <name>` and `nixbox config set home-user <name>`; an empty value returns to automatic selection. Changing the saved host clears the saved user. Changing the saved root clears both. Pending recovery work remains bound to its original root, host, and user; select those again or explicitly discard that work.
+`nixbox config inspect` discovers hosts and users and reports the selected identity, managed-file paths, placement, and unsupported-layout diagnostics without writing configuration or loading migrations. Add `--json` for machine-readable output. Both interactive interfaces also offer Settings > Configuration. Save a selection with `nixbox config set nixos-host <name>` and `nixbox config set home-user <name>`; an empty value returns to automatic selection. Changing the saved host clears the saved user. Changing the saved root clears both. A standalone output can be saved with `nixbox config set home-configuration <name>`. Pending recovery work remains bound to its original root, host, and user; select those again or explicitly discard that work.
 
 For supported dendritic configurations, `status` and `doctor` report `flake.nix` as the integration entry point. `scan` includes packages in connected classed feature modules and marks those external entries read-only. Installs, managed removals, and profile operations use generated flake-parts modules. Unsupported layouts fail with a discovery diagnostic. See [Dendritic support](DENDRITIC_PLAN.md).
 
@@ -162,3 +162,5 @@ Help, generated completions, and recovery hints use the executable name you ran.
 | `3` | The configuration was written but the rebuild failed. |
 
 `3` is separate from `1` so a script can tell "NixBox could not do it" from "Nix said no". A `3` means the files are already correct and `nixbox apply` will retry the rebuild.
+
+For explicit managed-module conversion, preview with `nixbox config migrate-dendritic --dry-run --json`, then apply with `--yes`. Add `--relocate` to move existing root-level dendritic files into the tree. Host/user or standalone-output flags select the migration destination. This command changes files without activating them.

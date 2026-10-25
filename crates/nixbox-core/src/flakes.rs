@@ -396,10 +396,16 @@ impl Engine {
 			self.config.nixos_host.as_deref(),
 			self.config.home_user.as_deref(),
 			self.config.home_configuration.as_deref(),
-		)?
-		.is_some();
+		)?;
 		let removed_by_hand = match output {
-			_ if dendritic => false,
+			FlakeOutput::Package(package) if dendritic.is_some() => {
+				let edits = dendritic
+					.as_ref()
+					.expect("checked layout")
+					.plan_remove_flake_package(scope == Target::HomeManager, input, package)?;
+				nixbox_nix::dendritic::SourceEdit::apply_all(&edits)?;
+				!edits.is_empty()
+			}
 			FlakeOutput::Package(package) => {
 				remove_flake_package_from_source(&main_file, scan_target(scope), input, package)?
 			}

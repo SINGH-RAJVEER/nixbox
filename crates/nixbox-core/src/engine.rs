@@ -362,8 +362,10 @@ impl Engine {
 			main.display(),
 			scope.label()
 		);
-		let integrate =
-			scope == Target::HomeManager && mode == PackageMode::Profile && home_inside_nixos;
+		let integrate = scope == Target::HomeManager
+			&& mode == PackageMode::Profile
+			&& home_inside_nixos
+			&& self.config.home_configuration.is_none();
 		let nixos_main = self.integration_file_for(Target::NixosSystem);
 		anyhow::ensure!(
 			!integrate || self.has_main_file(Target::NixosSystem),
@@ -423,13 +425,6 @@ impl Engine {
 			if op.scope() == Target::HomeManager {
 				layout.require_home()?;
 			}
-			anyhow::ensure!(
-				!matches!(
-					op,
-					Op::Migrate { .. } | Op::MigrateAcross { .. } | Op::MigrateFlakePackage { .. }
-				),
-				"migration from dendritic feature modules is read-only until connected-source removal is supported"
-			);
 			layout.validate_import(&self.config.managed_file_for(op.scope()))?;
 			for scope in [Target::HomeManager, Target::NixosSystem] {
 				anyhow::ensure!(
@@ -438,25 +433,42 @@ impl Engine {
 				);
 			}
 		}
+		let source_edits = if let Some(layout) = &dendritic {
+			self.dendritic_source_edits(layout, op)?
+		} else {
+			Vec::new()
+		};
 		let journal = crate::vcs::AppliedJournal::acquire(&self.config)?;
 		let before = crate::vcs::operation_files(&self.config);
 		let home = self.home_manifest.clone();
 		let system = self.nixos_manifest.clone();
 		let home_settings = self.home_settings.clone();
 		let system_settings = self.nixos_settings.clone();
-		let result = self.apply_inner(op, reporter);
+		let result = (|| {
+			if let Some(layout) = &dendritic
+				&& self.apply_dendritic_sources(layout, op, reporter)?
+			{
+				return Ok(());
+			}
+			self.apply_inner(op, reporter)
+		})();
 		if let Err(error) = result {
 			if dendritic.is_some() {
 				self.home_manifest = home;
 				self.nixos_manifest = system;
 				self.home_settings = home_settings;
 				self.nixos_settings = system_settings;
-				let writable = [
+				let mut writable = vec![
 					self.config.flake_file(),
+					self.config.config_root().join("flake.lock"),
 					self.config.managed_file_for(op.scope()),
 					self.config.settings_file_for(op.scope()),
 					self.config.home_integration_file(),
 				];
+				if let Some(layout) = &dendritic {
+					writable.extend(source_edits.iter().map(|edit| edit.path.clone()));
+					writable.push(layout.tree.join("nixbox/inputs.nix"));
+				}
 				for (path, original) in &before {
 					// Conventional entry files and the other target are read-only
 					// during this operation, including paths outside the root.
@@ -464,6 +476,16 @@ impl Engine {
 						continue;
 					}
 					if std::fs::read(path).ok().as_ref() == original.as_ref() {
+						continue;
+					}
+					if let Some(edit) = source_edits.iter().find(|edit| &edit.path == path)
+						&& std::fs::read_to_string(path).ok().as_deref()
+							!= Some(edit.after.as_str())
+					{
+						reporter.warn(format!(
+							"Left a concurrent source edit intact in {}.",
+							path.display()
+						));
 						continue;
 					}
 					match original {
@@ -476,8 +498,12 @@ impl Engine {
 			}
 			return Err(error);
 		}
-		if dendritic.is_some() {
+		if let Some(layout) = &dendritic {
 			git_track(&self.config.flake_file(), reporter);
+			let inputs = layout.tree.join("nixbox/inputs.nix");
+			if inputs.exists() {
+				git_track(&inputs, reporter);
+			}
 		}
 		if let Err(error) = journal.record(&self.config, op, before) {
 			reporter.warn(format!(

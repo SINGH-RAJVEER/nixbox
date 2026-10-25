@@ -24,7 +24,8 @@ The complete shape is:
 	"home_manager_main_file": null,
 	"nixos_main_file": null,
 	"nixos_host": null,
-	"home_user": null
+	"home_user": null,
+	"home_configuration": null
 }
 ```
 
@@ -48,13 +49,15 @@ NixBox saves settings immediately after selecting an input mode, theme, tab labe
 
 Ordinary saves preserve the latest telemetry consent from disk, even if an older open instance still holds an enabled snapshot. The shared `Config::set_telemetry_enabled` function is the only application path that persists explicit consent changes, and it updates consent without overwriting other saved preferences. Failed opt-out saves leave that instance disabled but do not confirm an opt-out for other instances. Removing the settings file also makes a later ordinary save use disabled telemetry defaults.
 
+The optional `nixos_host`, `home_user`, and `home_configuration` fields default to automatic selection. Standalone `home_configuration` is mutually exclusive with a NixOS host. These saved names are separate from the install scope. CLI global flags override them for one invocation. Resolved tree paths and legacy-placement flags are runtime discovery data and are never saved.
+
 The consent foundation honors `NIXBOX_NO_TELEMETRY=1` and `DO_NOT_TRACK=1` as disabling overrides. Environment variables cannot enable collection. Debug and test builds, a present `CI` variable, and a present `NIXBOX_VM_BUILD` variable suppress delivery. These overrides leave saved consent unchanged.
 
 GUI Settings, TUI Settings > Usage data, and `nixbox config set telemetry-enabled true|false` share the consent function. `nixbox telemetry status` shows saved consent, effective status, disclosure, and recipient. `nixbox telemetry preview` prints a synthetic example without collecting or sending anything. All interfaces use the fixed HTTPS recipient `https://nixb.duckdns.org:58443/v1/telemetry`; it has no runtime environment override. Collection requires explicit saved consent and remains suppressed in debug, CI, and VM builds. Version 1 and 2 consent need renewal because it did not disclose this recipient. The collector and optional Axum receiver are implemented and verified against controlled local receivers. See the [telemetry implementation plan](TELEMETRY_PLAN.md) for the allowed fields, Docker/Nginx deployment, and remaining public-service checks.
 
 ## Configuration root
 
-NixBox detects the supported import-tree/flake-parts layout under this root. Named NixOS outputs and their directly attached Home Manager users are discovered from classed modules. `nixos_host` and `home_user` select a target; a unique host/user is selected automatically. Multiple hosts require an explicit host, and Home Manager writes require an explicit user when several are attached. New generated flake-parts modules live under the import-tree with a separate directory for each host/user. Existing root-level dendritic managed files retain their placement. Conventional main-file settings continue to describe conventional configurations. See [Dendritic support](DENDRITIC_PLAN.md).
+NixBox detects the supported import-tree/flake-parts layout under this root. Named NixOS outputs and their directly attached Home Manager users are discovered from classed modules. `nixos_host` and `home_user` select a target; a unique host/user is selected automatically. Multiple hosts require an explicit host, and Home Manager writes require an explicit user when several are attached. New generated flake-parts modules live under the import-tree with a separate directory for each host/user. Existing root-level dendritic managed files retain their placement until explicit migration. `home_configuration` selects a standalone Home Manager output and clears the host selection. GUI/TUI Settings > Configuration lists discovered targets. Conventional main-file settings continue to describe conventional configurations. See [Dendritic support](DENDRITIC_PLAN.md).
 
 The configuration root is, in order: `NIXBOX_CONFIG_DIR` when it is set, then the saved `config_dir` setting, then `$XDG_CONFIG_HOME/nixos`, normally `~/.config/nixos`. Change the saved location in GUI Settings or with `nixbox config set config-dir <path>`; an empty value returns to the default.
 

@@ -126,7 +126,7 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 
 ### `nixbox-nix`
 
-`dendritic.rs` owns read-only import-tree discovery, named host/user selection, classed module references, generated flake-parts rendering, native placement, legacy root import edits, and read-only connected-source scans. Package, settings, and integration writers share its generated-file write path. The engine resolves the selected identity before mutation and restores configuration files and manifests after a failed dendritic operation. Sessions and recovery state bind to that root/host/user. See [Dendritic support](DENDRITIC_PLAN.md) for restrictions and remaining work.
+`dendritic.rs` owns read-only import-tree discovery, named host/user selection, classed module references, generated flake-parts rendering, native placement, legacy root import edits, connected-source scans, and migration plans. Package, settings, and integration writers share its generated-file write path. The engine resolves the selected identity before mutation and restores configuration files and manifests after a failed dendritic operation. Sessions and recovery state bind to that root/host/user. See [Dendritic support](DENDRITIC_PLAN.md) for restrictions and remaining work.
 
 - `search.rs` owns live search, the locked-revision catalog, cache serialization, bounded subprocess output, package-attribute normalization, and relevance ranking.
 - `manifest.rs` owns the combined package modules, nixpkgs and flake marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list. Its `manifest/migration.rs` submodule upgrades separate flake-output files on engine startup, validates generated code with rnix, updates literal imports, and deletes obsolete files after successful writes.
@@ -200,3 +200,5 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - Nothing stops two front-ends running at once. Both would write `state.json` and the managed files, so running the TUI and the GUI side by side is not supported.
 - Generated nixpkgs package sets use `BTreeSet`, and generated external-flake module and package mappings use `BTreeMap`, so output order is deterministic.
 - The build log is bounded to 1,000 lines, live-search stdout to 50 MiB, catalog stdout to 256 MiB, search stderr retention to 64 KiB, package results to 200, and flake results to 20.
+
+Dendritic source migration plans carry expected contents and proposed replacements. Managed-module conversion uses a separate previewable file transaction. Generated-flake input ownership lives in `wiring/generated.rs`, which edits a declarative module and regenerates the root through `write-flake`. `core/configurations.rs` is the shared target-selection interface for the CLI, GUI, and TUI.

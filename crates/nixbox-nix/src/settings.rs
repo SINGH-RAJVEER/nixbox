@@ -115,7 +115,7 @@ impl SettingsFile {
 	}
 }
 
-fn render(manifest: &SettingsManifest) -> String {
+pub(crate) fn render(manifest: &SettingsManifest) -> String {
 	let mut body = String::new();
 	for (path, value) in &manifest.values {
 		body.push_str(&format!(

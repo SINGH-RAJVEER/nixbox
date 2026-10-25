@@ -103,7 +103,12 @@ impl GlobalArgs {
 	pub fn engine(&self) -> Result<Engine> {
 		let mut config = Config::load_or_default()?;
 		self.apply(&mut config);
-		Engine::with_config(config)
+		let engine = Engine::with_config(config)?;
+		anyhow::ensure!(
+			self.target != Some(TargetArg::Nixos) || engine.config.home_configuration.is_none(),
+			"the selected standalone Home Manager output has no NixOS scope"
+		);
+		Ok(engine)
 	}
 }
 

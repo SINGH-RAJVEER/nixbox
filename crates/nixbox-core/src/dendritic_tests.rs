@@ -110,9 +110,66 @@ fn multiple_targets(dir: &crate::tests::TempConfigDir) {
 		home-manager.users.bob = config.flake.modules.homeManager.desktop;
 	};
 }
+
+
 "#,
 	)
 	.unwrap();
+}
+
+#[test]
+fn aliases_inline_root_definitions_and_extra_imports_are_discovered() {
+	let dir = crate::tests::temp_dir("dendritic-discovery-shapes");
+	fixture(&dir);
+	let root = dir.config().config_root();
+	let source = std::fs::read_to_string(root.join("flake.nix")).unwrap();
+	let source = source
+		.replace(
+			"inputs: inputs.flake-parts.lib.mkFlake",
+			"inputs: let mk = inputs.flake-parts.lib.mkFlake; in mk",
+		)
+		.replace(
+			"(inputs.import-tree ./modules)",
+			"{ imports = [ (inputs.import-tree ./modules) ./extra.nix ]; flake.modules.nixos.extra = {}; }",
+		);
+	std::fs::write(root.join("flake.nix"), &source).unwrap();
+	std::fs::write(
+		root.join("extra.nix"),
+		"{ ... }: { flake.modules.nixos.other = {}; }",
+	)
+	.unwrap();
+	let path = root.join("modules/host.nix");
+	let host = std::fs::read_to_string(&path)
+		.unwrap()
+		.replace("inputs.nixpkgs.lib.nixosSystem", "mk")
+		.replace(
+			"{ config, inputs, ... }:",
+			"{ config, inputs, ... }: let mk = inputs.nixpkgs.lib.nixosSystem; in",
+		)
+		.replace(
+			"modules = [ config.flake.modules.nixos.nixos ];",
+			"modules = [ config.flake.modules.nixos.nixos { networking.hostName = \"work\"; } ];",
+		);
+	std::fs::write(path, host).unwrap();
+	let discovery = Layout::inspect(&root).unwrap().unwrap();
+	assert!(
+		discovery
+			.sources
+			.iter()
+			.any(|file| file.modules.contains(&"nixos.extra".into()))
+	);
+	assert!(
+		discovery
+			.sources
+			.iter()
+			.any(|file| file.path.ends_with("extra.nix"))
+	);
+	let engine = Engine::with_config(dir.config()).unwrap();
+	engine.write_manifest(Target::NixosSystem).unwrap();
+	assert_eq!(
+		std::fs::read_to_string(root.join("flake.nix")).unwrap(),
+		source
+	);
 }
 
 #[tokio::test]
@@ -285,6 +342,24 @@ fn existing_root_flake_parts_stay_at_their_original_paths() {
 			)
 			.unwrap();
 		assert_eq!(reloaded.import_state(scope), ImportState::Imported);
+	}
+	let changes = Layout::discover(&root)
+		.unwrap()
+		.unwrap()
+		.plan_managed_migration(true)
+		.unwrap();
+	assert!(changes.iter().any(
+		|change| change.path == root.join("nixbox-home-packages.nix") && change.after.is_none()
+	));
+	nixbox_nix::dendritic::FileChange::apply_all(&changes).unwrap();
+	let relocated = Engine::with_config(dir.config()).unwrap();
+	for scope in [Target::NixosSystem, Target::HomeManager] {
+		assert_ne!(
+			relocated.config.managed_file_for(scope).parent(),
+			Some(root.as_path())
+		);
+		assert_eq!(relocated.import_state(scope), ImportState::Imported);
+		assert!(relocated.manifest_for(scope).packages.contains("hello"));
 	}
 }
 
@@ -513,5 +588,227 @@ fn dendritic_scanning_follows_selected_classes_and_keeps_external_entries_read_o
 	assert_eq!(
 		engine.integration_file_for(Target::HomeManager),
 		config.flake_file()
+	);
+}
+
+#[test]
+fn dendritic_source_migration_preserves_other_declarations_and_refuses_shared_features() {
+	let dir = crate::tests::temp_dir("dendritic-source-migration");
+	fixture(&dir);
+	let root = dir.config().config_root();
+	let path = root.join("modules/desktop.nix");
+	let original = std::fs::read_to_string(&path)
+		.unwrap()
+		.replace("[ pkgs.git ]", "[\n\t\tpkgs.git\n\t]");
+	std::fs::write(&path, &original).unwrap();
+	let mut engine = Engine::with_config(dir.config()).unwrap();
+	assert!(
+		engine
+			.external_packages
+			.iter()
+			.any(|entry| entry.name == "git" && entry.migratable)
+	);
+	engine
+		.apply(
+			&Op::Migrate {
+				names: vec!["git".into()],
+				scope: Target::HomeManager,
+			},
+			&mut SilentReporter,
+		)
+		.unwrap();
+	assert!(engine.home_manifest.packages.contains("git"));
+	assert_eq!(
+		std::fs::read_to_string(&path).unwrap(),
+		original.replace("\t\tpkgs.git\n", "")
+	);
+	std::fs::write(root.join("modules/other.nix"), "{ config, inputs, ... }: { flake.nixosConfigurations.other = inputs.nixpkgs.lib.nixosSystem { modules = [ config.flake.modules.nixos.other ]; }; flake.modules.nixos.other = { home-manager.users.friend = config.flake.modules.homeManager.desktop; }; }").unwrap();
+	std::fs::write(&path, &original).unwrap();
+	let mut config = engine.config.clone();
+	config.nixos_host = Some("nixos".into());
+	let mut engine = Engine::with_config(config).unwrap();
+	assert!(
+		engine
+			.apply(
+				&Op::Migrate {
+					names: vec!["git".into()],
+					scope: Target::HomeManager
+				},
+				&mut SilentReporter
+			)
+			.is_err()
+	);
+	assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+}
+
+#[test]
+fn owned_plain_modules_convert_with_custom_code_preserved_and_root_files_relocate() {
+	let dir = crate::tests::temp_dir("dendritic-conversion");
+	fixture(&dir);
+	let root = dir.config().config_root();
+	let legacy = root.join("nixbox-home-packages.nix");
+	let plain = "# Managed by nixbox. Do not edit by hand.\n{ pkgs, ... }: {\n\thome.packages = [\n\t\t# nixbox:packages:start\n\t\tpkgs.hello\n\t\t# nixbox:packages:end\n\t];\n\tprograms.git.enable = true;\n}\n";
+	std::fs::write(&legacy, plain).unwrap();
+	let path = root.join("modules/desktop.nix");
+	let desktop = std::fs::read_to_string(&path).unwrap().replace(
+		"home.username",
+		"imports = [ ../nixbox-home-packages.nix ];\n\t\thome.username",
+	);
+	std::fs::write(&path, &desktop).unwrap();
+	let layout = Layout::discover(&root).unwrap().unwrap();
+	let changes = layout.plan_managed_migration(false).unwrap();
+	assert_eq!(std::fs::read_to_string(&legacy).unwrap(), plain);
+	assert!(changes.iter().any(|change| {
+		change.path.ends_with("nixbox-home-custom.nix")
+			&& change
+				.after
+				.as_ref()
+				.unwrap()
+				.contains("programs.git.enable")
+	}));
+	nixbox_nix::dendritic::FileChange::apply_all(&changes).unwrap();
+	assert!(!legacy.exists());
+	assert!(
+		!std::fs::read_to_string(path)
+			.unwrap()
+			.contains("../nixbox-home-packages.nix")
+	);
+	let mut engine = Engine::with_config(dir.config()).unwrap();
+	assert!(engine.home_manifest.packages.contains("hello"));
+	engine
+		.apply(
+			&Op::Install {
+				hit: crate::tests::hit("cowsay"),
+				scope: Target::HomeManager,
+			},
+			&mut SilentReporter,
+		)
+		.unwrap();
+	let custom = engine
+		.config
+		.managed_file_for(Target::HomeManager)
+		.with_file_name("nixbox-home-custom.nix");
+	assert!(
+		std::fs::read_to_string(custom)
+			.unwrap()
+			.contains("programs.git.enable = true;")
+	);
+	assert!(
+		Layout::discover(&root)
+			.unwrap()
+			.unwrap()
+			.plan_managed_migration(true)
+			.unwrap()
+			.is_empty()
+	);
+}
+
+#[test]
+fn configuration_picker_lists_targets_and_blocks_switching_with_queued_work() {
+	let dir = crate::tests::temp_dir("dendritic-picker");
+	multiple_targets(&dir);
+	let unresolved = Engine::for_interface(dir.config()).unwrap();
+	let choices = crate::configurations::choices(&unresolved.config).unwrap();
+	assert_eq!(choices.len(), 4);
+	let choice = choices
+		.iter()
+		.find(|choice| {
+			choice.host.as_deref() == Some("server") && choice.user.as_deref() == Some("bob")
+		})
+		.unwrap();
+	let (mut session, _events) = crate::Session::new(unresolved);
+	session.select_configuration(choice).unwrap();
+	assert!(choice.selected(&session.engine.config));
+	session.queue.push_back(Op::Install {
+		hit: crate::tests::hit("hello"),
+		scope: Target::HomeManager,
+	});
+	assert!(session.select_configuration(&choices[0]).is_err());
+	assert!(choice.selected(&session.engine.config));
+}
+
+#[test]
+fn migration_converts_legacy_flake_files_into_the_combined_native_module() {
+	let dir = crate::tests::temp_dir("dendritic-legacy-conversion");
+	fixture(&dir);
+	let root = dir.config().config_root();
+	let legacy = root.join("nixbox-home-flakes.nix");
+	std::fs::write(&legacy, "# Managed by nixbox. Do not edit by hand.\n{ inputs, pkgs, ... }: {\n\thome.packages = [\n\t\t# nixbox:flake-packages:start\n\t\tinputs.tools.packages.${pkgs.stdenv.hostPlatform.system}.default # github:owner/tools\n\t\t# nixbox:flake-packages:end\n\t];\n}\n").unwrap();
+	let desktop = root.join("modules/desktop.nix");
+	let source = std::fs::read_to_string(&desktop).unwrap().replace(
+		"home.username",
+		"imports = [ ../nixbox-home-flakes.nix ];\n\t\thome.username",
+	);
+	std::fs::write(desktop, source).unwrap();
+	let layout = Layout::discover(&root).unwrap().unwrap();
+	let changes = layout.plan_managed_migration(false).unwrap();
+	nixbox_nix::dendritic::FileChange::apply_all(&changes).unwrap();
+	assert!(!legacy.exists());
+	let engine = Engine::with_config(dir.config()).unwrap();
+	let flakes = ManagedFlakeFile::new(engine.config.managed_file_for(Target::HomeManager))
+		.load()
+		.unwrap();
+	assert!(flakes.packages["owner/tools"].contains("default"));
+}
+
+#[test]
+fn flake_package_migration_keeps_the_output_and_releases_only_its_unused_input() {
+	let dir = crate::tests::temp_dir("dendritic-flake-migration");
+	fixture(&dir);
+	let root = dir.config().config_root();
+	let flake = root.join("flake.nix");
+	let source = std::fs::read_to_string(&flake).unwrap().replace(
+		"inputs = {",
+		"inputs = {\n\t\ttools.url = \"github:owner/tools\";",
+	);
+	std::fs::write(&flake, source).unwrap();
+	let desktop = root.join("modules/desktop.nix");
+	let source = std::fs::read_to_string(&desktop).unwrap().replace("home.packages = [ pkgs.git ];", "home.packages = [\n\t\tpkgs.git\n\t\tinputs.tools.packages.${pkgs.stdenv.hostPlatform.system}.default\n\t];");
+	std::fs::write(&desktop, source).unwrap();
+	let mut engine = Engine::with_config(dir.config()).unwrap();
+	engine
+		.apply(
+			&Op::MigrateFlakePackage {
+				input: "tools".into(),
+				package: "default".into(),
+				scope: Target::HomeManager,
+			},
+			&mut SilentReporter,
+		)
+		.unwrap();
+	assert!(
+		!std::fs::read_to_string(&desktop)
+			.unwrap()
+			.contains("inputs.tools")
+	);
+	let managed = ManagedFlakeFile::new(engine.config.managed_file_for(Target::HomeManager))
+		.load()
+		.unwrap();
+	assert_eq!(managed.input_for("owner/tools"), "tools");
+	assert!(managed.packages["owner/tools"].contains("default"));
+	assert!(
+		std::fs::read_to_string(&flake)
+			.unwrap()
+			.contains("tools.url")
+	);
+	engine
+		.apply(
+			&Op::UninstallFlakeOutput {
+				input: "tools".into(),
+				output: FlakeOutput::Package("default".into()),
+				scope: Target::HomeManager,
+			},
+			&mut SilentReporter,
+		)
+		.unwrap();
+	assert!(
+		!std::fs::read_to_string(flake)
+			.unwrap()
+			.contains("tools.url")
+	);
+	assert!(
+		std::fs::read_to_string(desktop)
+			.unwrap()
+			.contains("pkgs.git")
 	);
 }
