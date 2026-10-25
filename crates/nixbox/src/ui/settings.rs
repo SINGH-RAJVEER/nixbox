@@ -24,6 +24,31 @@ const TARGETS: [Target; 2] = [Target::HomeManager, Target::NixosSystem];
 pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let config = &app.session.engine.config;
 	let busy = app.repository.busy;
+	let configuration_choices = app.configuration_choices.clone();
+	let configurations = ButtonGroup::new("configuration-selection")
+		.outline()
+		.small()
+		.children(
+			configuration_choices
+				.iter()
+				.enumerate()
+				.map(|(index, choice)| {
+					Button::new(SharedString::from(format!("configuration-{index}")))
+						.label(choice.label.clone())
+						.selected(choice.selected(config))
+						.disabled(
+							busy || app.session.is_building() || !app.session.queue.is_empty(),
+						)
+				}),
+		)
+		.on_click(cx.listener(move |this, clicked: &Vec<usize>, window, cx| {
+			if let Some(choice) = clicked
+				.first()
+				.and_then(|index| configuration_choices.get(*index))
+			{
+				this.select_configuration(choice, window, cx);
+			}
+		}));
 
 	let targets = ButtonGroup::new("target")
 		.outline()
@@ -32,7 +57,9 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 			Button::new(target.label())
 				.label(target.label())
 				.selected(*target == config.target)
-				.disabled(busy)
+				.disabled(
+					busy || (config.home_configuration.is_some() && *target == Target::NixosSystem),
+				)
 		}))
 		.on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
 			if let Some(target) = clicked.first().and_then(|index| TARGETS.get(*index)) {
@@ -133,6 +160,7 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					cx,
 				))
 				.child(privacy)
+				.child(setting("Configuration", app.configuration_diagnostic.as_deref().unwrap_or("Select a host, attached user, or standalone Home Manager output. Queued work must finish first."), configurations, cx))
 				.child(setting(
 					"Install target",
 					"Where new packages and flakes are added.",

@@ -52,6 +52,7 @@ pub(crate) enum SettingsPage {
 	Channel,
 	Telemetry,
 	TelemetryPreview,
+	Configurations,
 }
 
 /// The queue holds core ops verbatim, so what the TUI schedules is exactly
@@ -134,6 +135,7 @@ pub(crate) enum InstalledCursor {
 }
 
 pub(crate) struct App {
+	pub(crate) configuration_choices: Vec<nixbox_core::configurations::ConfigurationChoice>,
 	pub(crate) repository: crate::repository::Panel,
 	/// The engine, the op queue, the running rebuild, and its log.
 	pub(crate) session: Session,
@@ -201,6 +203,8 @@ impl App {
 
 	pub(crate) fn from_session(session: Session) -> Self {
 		let engine = &session.engine;
+		let configuration_choices =
+			nixbox_core::configurations::choices(&engine.config).unwrap_or_default();
 		let managed = engine.home_manifest.packages.len() + engine.nixos_manifest.packages.len();
 		let external = engine.external_packages.len();
 		let theme_index = theme::ALL
@@ -225,6 +229,7 @@ impl App {
 		}
 		Self {
 			repository: crate::repository::Panel::default(),
+			configuration_choices,
 			session,
 			input,
 			results: Vec::new(),
@@ -436,7 +441,7 @@ pub async fn run() -> Result<()> {
 }
 
 pub async fn run_with_config(config: nixbox_config::Config) -> Result<()> {
-	let engine = Engine::with_config(config)?;
+	let engine = Engine::for_interface(config)?;
 
 	enable_raw_mode()?;
 	let mut stdout = io::stdout();

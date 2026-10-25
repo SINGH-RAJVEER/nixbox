@@ -119,6 +119,8 @@ pub struct NixboxApp {
 	pub build_focus_run: u64,
 
 	pub options: Option<OptionsView>,
+	pub(crate) configuration_choices: Vec<nixbox_core::configurations::ConfigurationChoice>,
+	pub(crate) configuration_diagnostic: Option<String>,
 	pub(crate) options_cache: HashMap<(Target, String), Arc<OptionSet>>,
 	pub(crate) options_epoch: u64,
 	pub(crate) options_task: Option<Task<()>>,
@@ -297,7 +299,14 @@ impl NixboxApp {
 
 		let managed = session.engine.managed_packages().len();
 		let external = session.engine.external_packages.len();
+		let (configuration_choices, configuration_diagnostic) =
+			match nixbox_core::configurations::choices(&session.engine.config) {
+				Ok(choices) => (choices, None),
+				Err(error) => (Vec::new(), Some(error.to_string())),
+			};
 		let mut app = Self {
+			configuration_choices,
+			configuration_diagnostic,
 			keyboard,
 			keyboard_previous_page: Page::Packages,
 			repository,
@@ -1184,6 +1193,9 @@ impl NixboxApp {
 		}
 		let mut config = self.session.engine.config.clone();
 		config.config_dir = path;
+		config.nixos_host = None;
+		config.home_user = None;
+		config.home_configuration = None;
 		let engine = match Engine::with_config(config) {
 			Ok(engine) => engine,
 			Err(error) => {
@@ -1196,6 +1208,7 @@ impl NixboxApp {
 			}
 		};
 		self.session.engine = engine;
+		self.refresh_configuration_choices();
 		let root = self.session.config_dir();
 		self.config_dir_input.update(cx, |input, cx| {
 			input.set_value(root.display().to_string(), window, cx)
@@ -1221,6 +1234,53 @@ impl NixboxApp {
 			Err(error) => format!("Saving settings failed: {error}"),
 		};
 		self.set_status(status, cx);
+	}
+
+	pub(crate) fn select_configuration(
+		&mut self,
+		choice: &nixbox_core::configurations::ConfigurationChoice,
+		_window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		if !self.nixos.staged.is_empty()
+			|| self
+				.options
+				.as_ref()
+				.is_some_and(|options| !options.staged.is_empty())
+		{
+			self.set_status(
+				"Apply or discard staged option edits before changing configuration.",
+				cx,
+			);
+			return;
+		}
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		match self.session.select_configuration(choice) {
+			Ok(()) => {
+				self.options_epoch = self.options_epoch.wrapping_add(1);
+				self.options_cache.clear();
+				self.options = None;
+				self.options_task = None;
+				self.nixos.reset();
+				self.set_status(format!("Configuration set to {}.", choice.label), cx);
+			}
+			Err(error) => self.set_status(format!("Could not change configuration: {error:#}"), cx),
+		}
+	}
+
+	fn refresh_configuration_choices(&mut self) {
+		match nixbox_core::configurations::choices(&self.session.engine.config) {
+			Ok(choices) => {
+				self.configuration_choices = choices;
+				self.configuration_diagnostic = None;
+			}
+			Err(error) => {
+				self.configuration_choices.clear();
+				self.configuration_diagnostic = Some(error.to_string());
+			}
+		}
 	}
 
 	/// Notification and dialog layers, drawn above the page.
@@ -1742,5 +1802,65 @@ mod tests {
 			assert!(window.try_find("repository-create-remote").is_some());
 		})
 		.expect("window");
+	}
+	#[gpui_kit::test]
+	async fn configuration_picker_renders_choices_and_blocks_queued_target_changes(
+		cx: &mut TestAppContext,
+	) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.unwrap();
+		let config = Config {
+			config_dir: Some(std::env::temp_dir().join("nixbox-picker-render-only")),
+			..Config::default()
+		};
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			config,
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let mut session = session.without_persistence();
+		session.queue.push_back(Op::Install {
+			hit: SearchHit {
+				attr: "hello".into(),
+				pname: "hello".into(),
+				version: String::new(),
+				description: String::new(),
+			},
+			scope: Target::NixosSystem,
+		});
+		let mut view = None;
+		let handle = cx.open_window(size(px(1180.), px(1400.)), |window, cx| {
+			let app = cx.new(|cx| {
+				let mut app =
+					NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx);
+				app.page = Page::Settings;
+				app.configuration_choices =
+					vec![nixbox_core::configurations::ConfigurationChoice {
+						label: "NixOS: server".into(),
+						host: Some("server".into()),
+						user: None,
+						home: None,
+					}];
+				app
+			});
+			view = Some(app.clone());
+			Root::new(app, window, cx)
+		});
+		let view = view.unwrap();
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.render_frame(cx);
+			assert!(window.find("configuration-0").bounds().size.width > px(0.));
+			window
+				.within("configuration-selection")
+				.click("configuration-0", cx);
+			view.update(cx, |app, _| {
+				assert!(app.session.engine.config.nixos_host.is_none())
+			});
+		})
+		.unwrap();
 	}
 }
