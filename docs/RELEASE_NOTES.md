@@ -4,6 +4,8 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- The desktop NixOS settings editor now uses dropdowns for all enumerated choices and labels boolean toggles Enabled or Disabled. Nullable booleans retain an explicit null choice in a dropdown; controls stage changes until Apply.
+- Builds now use every CPU core by default. The flake packages no longer cap compilation at two jobs, and checkout Cargo builds drop the two-job `.cargo/config.toml` default. A positive `buildJobs` package override, `--jobs`, or `CARGO_BUILD_JOBS` still sets a lower limit for machines with little RAM.
 - Added hardware-aware filtering to the NixOS browser in the GUI and TUI. Link the selected host to this machine's detected CPU, GPUs, Bluetooth, and battery; known irrelevant settings then disappear from search and editor groups. Configured and staged settings stay accessible, incomplete detection stays unknown, and Show all restores excluded hardware settings.
 
 ## 0.4.6 - 2026-10-23

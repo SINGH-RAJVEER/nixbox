@@ -13,19 +13,19 @@ If the command succeeds there and fails with plain Cargo, the host Rust toolchai
 
 ## Builds use too much memory
 
-NixBox's flake packages limit each package's build and test compilation to two compiler jobs by default. They preserve a lower `NIX_BUILD_CORES` allowance from Nix. This applies to the GUI, TUI, and CLI on every supported build platform, including a remote builder. It also applies when the Cargo-installed launcher runs the matching flake release.
+NixBox's flake packages build and compile tests with every core Nix allows through its `cores` setting, so a machine with little RAM per core can run out of memory. This applies to the GUI, TUI, and CLI on every supported build platform, including a remote builder. It also applies when the Cargo-installed launcher runs the matching flake release.
 
-Choose a positive integer `buildJobs` for the machine doing the build. For example, a larger machine can raise the package ceiling:
+Choose a positive integer `buildJobs` to cap compiler jobs for the machine doing the build:
 
 ```nix
 home.packages = [
 	(nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
-		buildJobs = 8;
+		buildJobs = 2;
 	})
 ];
 ```
 
-With the overlay, use `pkgs.nixbox.override { buildJobs = 8; }`. The TUI and CLI packages accept the same override. Set `buildJobs = 1` for a lower ceiling. The effective concurrency is the smaller of this ceiling and Nix's `cores` allowance, so a larger override also needs a sufficient allowance from Nix.
+With the overlay, use `pkgs.nixbox.override { buildJobs = 2; }`. The TUI and CLI packages accept the same override. The effective concurrency is the smaller of this ceiling and Nix's `cores` allowance.
 
 The package ceiling does not limit other packages that Nix builds at the same time. Nix's `max-jobs` controls simultaneous package builds, and `cores` supplies the per-package allowance. Configure those for the build machine's RAM and workload. The launcher inherits these settings and does not replace them. A compiler job or linker can still use substantial memory, so a job limit is not a memory ceiling.
 
@@ -37,13 +37,13 @@ cargo install nixbox-tui --locked --jobs 2
 cargo install nixbox-cli --locked --jobs 2
 ```
 
-The native GUI command requires graphics development libraries. The default `cargo install nixbox` builds a small launcher instead. Cargo registry installs do not read this repository's `.cargo/config.toml`; use `--jobs` or `CARGO_BUILD_JOBS` to select their concurrency.
+The native GUI command requires graphics development libraries. The default `cargo install nixbox` builds a small launcher instead. Cargo uses every core unless `--jobs` or `CARGO_BUILD_JOBS` selects a lower concurrency.
 
-Checkout builds default to two jobs through `.cargo/config.toml`. An explicit `--jobs` or `CARGO_BUILD_JOBS` overrides that default, including for the `just` recipes:
+Checkout builds use every core by default. An explicit `--jobs` or `CARGO_BUILD_JOBS` lowers that, including for the `just` recipes:
 
 ```sh
 CARGO_BUILD_JOBS=1 devenv shell -- just ci
-CARGO_BUILD_JOBS=8 devenv shell -- just gui
+CARGO_BUILD_JOBS=2 devenv shell -- just gui
 ```
 
 ## Rust linker wrapper points to a missing Nix store path

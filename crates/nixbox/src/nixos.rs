@@ -513,7 +513,7 @@ impl NixboxApp {
 mod tests {
 	use super::*;
 	use gpui_kit::component::Root;
-	use gpui_kit::test::TestWindowExt as _;
+	use gpui_kit::test::{TestAppContextExt as _, TestWindowExt as _};
 	use gpui_kit::{AppContext as _, TestAppContext, px, size};
 	use nixbox_config::{Config, Target};
 	use nixbox_core::options::NIXOS_HOST;
@@ -703,6 +703,161 @@ mod tests {
 			assert!(window.try_find("nixos-details").is_none());
 		})
 		.expect("small window");
+	}
+
+	#[gpui_kit::test]
+	async fn nixos_switches_and_dropdowns_stage_values_from_clicks(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(900.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				app.nixos.initialized = true;
+				app.nixos.hosts = vec![NIXOS_HOST.into()];
+				app.nixos.configuration = Some(NixosConfiguration {
+					root: app.session.config_dir(),
+					host: NIXOS_HOST.into(),
+				});
+				app.nixos.options = vec![
+					option("custom.enable", "Enable the service", false),
+					option("custom.mode", "Service mode", false),
+					option("custom.optional", "Optional flag", false),
+				];
+				app.nixos.filter("");
+				app.nixos.group = vec![
+					editable("custom.enable", OptionKind::Bool, serde_json::json!(false)),
+					editable(
+						"custom.mode",
+						OptionKind::Enum(vec!["auto".into(), "manual".into()]),
+						serde_json::json!("auto"),
+					),
+					editable(
+						"custom.optional",
+						OptionKind::Nullable(Box::new(OptionKind::Bool)),
+						serde_json::Value::Null,
+					),
+				];
+				app.select_nixos_option(vec!["custom".into(), "enable".into()], window, cx);
+				app.set_page(Page::Nixos, window, cx);
+			});
+			window.render_frame(cx);
+			window.click(("nixos-bool", 0_usize), cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[0]),
+					Some(SettingValue::Bool(true))
+				);
+				assert!(
+					app.session.queue.is_empty(),
+					"A toggle only stages the edit"
+				);
+			});
+			window.click(("nixos-bool", 0_usize), cx);
+			app.read_with(cx, |app, _| assert!(app.nixos.staged.is_empty()));
+			window.click(("nixos-menu", 1_usize), cx);
+			assert_eq!(
+				window.within("popup-menu").find(0_usize).label(),
+				Some("auto")
+			);
+			assert_eq!(
+				window.within("popup-menu").find(1_usize).label(),
+				Some("manual")
+			);
+			window.within("popup-menu").click(1_usize, cx);
+			window.render_frame(cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[1]),
+					Some(SettingValue::Str("manual".into()))
+				);
+				assert!(
+					app.session.queue.is_empty(),
+					"A dropdown only stages the edit"
+				);
+			});
+		})
+		.expect("enum window");
+		cx.wait_for(
+			handle.into(),
+			std::time::Duration::from_secs(1),
+			|window, _| window.try_find("popup-menu").is_none(),
+		)
+		.await;
+		let mut unset = None;
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.click(("nixos-menu", 2_usize), cx);
+			let labels: Vec<_> = (0_usize..3)
+				.map(|index| {
+					window
+						.within("popup-menu")
+						.find(index)
+						.label()
+						.map(str::to_owned)
+				})
+				.collect();
+			assert!(
+				labels.contains(&Some("null".into())),
+				"Nullable flags retain an explicit null choice"
+			);
+			let enabled = labels
+				.iter()
+				.position(|label| label.as_deref() == Some("true"))
+				.expect("true choice");
+			unset = Some(
+				labels
+					.iter()
+					.position(|label| label.as_deref() == Some("null"))
+					.expect("null choice"),
+			);
+			window.within("popup-menu").click(enabled, cx);
+			window.render_frame(cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[2]),
+					Some(SettingValue::Bool(true))
+				);
+			});
+		})
+		.expect("nullable window");
+		cx.wait_for(
+			handle.into(),
+			std::time::Duration::from_secs(1),
+			|window, _| window.try_find("popup-menu").is_none(),
+		)
+		.await;
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.click(("nixos-menu", 2_usize), cx);
+			window
+				.within("popup-menu")
+				.click(unset.expect("null choice"), cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[2]),
+					Some(SettingValue::Null)
+				);
+				assert_eq!(app.nixos.staged.len(), 1, "Restoring null drops that edit");
+			});
+		})
+		.expect("window");
 	}
 
 	#[gpui_kit::test]

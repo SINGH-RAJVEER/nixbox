@@ -26,15 +26,17 @@
         {
           pkgs,
           package ? "nixbox",
-			buildJobs ? 2,
+			# null builds with every core Nix allows; a positive integer caps it.
+			buildJobs ? null,
         }:
         let
           binary = if gui then "nixbox-gui" else package;
           gui = package == "nixbox";
-			limitBuildJobs = ''
+			limitBuildJobs = pkgs.lib.optionalString (buildJobs != null) ''
 				if (( NIX_BUILD_CORES > ${toString buildJobs} )); then
 					export NIX_BUILD_CORES=${toString buildJobs}
 				fi
+			'' + ''
 				# Nextest's -j limits test execution, not test compilation.
 				export CARGO_BUILD_JOBS="$NIX_BUILD_CORES"
 			'';
@@ -48,8 +50,8 @@
             pkgs.libxcb
           ];
         in
-		assert pkgs.lib.assertMsg (builtins.isInt buildJobs && buildJobs > 0)
-			"NixBox buildJobs must be a positive integer";
+		assert pkgs.lib.assertMsg (buildJobs == null || (builtins.isInt buildJobs && buildJobs > 0))
+			"NixBox buildJobs must be null or a positive integer";
         pkgs.rustPlatform.buildRustPackage {
           pname = package;
           version = cargoToml.workspace.package.version;

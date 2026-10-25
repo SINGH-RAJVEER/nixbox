@@ -717,33 +717,16 @@ fn control(
 	let nullable = matches!(kind, OptionKind::Nullable(_));
 	match kind.inner() {
 		OptionKind::Bool if !nullable => Switch::new(("nixos-bool", index))
+			.label(if matches!(current, Some(SettingValue::Bool(true))) {
+				"Enabled"
+			} else {
+				"Disabled"
+			})
 			.checked(matches!(current, Some(SettingValue::Bool(true))))
 			.on_click(cx.listener(move |this, checked: &bool, _, cx| {
 				this.stage_nixos(&path, Some(SettingValue::Bool(*checked)), cx);
 			}))
 			.into_any_element(),
-		OptionKind::Bool | OptionKind::Enum(_) if choices(kind).len() <= CHOICE_BUTTONS => {
-			let values = choices(kind);
-			h_flex()
-				.child(
-					ButtonGroup::new(("nixos-choice", index))
-						.outline()
-						.small()
-						.children(values.iter().enumerate().map(|(choice, value)| {
-							Button::new(("nixos-choice-value", choice))
-								.label(choice_label(value))
-								.selected(current.as_ref() == Some(value))
-						}))
-						.on_click(cx.listener(move |this, clicked: &Vec<usize>, _, cx| {
-							if let Some(value) =
-								clicked.first().and_then(|choice| values.get(*choice))
-							{
-								this.stage_nixos(&path, Some(value.clone()), cx);
-							}
-						})),
-				)
-				.into_any_element()
-		}
 		OptionKind::Bool | OptionKind::Enum(_) => {
 			let values = choices(kind);
 			let label = current
@@ -810,9 +793,6 @@ fn control(
 		.into_any_element(),
 	}
 }
-
-/// Choices up to this many show as buttons; more open a menu.
-const CHOICE_BUTTONS: usize = 4;
 
 fn choice_label(value: &SettingValue) -> String {
 	match value {

@@ -10,7 +10,7 @@ let
 			pkgs.lib.concatMapStringsSep "\n" (phase:
 				pkgs.lib.concatMapStringsSep "\n" (cores:
 					let
-						expected = toString (pkgs.lib.min cores buildJobs);
+						expected = toString (if buildJobs == null then cores else pkgs.lib.min cores buildJobs);
 					in
 					''
 						(
@@ -27,7 +27,8 @@ let
 				) [ 1 2 24 ]
 			) [ "preBuild" "preCheck" ]
 		) [
-			{ configured = package; buildJobs = 2; }
+			{ configured = package; buildJobs = null; }
+			{ configured = package.override { buildJobs = 2; }; buildJobs = 2; }
 			{ configured = package.override { buildJobs = 8; }; buildJobs = 8; }
 		];
 in

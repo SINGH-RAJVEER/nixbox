@@ -213,7 +213,7 @@ The current code has limited tracing calls, so the TUI status line and Building 
 
 ## Nix package
 
-Checkout Cargo builds default to two compiler jobs through `.cargo/config.toml`. Use `--jobs` or `CARGO_BUILD_JOBS` to choose another limit. This configuration stays outside the flake's source set, so it cannot override the Nix package's separate job policy.
+Checkout Cargo builds use every CPU core, Cargo's default. Use `--jobs` or `CARGO_BUILD_JOBS` to choose a lower limit.
 
 The repository flake exports:
 
@@ -235,7 +235,7 @@ nix run . -- --version
 
 The Cargo-installed binary does not receive the Nix wrapper, so users must provide its external commands themselves.
 
-Each flake package defaults to `buildJobs = 2` and caps `NIX_BUILD_CORES` in both `preBuild` and `preCheck`, preserving a lower allowance. It also exports the capped value as `CARGO_BUILD_JOBS` because Nextest's `-j` controls test execution rather than test compilation. Override the ceiling with `package.override { buildJobs = 8; }`. The override must be a positive integer. The same policy applies to packages created through the overlay. `checks.<system>.build-jobs` exercises the actual hooks for the default and an eight-job override with one, two, and 24 allowed cores, and checks that invalid limits are rejected. Run it with `nix build .#checks.x86_64-linux.build-jobs`. See [build resource limits](TROUBLESHOOTING.md#builds-use-too-much-memory) for installation and machine-wide settings.
+Each flake package defaults to `buildJobs = null`, which builds and compiles tests with every core Nix allows through `NIX_BUILD_CORES`. Both `preBuild` and `preCheck` export that value as `CARGO_BUILD_JOBS` because Nextest's `-j` controls test execution rather than test compilation. A positive integer such as `package.override { buildJobs = 2; }` caps `NIX_BUILD_CORES` in both phases, preserving a lower allowance. The same policy applies to packages created through the overlay. `checks.<system>.build-jobs` exercises the actual hooks for the uncapped default and two- and eight-job overrides with one, two, and 24 allowed cores, and checks that invalid limits are rejected. Run it with `nix build .#checks.x86_64-linux.build-jobs`. See [build resource limits](TROUBLESHOOTING.md#builds-use-too-much-memory) for installation and machine-wide settings.
 
 ## Version control
 
