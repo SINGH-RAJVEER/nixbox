@@ -2,7 +2,11 @@ use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode};
 
 /// The independently installed desktop GUI flake package.
-const PACKAGE: &str = "nixbox";
+const PACKAGE: &str = if env!("CARGO_PKG_VERSION_PRE").is_empty() {
+	"nixbox"
+} else {
+	"nixbox-nightly"
+};
 
 #[rustfmt::skip]
 fn flake_ref() -> String {

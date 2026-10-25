@@ -11,6 +11,11 @@ build:
 release:
 	cargo build --workspace --exclude nixbox --release
 
+# Set the workspace release channel, for example: just version --nightly
+[positional-arguments]
+version *args:
+	uv run scripts/version.py "$@"
+
 # Type-check without codegen
 check:
 	cargo check --workspace --exclude nixbox
@@ -131,7 +136,11 @@ dev-test:
 	devenv test
 
 # Full pre-commit gate: format, lint, test
-ci: fmt lint test telemetry-ci
+ci: fmt lint test telemetry-ci version-ci
+
+# Validate stable/nightly transitions and workspace version consistency
+version-ci:
+	uv run --no-project python -m unittest discover -s scripts -p 'test_*.py'
 
 # Validate the optional Axum receiver and local telemetry delivery.
 telemetry-ci:

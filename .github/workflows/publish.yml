@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - master
+      - dev
   pull_request:
     branches:
       - master
+      - dev
 
 permissions:
   contents: read
@@ -19,13 +21,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  prepare:
+    name: Select release channel
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.version.outputs.channel }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Select version
+        id: version
+        env:
+          RELEASE_BRANCH: ${{ github.base_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if test "$RELEASE_BRANCH" = dev; then
+            channel=nightly
+            # The source date and run number stay fixed across retry attempts.
+            date="$(date -u -d "@$(git show -s --format=%ct)" +%Y%m%d)"
+            version="$(uv run scripts/version.py --nightly --date "$date" --sequence "$GITHUB_RUN_NUMBER")"
+          else
+            channel=stable
+            version="$(uv run scripts/version.py --stable)"
+            # Merging nightly manifests requires an explicit stable promotion.
+            git diff --exit-code -- Cargo.toml Cargo.lock 'crates/*/Cargo.toml'
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   test:
     name: Format, lint, and test
     runs-on: ubuntu-latest
+    needs: prepare
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+      - name: Test release versioning
+        run: uv run --no-project python -m unittest discover -s scripts -p 'test_*.py'
+      - name: Apply release version
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: uv run scripts/version.py "--$RELEASE_CHANNEL" --version "$RELEASE_VERSION"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -85,16 +126,26 @@ jobs:
           chmod +x "$fake_dir/nix"
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           output="$(PATH="$fake_dir:$PATH" target/debug/nixbox-gui --target nixos)"
-          expected="$(printf '<run>\n<github:SINGH-RAJVEER/nixbox/v%s#nixbox>\n<-->\n<--target>\n<nixos>' "$version")"
+          package=nixbox
+          if [[ "$version" == *-nightly.* ]]; then package=nixbox-nightly; fi
+          expected="$(printf '<run>\n<github:SINGH-RAJVEER/nixbox/v%s#%s>\n<-->\n<--target>\n<nixos>' "$version" "$package")"
           test "$output" = "$expected"
 
   gui:
     name: Desktop GUI
     runs-on: ubuntu-latest
+    needs: prepare
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+      - name: Apply release version
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: uv run scripts/version.py "--$RELEASE_CHANNEL" --version "$RELEASE_VERSION"
 
       - name: Install the graphics stack
         run: |
@@ -124,20 +175,28 @@ jobs:
   nix:
     name: Nix build limits
     runs-on: ubuntu-latest
+    needs: prepare
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v6
+      - name: Apply release version
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: uv run scripts/version.py "--$RELEASE_CHANNEL" --version "$RELEASE_VERSION"
+
       - name: Install Nix
         uses: cachix/install-nix-action@3c6342b75005b9cc7c7d4069c3e9179247c89012 # v31
 
       - name: Check package build limits
-        run: nix build --no-link --print-build-logs --max-jobs 1 --cores 2 .#checks.x86_64-linux.build-jobs
+        run: nix build --no-link --print-build-logs --max-jobs 1 --cores 2 .#checks.x86_64-linux.build-jobs .#checks.x86_64-linux.release-channels
 
   publish:
     name: Publish workspace crates
-    needs: [test, gui, nix]
+    needs: [prepare, test, gui, nix]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -146,6 +205,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+      - name: Apply release version
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: uv run scripts/version.py "--$RELEASE_CHANNEL" --version "$RELEASE_VERSION"
 
       - name: Install the graphics stack
         run: |
@@ -165,12 +231,27 @@ jobs:
 
       - name: Tag matching flake release
         id: release_ref
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           tag="v${version}"
+          if test "$RELEASE_CHANNEL" = nightly; then
+            # Commit before both initial publication and retries so Cargo
+            # always publishes from a clean tree.
+            git config user.name github-actions
+            git config user.email github-actions@users.noreply.github.com
+            git add Cargo.toml Cargo.lock 'crates/*/Cargo.toml'
+            git commit -m "chore: nightly $version"
+          fi
           if remote_commit="$(git ls-remote --exit-code --tags origin "refs/tags/${tag}" | cut -f1)"; then
-            if test "$remote_commit" = "$GITHUB_SHA"; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            if test "$RELEASE_CHANNEL" = nightly; then
+              test "$(git rev-parse "$tag^")" = "$GITHUB_SHA"
+              git diff --exit-code "$tag" HEAD
+              echo 'publish=true' >> "$GITHUB_OUTPUT"
+            elif test "$remote_commit" = "$GITHUB_SHA"; then
               echo 'publish=true' >> "$GITHUB_OUTPUT"
             else
               echo "${tag} already points to a previous release; skipping publish"
