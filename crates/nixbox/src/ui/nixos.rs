@@ -254,7 +254,8 @@ fn toolbar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 		.child(
 			Switch::new("nixos-diagnostic")
 				.label("Diagnostic options")
-				.checked(app.nixos.show_diagnostic)
+				.checked(app.nixos.show_diagnostic || app.nixos.category == Category::Configured)
+				.disabled(app.nixos.category == Category::Configured)
 				.on_click(cx.listener(|this, checked: &bool, _, cx| {
 					this.nixos.show_diagnostic = *checked;
 					this.refresh_nixos_filter(cx);
@@ -331,6 +332,7 @@ fn category_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoEleme
 						.text_color(cx.theme().muted_foreground)
 						.child(count.to_string()),
 				)
+				.test_support()
 		}))
 }
 
@@ -382,13 +384,29 @@ fn option_column(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				)
 				.child(summary),
 		)
+		.when(app.nixos.category == Category::Configured, |column| {
+			let unknown = app.nixos.options.iter()
+				.filter(|option| option.configured.is_none() && !option.nested && !option.template)
+				.count();
+			let mut note = "Detected from this host's configuration and imports. Structured settings are grouped under their parent option.".to_string();
+			if unknown > 0 {
+				note.push_str(&format!(" Could not determine whether {unknown} options are configured; see All options."));
+			}
+			column.child(div().id("nixos-configured-note").px_6().py_2()
+				.text_xs().text_color(cx.theme().muted_foreground).child(note).test_support())
+		})
 		.child(div().flex_1().min_h_0().child(option_list(app, cx)))
 		.into_any_element()
 }
 
 fn option_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	if app.nixos.visible.is_empty() {
-		return empty("No options match this category and search.", cx).into_any_element();
+		let message = if app.nixos.category == Category::Configured {
+			"No configured options match this search. Reload after saving configuration changes."
+		} else {
+			"No options match this category and search."
+		};
+		return empty(message, cx).into_any_element();
 	}
 	uniform_list(
 		"nixos-options",

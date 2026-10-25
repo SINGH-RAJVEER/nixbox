@@ -606,6 +606,7 @@ mod tests {
 					option("services.pipewire.enable", "Sound server", false),
 					option("custom.welcome", "Welcome message", false),
 				];
+				app.nixos.options[0].configured = Some(true);
 				app.nixos.filter("");
 			});
 			window.render_frame(cx);
@@ -613,6 +614,17 @@ mod tests {
 			window.render_frame(cx);
 			assert!(window.find(("nixos-option", 0_usize)).visible());
 			assert!(window.find(("nixos-option", 1_usize)).visible());
+			window.click(("nixos-category", Category::Configured.index()), cx);
+			window.render_frame(cx);
+			app.update(cx, |app, _| {
+				assert_eq!(app.nixos.category, Category::Configured);
+				assert_eq!(app.nixos.visible, [0]);
+				assert_eq!(app.nixos.counts[Category::Configured.index()], 1);
+			});
+			assert!(window.find("nixos-configured-note").visible());
+			assert!(window.try_find(("nixos-option", 1_usize)).is_none());
+			window.click(("nixos-category", Category::All.index()), cx);
+			window.render_frame(cx);
 			app.update(cx, |app, cx| {
 				app.nixos
 					.options
@@ -701,6 +713,14 @@ mod tests {
 			window.render_frame(cx);
 			assert!(window.find(("nixos-option", 0_usize)).visible());
 			assert!(window.try_find("nixos-details").is_none());
+			window.click(("nixos-category", Category::Configured.index()), cx);
+			window.render_frame(cx);
+			app.update(cx, |app, _| {
+				assert_eq!(app.nixos.category, Category::Configured);
+				assert_eq!(app.nixos.visible, [0]);
+				assert!(app.session.queue.is_empty());
+			});
+			assert!(window.find("nixos-configured-note").visible());
 		})
 		.expect("small window");
 	}

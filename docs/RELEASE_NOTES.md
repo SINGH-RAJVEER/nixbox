@@ -4,6 +4,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added a Configured options filter to the NixOS settings browser in the GUI and TUI. It detects settings from the selected host and its imports, supports search and counts, and groups structured settings under their parent option. Values remain lazily inspected and credential fields stay withheld.
 - Nix builds now reuse compiled dependencies through Crane, filter documentation and unrelated interface implementations from build sources, and run tests as separate flake checks. CI builds packages for the supported Linux and macOS systems and can publish them to `nixbox.cachix.org` when its upload secret is configured. Development builds retain line backtraces with less debug information; the `debugging` profile restores full variable inspection.
 - The desktop NixOS settings editor now uses dropdowns for all enumerated choices and labels boolean toggles Enabled or Disabled. Nullable booleans retain an explicit null choice in a dropdown; controls stage changes until Apply.
 - Builds now use every CPU core by default. The flake packages no longer cap compilation at two jobs, and checkout Cargo builds drop the two-job `.cargo/config.toml` default. A positive `buildJobs` package override, `--jobs`, or `CARGO_BUILD_JOBS` still sets a lower limit for machines with little RAM.
