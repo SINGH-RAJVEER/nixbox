@@ -159,9 +159,21 @@ impl NixboxApp {
 							.child(format!("Installing into {target}")),
 					)
 					.when(self.session.engine.config.close_button, |row| {
-						row.child(close_button(cx))
+						row.child(div().w_8().flex_shrink_0())
 					}),
 			)
+			.when(self.session.engine.config.close_button, |row| {
+				row.child(
+					div()
+						.absolute()
+						.top_0()
+						.bottom_0()
+						.right_2()
+						.flex()
+						.items_center()
+						.child(close_button(cx)),
+				)
+			})
 	}
 
 	fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {

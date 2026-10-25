@@ -1695,8 +1695,10 @@ mod tests {
 			assert!(first.top() < px(8.), "Tabs sit at the top: {first:?}");
 			let close = window.find("window-close").bounds();
 			assert!(
-				close.right() > px(1140.) && close.top() < px(16.),
-				"The close button sits at the top right: {close:?}"
+				(close.right() - px(1172.)).abs() < px(1.)
+					&& ((close.top() + close.bottom()) / 2. - (first.top() + first.bottom()) / 2.)
+						.abs() < px(1.),
+				"The close button sits at the right, vertically centered with the tabs: {close:?}"
 			);
 			app.update(cx, |app, cx| {
 				app.session.engine.config.close_button = false;
