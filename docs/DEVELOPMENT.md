@@ -149,6 +149,20 @@ The project does not contain end-to-end terminal snapshot tests. Unit tests cann
 
 ## Testing in a VM
 
+For an existing dendritic configuration, use the independent copy-and-test workflow:
+
+```sh
+just vm-dendritic-seed ~/.config/nixos-dendritic
+just vm-dendritic-cli --target nixos install hello --no-rebuild --yes
+just vm-dendritic-cli --target home-manager install cowsay --no-rebuild --yes
+just vm-dendritic-build
+just vm-dendritic
+```
+
+This seeds `.vm/dendritic/nixos` once, creates an independent JJ repository, and adds a VM-only store-registration helper for fresh-disk profile activation. It excludes source VCS metadata and isolates XDG state. Activations build the guest; they never switch the host. The guest retains the copied configuration's credentials. See [Dendritic support](DENDRITIC_PLAN.md) for implementation boundaries and the first-boot registration behavior.
+
+The dendritic runner clears inherited QEMU options and pins writable shares, exchange files, temporary runner state, and the guest disk under `.vm/dendritic`. Its generated Nix store share is read-only. Host-isolation verification records source configuration and profile fingerprints before and after a guest run, including guest-only writes to paths matching host configuration/profile locations.
+
 Run the checkout's front-ends on your Linux host against one isolated VM configuration:
 
 ```sh

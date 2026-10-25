@@ -68,6 +68,22 @@ clean:
 
 # ── Test VM ────────────────────────────────────────────────────────────────────
 
+# Copy a dendritic configuration into this workspace's disposable VM area
+vm-dendritic-seed source:
+	bash vm/dendritic.sh seed {{quote(source)}}
+
+# Exercise the checkout's CLI against that copy; activations build only the VM
+[positional-arguments]
+vm-dendritic-cli *args="--help":
+	devenv shell -- bash vm/dendritic.sh cli "$@"
+
+# Build or boot the copied configuration without switching the host
+vm-dendritic-build:
+	devenv shell -- bash vm/dendritic.sh build
+
+vm-dendritic:
+	devenv shell -- bash vm/dendritic.sh run
+
 # Run the checkout's GUI against an isolated VM configuration; Apply builds the VM
 [positional-arguments]
 vm-gui *args:
