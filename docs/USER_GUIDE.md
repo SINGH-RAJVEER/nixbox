@@ -86,7 +86,7 @@ The search field matches option paths and descriptions, with exact paths first. 
 
 ### Building
 
-The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
+The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `u`, when no rebuild is running, to update every flake input and rebuild the system: NixOS, then a standalone Home Manager configuration if the flake has one. See [Updating the system](CLI.md#updating-the-system). Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
 
 ### Queue
 

@@ -30,6 +30,9 @@ use crate::telemetry::{self, ActivationAttempt, Telemetry};
 /// Lines kept in the build log. Older lines are dropped first.
 pub const LOG_LIMIT: usize = 1000;
 
+/// The label of a [`Session::start_update`] rebuild.
+pub const UPDATE_LABEL: &str = "update the system";
+
 /// The rebuild currently running.
 #[derive(Debug)]
 struct ActiveBuild {
@@ -319,6 +322,22 @@ impl Session {
 	/// changes that are already on disk.
 	pub fn start_rebuild(&mut self, scope: Target, label: String) {
 		self.start_activation(scope, label, crate::Activation::Configuration);
+	}
+
+	/// Updates every flake input and switches the whole system onto them.
+	/// Queued ops stay queued and run once it ends. Returns the label, or
+	/// `None` while another rebuild is running.
+	pub fn start_update(&mut self) -> Option<String> {
+		if self.is_building() {
+			return None;
+		}
+		let label = UPDATE_LABEL.to_string();
+		self.start_activation(
+			Target::NixosSystem,
+			label.clone(),
+			crate::Activation::Update,
+		);
+		Some(label)
 	}
 
 	pub fn start_activation(

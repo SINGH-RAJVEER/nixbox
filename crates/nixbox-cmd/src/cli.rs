@@ -126,6 +126,9 @@ pub enum Command {
 	/// Finish work a previous run left behind.
 	Resume(commands::resume::ResumeArgs),
 
+	/// Update every flake input and rebuild the whole system.
+	Update(commands::update::UpdateArgs),
+
 	/// List the packages nixbox manages.
 	List(commands::list::ListArgs),
 
@@ -203,6 +206,7 @@ impl Cli {
 			Some(Command::Migrate(args)) => commands::migrate::run(&args, &self.global).await,
 			Some(Command::Apply(args)) => commands::apply::run(&args, &self.global).await,
 			Some(Command::Resume(args)) => commands::resume::run(&args, &self.global).await,
+			Some(Command::Update(args)) => commands::update::run(&args, &self.global).await,
 			Some(Command::List(args)) => commands::list::run(&args, &self.global),
 			Some(Command::Scan) => commands::scan::run(&self.global),
 			Some(Command::Status) => commands::status::run(&self.global),

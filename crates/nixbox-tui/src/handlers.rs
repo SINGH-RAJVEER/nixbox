@@ -13,7 +13,7 @@ use crate::nav::{
 use crate::ops::{
 	cancel_build, confirm_flake_choice, install_selected, install_selected_flake, migrate_all,
 	migrate_selected, migrate_selected_across, schedule_flake_details, schedule_flake_search,
-	schedule_search, uninstall_selected,
+	schedule_search, uninstall_selected, update_system,
 };
 use crate::options::{
 	handle_panel_key, on_build_ended, on_options_failed, on_options_loaded, open_options_panel,
@@ -169,8 +169,12 @@ async fn handle_key_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: CtEven
 
 	let vim = app.session.engine.config.input_mode == InputMode::Vim;
 	let Some(input) = active_input(app) else {
-		if app.tab == Tab::Building && key.code == KeyCode::Char('c') {
-			cancel_build(app);
+		if app.tab == Tab::Building {
+			match key.code {
+				KeyCode::Char('c') => cancel_build(app),
+				KeyCode::Char('u') => update_system(app),
+				_ => {}
+			}
 		}
 		return Ok(());
 	};

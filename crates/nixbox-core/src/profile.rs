@@ -31,6 +31,9 @@ pub enum Activation {
 	#[default]
 	#[serde(alias = "packages-and-configuration")]
 	Configuration,
+	/// Update every flake input, then switch NixOS and, when the flake has
+	/// one, the standalone Home Manager configuration.
+	Update,
 }
 
 impl Engine {
@@ -197,6 +200,21 @@ pub fn lock_command(config_dir: &Path) -> RebuildCommand {
 		vec![
 			"flake".into(),
 			"lock".into(),
+			config_dir.to_string_lossy().into_owned(),
+		],
+	)
+}
+
+/// Updates every input in the flake's lock file. The user owns `flake.lock`,
+/// so this never needs root.
+#[must_use]
+pub fn update_command(config_dir: &Path) -> RebuildCommand {
+	plain(
+		"nix",
+		vec![
+			"flake".into(),
+			"update".into(),
+			"--flake".into(),
 			config_dir.to_string_lossy().into_owned(),
 		],
 	)

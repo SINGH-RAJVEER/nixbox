@@ -57,7 +57,8 @@ pub enum ActivationKind {
 impl From<crate::Activation> for ActivationKind {
 	fn from(value: crate::Activation) -> Self {
 		match value {
-			crate::Activation::Configuration => Self::Configuration,
+			// The receiver only accepts the two original kinds.
+			crate::Activation::Configuration | crate::Activation::Update => Self::Configuration,
 			crate::Activation::Packages => Self::Packages,
 		}
 	}

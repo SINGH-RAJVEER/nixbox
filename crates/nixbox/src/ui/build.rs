@@ -20,22 +20,27 @@ use super::{empty, page_header};
 use crate::app::NixboxApp;
 
 pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
-	let building = app.session.is_building();
-	let cancel = building.then(|| {
+	let action = if app.session.is_building() {
 		Button::new("cancel-build")
 			.danger()
 			.outline()
 			.label("Cancel")
 			.on_click(cx.listener(|this, _, _, cx| this.cancel_build(cx)))
-			.into_any_element()
-	});
+	} else {
+		Button::new("update-system")
+			.primary()
+			.icon(IconName::RotateCw)
+			.label("Update system")
+			.tooltip("Update every flake input, then rebuild NixOS and Home Manager")
+			.on_click(cx.listener(|this, _, window, cx| this.update_system(window, cx)))
+	};
 	let progress = &app.session.progress;
 	let subtitle = if progress.is_empty() {
 		"Output of the most recent rebuild.".to_string()
 	} else {
 		progress.label.clone()
 	};
-	let header = page_header("Build", subtitle, cancel, cx);
+	let header = page_header("Build", subtitle, Some(action.into_any_element()), cx);
 
 	let body = if !progress.is_empty() {
 		steps(app, cx)

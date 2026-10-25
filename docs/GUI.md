@@ -47,7 +47,7 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | NixOS | The selected host's option schema, with categories and search by path and description, beside a settings editor for the selected option and its siblings. Simple values are staged and applied as one NixOS rebuild. |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
-| Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
+| Build | The output of the current or most recent rebuild, with a Cancel button while one runs and an Update system button otherwise. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
 | Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, the close button, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
 
@@ -83,6 +83,8 @@ The Build page groups the latest rebuild into preparation, configuration evaluat
 
 The current step opens automatically. Click a step to inspect its output or collapse it. Output follows the running step while it is open; inspecting an earlier step keeps that view in place. A failed rebuild opens the failed step and shows its error. Each step retains its latest 5,000 log lines. Cancel stops the rebuild process group.
 
+Update system updates every flake input, then rebuilds NixOS and a standalone Home Manager configuration, the same steps as `nixbox update` (see [Updating the system](CLI.md#updating-the-system)). The lock refresh appears under the evaluation step. Queued ops stay queued and run after the update ends, and the button waits while a repository operation runs.
+
 ## Keyboard
 
 Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types directly into search and filter fields. Vim starts those fields in Normal mode, with Insert and Visual modes shown in the status line. The cursor shape follows the mode: a block over the character in Normal mode, a line in Insert mode, and an outlined box around the moving end of the selection in Visual mode. Clicking a field or pressing Ctrl-F enters Insert mode; Esc returns to Normal. Other text fields, including option values, commit messages, paths, and shortcut editors, keep ordinary text editing.
@@ -98,6 +100,7 @@ Settings has the same Normal/Vim input mode choice as the TUI. Normal mode types
 | Delete, m, o, M in Installed | Remove the selected managed package/flake, migrate a declaration, migrate a declaration to the other target, or migrate all eligible declarations. Letter keys require Vim Normal mode or focus outside a text field; Delete edits text while typing. |
 | Ctrl-W / w, Ctrl-U / u, Ctrl-Z / U, r in Options | Apply, unset, discard, or reload. Plain letters act in Vim Normal mode. |
 | c in Build | Cancel the running build. |
+| u in Build | Update flake inputs and rebuild the system. |
 | Ctrl-Enter / Delete in Queue | Apply the queue / drop its selected operation. |
 | PageUp / PageDown | Scroll the installed list, flake details, options, queue, build log, or diff. |
 | r, e, p, h in Version control | Refresh review, edit the commit message, edit the push branch/bookmark, or edit GitHub repository details. |
