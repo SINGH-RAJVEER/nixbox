@@ -48,8 +48,6 @@ lib.cleanSourceWith {
 		else if relative == "crates" then
 			true
 		else if lib.hasPrefix "crates/" relative then
-			# Keep every manifest and target entry point so Cargo can discover the
-			# whole workspace, without copying unrelated interface implementations.
 			if type == "directory" then
 				selected
 				|| builtins.length parts == 2
