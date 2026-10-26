@@ -4,6 +4,8 @@
 
 NixBox stores user settings at `$XDG_CONFIG_HOME/nixbox/settings.json`. On a conventional Linux setup this resolves to `~/.config/nixbox/settings.json`. A missing file uses defaults. An unreadable or invalid file stops startup with an error rather than silently replacing it.
 
+An absolute `XDG_CONFIG_HOME` override is honored on macOS as well as Linux. Recovery state and version-control journals use the same settings directory, so isolated sessions never fall back to the platform's normal application-data directory. Without an override, macOS uses its native Application Support directory.
+
 The complete shape is:
 
 ```json

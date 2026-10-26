@@ -14,7 +14,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use directories::BaseDirs;
 use nixbox_config::{Config, ConfigurationIdentity, Target};
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +101,5 @@ impl PersistedState {
 }
 
 pub fn state_path() -> Result<PathBuf> {
-	let base = BaseDirs::new().context("locating user directories")?;
-	Ok(base.config_dir().join("nixbox").join("state.json"))
+	Ok(nixbox_config::settings_path()?.with_file_name("state.json"))
 }

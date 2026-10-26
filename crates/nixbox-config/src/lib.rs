@@ -406,6 +406,14 @@ impl Config {
 }
 
 pub fn settings_path() -> Result<PathBuf> {
+	// Respect an explicit isolated configuration directory on every platform,
+	// including macOS where BaseDirs otherwise uses Application Support.
+	if let Some(directory) = std::env::var_os("XDG_CONFIG_HOME")
+		.map(PathBuf::from)
+		.filter(|directory| directory.is_absolute())
+	{
+		return Ok(directory.join("nixbox").join("settings.json"));
+	}
 	let base = BaseDirs::new().context("locating user directories")?;
 	Ok(base.config_dir().join("nixbox").join("settings.json"))
 }
