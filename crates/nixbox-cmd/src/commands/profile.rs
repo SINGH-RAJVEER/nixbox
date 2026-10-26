@@ -72,6 +72,7 @@ async fn setup(apply: &ApplyOpts, global: &GlobalArgs) -> Result<ExitCode> {
 	let scope = engine.config.target;
 	let path = profile::profile_path(scope)?;
 	let home_inside_nixos = scope == Target::HomeManager
+		&& engine.config.home_configuration.is_none()
 		&& !flake_has_home_configuration(&engine.config.home_manager_dir()).await;
 	let mut summary = vec![format!(
 		"move the {} packages into the profile at {}",
@@ -142,7 +143,15 @@ async fn teardown(apply: &ApplyOpts, global: &GlobalArgs) -> Result<ExitCode> {
 
 /// The selected target, provided its profile has been built at least once.
 fn existing_profile(global: &GlobalArgs) -> Result<Target> {
-	let scope = global.engine()?.config.target;
+	let engine = global.engine()?;
+	let scope = engine.config.target;
+	anyhow::ensure!(
+		scope != Target::HomeManager
+			|| engine.config.native_modules_dir.is_none()
+			|| engine.config.home_user.as_deref()
+				== Some(nixbox_nix::build::home_configuration_name().as_str()),
+		"the selected Home Manager user is not proven to be the invoking account; local profile commands are unavailable"
+	);
 	let path = profile::profile_path(scope)?;
 	if std::fs::symlink_metadata(&path).is_err() {
 		bail!(

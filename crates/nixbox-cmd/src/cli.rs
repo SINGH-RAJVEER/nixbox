@@ -48,6 +48,17 @@ pub struct GlobalArgs {
 	#[arg(long, short = 't', global = true, value_name = "TARGET")]
 	pub target: Option<TargetArg>,
 
+	/// Select the NixOS flake output for dendritic operations.
+	#[arg(long, global = true)]
+	pub host: Option<String>,
+
+	/// Select the Home Manager user attached to that host.
+	#[arg(long, global = true)]
+	pub home_user: Option<String>,
+	/// Select a standalone Home Manager output instead of a NixOS host.
+	#[arg(long, global = true, conflicts_with_all = ["host", "home_user"])]
+	pub home_configuration: Option<String>,
+
 	/// Use this nixpkgs channel instead of the saved one.
 	#[arg(long, short = 'c', global = true, value_name = "CHANNEL")]
 	pub channel: Option<String>,
@@ -64,6 +75,22 @@ impl GlobalArgs {
 	/// Applies per-invocation overrides. Nothing here is written back to
 	/// `settings.json` — `nixbox config set` is the only thing that persists.
 	pub fn apply(&self, config: &mut Config) {
+		if let Some(host) = &self.host {
+			config.home_configuration = None;
+			config.nixos_host = Some(host.clone());
+			if self.home_user.is_none() {
+				config.home_user = None;
+			}
+		}
+		if let Some(user) = &self.home_user {
+			config.home_user = Some(user.clone());
+		}
+		if let Some(home) = &self.home_configuration {
+			config.home_configuration = Some(home.clone());
+			config.nixos_host = None;
+			config.home_user = None;
+			config.target = Target::HomeManager;
+		}
 		if let Some(target) = self.target {
 			config.target = target.into();
 		}
@@ -76,7 +103,12 @@ impl GlobalArgs {
 	pub fn engine(&self) -> Result<Engine> {
 		let mut config = Config::load_or_default()?;
 		self.apply(&mut config);
-		Engine::with_config(config)
+		let engine = Engine::with_config(config)?;
+		anyhow::ensure!(
+			self.target != Some(TargetArg::Nixos) || engine.config.home_configuration.is_none(),
+			"the selected standalone Home Manager output has no NixOS scope"
+		);
+		Ok(engine)
 	}
 }
 
@@ -125,6 +157,9 @@ pub enum Command {
 
 	/// Finish work a previous run left behind.
 	Resume(commands::resume::ResumeArgs),
+
+	/// Update every flake input and rebuild the whole system.
+	Update(commands::update::UpdateArgs),
 
 	/// List the packages nixbox manages.
 	List(commands::list::ListArgs),
@@ -203,6 +238,7 @@ impl Cli {
 			Some(Command::Migrate(args)) => commands::migrate::run(&args, &self.global).await,
 			Some(Command::Apply(args)) => commands::apply::run(&args, &self.global).await,
 			Some(Command::Resume(args)) => commands::resume::run(&args, &self.global).await,
+			Some(Command::Update(args)) => commands::update::run(&args, &self.global).await,
 			Some(Command::List(args)) => commands::list::run(&args, &self.global),
 			Some(Command::Scan) => commands::scan::run(&self.global),
 			Some(Command::Status) => commands::status::run(&self.global),

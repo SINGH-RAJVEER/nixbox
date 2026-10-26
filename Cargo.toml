@@ -22,7 +22,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.4.5"
+version = "0.4.7-nightly.20261026"
 edition = "2024"
 authors = ["Rajveer Singh"]
 license = "Apache-2.0"
@@ -68,3 +68,12 @@ clap_complete = "4.5"
 directories = "5.0"
 futures = "0.3"
 libc = "0.2"
+
+# Keep file/line backtraces without generating full variable debug information.
+[profile.dev]
+debug = "line-tables-only"
+
+# Opt in with `cargo build --profile debugging` for full debugger support.
+[profile.debugging]
+inherits = "dev"
+debug = 2

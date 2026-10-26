@@ -2,6 +2,26 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## 0.4.7 nightly - 2026-10-26
+
+- Added a system update to the GUI Build page, the TUI Building tab (`u`), and the CLI (`nixbox update`). It updates flake inputs and rebuilds the selected configuration. Package profiles follow the configuration switch.
+- Added a Configured options filter to the NixOS settings browser in the GUI and TUI. It detects settings from the selected host and its imports, supports search and counts, and groups structured settings under their parent option. Values remain lazily inspected and credential fields stay withheld.
+- Centered the close button vertically at the far right of the header and added a guarded dendritic-detection switch in Settings.
+- Honored explicit isolated settings directories on macOS and kept recovery state beside those settings.
+- Added dendritic support for a literal import-tree with named NixOS hosts and directly attached Home Manager users. `--host`, `--home-user`, and read-only `config inspect` expose selection and diagnostics. New managed flake-parts modules live inside the tree in separate host/user directories; existing root files retain their placement. Rebuilds and recovery use the selected identity. Connected feature packages carry source locations and ownership checks. Added a disposable VM workflow; arbitrary computed layouts and mixed-host queues remain unsupported.
+- Completed standalone Home Manager selection, GUI/TUI configuration pickers, constructor aliases and filtered-tree discovery, per-source diagnostics, exclusive-source package migration/removal, explicit managed-module conversion/relocation, and declarative `flake-file` input generation with rollback.
+
+- Nix builds now reuse compiled dependencies through Crane, filter documentation and unrelated interface implementations from build sources, and run tests as separate flake checks. CI builds packages for the supported Linux and macOS systems and can publish them to `nixbox.cachix.org` when its upload secret is configured. Development builds retain line backtraces with less debug information; the `debugging` profile restores full variable inspection.
+- The desktop NixOS settings editor now uses dropdowns for all enumerated choices and labels boolean toggles Enabled or Disabled. Nullable booleans retain an explicit null choice in a dropdown; controls stage changes until Apply.
+- Builds now use every CPU core by default. The flake packages no longer cap compilation at two jobs, and checkout Cargo builds drop the two-job `.cargo/config.toml` default. A positive `buildJobs` package override, `--jobs`, or `CARGO_BUILD_JOBS` still sets a lower limit for machines with little RAM.
+- Added hardware-aware filtering to the NixOS browser in the GUI and TUI. Link the selected host to this machine's detected CPU, GPUs, Bluetooth, and battery; known irrelevant settings then disappear from search and editor groups. Configured and staged settings stay accessible, incomplete detection stays unknown, and Show all restores excluded hardware settings.
+- Added separate stable and nightly flake packages, apps, and overlay attributes for all interfaces. The default uses the stable GUI on Linux; stable builds are pinned to the actual `0.4.5` release, while nightly builds use the checkout's `0.4.6` prerelease.
+- Added stable and nightly build and installation channels, shared workspace versioning flags, and checked nightly publication from `dev` with matching immutable Nix tags.
+
+## 0.4.6 - 2026-10-23
+
+- Added a round GTK-style close button at the top right of the desktop GUI that quits NixBox like Ctrl-Q. Settings has a switch to hide it, saved as `close_button`, and `nixbox config set close-button false` does the same.
+
 ## 0.4.5 - 2026-10-23
 
 - Added optional usage counters, disabled by default for fresh and existing installs. GUI/TUI settings and CLI controls disclose the fields, show effective status, and provide offline examples. Settings writes preserve opt-out across stale instances. All interfaces share `https://nixb.duckdns.org:58443/v1/telemetry`; consent version 3 discloses that recipient and requires an explicit choice.

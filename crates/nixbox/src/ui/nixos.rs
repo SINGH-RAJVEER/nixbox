@@ -128,6 +128,7 @@ pub fn render(app: &mut NixboxApp, window: &Window, cx: &mut Context<NixboxApp>)
 		.size_full()
 		.child(header(app, cx))
 		.child(toolbar(app, cx))
+		.when(ready, |page| page.child(hardware_toolbar(app, cx)))
 		.when(ready && narrow, |page| page.child(category_chips(app, cx)))
 		.child(
 			div()
@@ -148,10 +149,11 @@ fn header(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 		.as_ref()
 		.map(|configuration| configuration.host.clone());
 	let root = app.session.config_dir();
+	let applied_host = app.nixos.applied_host.as_deref().unwrap_or(NIXOS_HOST);
 	let subtitle = match &host {
 		Some(host) if app.nixos.editable_host() => format!("Host {host} in {}", root.display()),
 		Some(host) => format!(
-			"Host {host} in {}. Read-only: nixbox rebuilds the {NIXOS_HOST} host.",
+			"Host {host} in {}. Read-only: nixbox rebuilds the {applied_host} host.",
 			root.display()
 		),
 		None => format!("System settings in {}", root.display()),
@@ -253,12 +255,42 @@ fn toolbar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 		.child(
 			Switch::new("nixos-diagnostic")
 				.label("Diagnostic options")
-				.checked(app.nixos.show_diagnostic)
+				.checked(app.nixos.show_diagnostic || app.nixos.category == Category::Configured)
+				.disabled(app.nixos.category == Category::Configured)
 				.on_click(cx.listener(|this, checked: &bool, _, cx| {
 					this.nixos.show_diagnostic = *checked;
 					this.refresh_nixos_filter(cx);
 				})),
 		)
+}
+
+fn hardware_toolbar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
+	let linked = app.nixos.hardware.inventory.is_some();
+	v_flex()
+		.px_6()
+		.pb_3()
+		.gap_1()
+		.child(h_flex()
+			.gap_4()
+			.flex_wrap()
+			.child(Switch::new("nixos-local-hardware")
+				.label("Use this machine's hardware")
+				.checked(linked)
+				.on_click(cx.listener(|this, checked: &bool, window, cx| {
+					this.use_local_nixos_hardware(*checked, window, cx);
+				})))
+			.child(Switch::new("nixos-all-hardware")
+				.label("Show all hardware options")
+				.checked(app.nixos.hardware.show_all)
+				.on_click(cx.listener(|this, checked: &bool, window, cx| {
+					this.nixos.hardware.show_all = *checked;
+					this.refresh_nixos_hardware(window, cx);
+				}))))
+		.child(div().text_xs().text_color(cx.theme().muted_foreground).child(if linked {
+			format!("{}. Configured, staged, and unknown settings stay visible.", app.nixos.local_hardware.summary())
+		} else {
+			"Hardware is not linked to this host. Use this machine only if it is the selected host. Unknown settings stay visible.".into()
+		}))
 }
 
 fn choose_category(this: &mut NixboxApp, category: Category, cx: &mut Context<NixboxApp>) {
@@ -301,6 +333,7 @@ fn category_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoEleme
 						.text_color(cx.theme().muted_foreground)
 						.child(count.to_string()),
 				)
+				.test_support()
 		}))
 }
 
@@ -352,13 +385,29 @@ fn option_column(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				)
 				.child(summary),
 		)
+		.when(app.nixos.category == Category::Configured, |column| {
+			let unknown = app.nixos.options.iter()
+				.filter(|option| option.configured.is_none() && !option.nested && !option.template)
+				.count();
+			let mut note = "Detected from this host's configuration and imports. Structured settings are grouped under their parent option.".to_string();
+			if unknown > 0 {
+				note.push_str(&format!(" Could not determine whether {unknown} options are configured; see All options."));
+			}
+			column.child(div().id("nixos-configured-note").px_6().py_2()
+				.text_xs().text_color(cx.theme().muted_foreground).child(note).test_support())
+		})
 		.child(div().flex_1().min_h_0().child(option_list(app, cx)))
 		.into_any_element()
 }
 
 fn option_list(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	if app.nixos.visible.is_empty() {
-		return empty("No options match this category and search.", cx).into_any_element();
+		let message = if app.nixos.category == Category::Configured {
+			"No configured options match this search. Reload after saving configuration changes."
+		} else {
+			"No options match this category and search."
+		};
+		return empty(message, cx).into_any_element();
 	}
 	uniform_list(
 		"nixos-options",
@@ -478,6 +527,12 @@ fn details(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		);
 	if let Some(note) = partial_note(option) {
 		body = body.child(div().px_6().pb_2().child(muted(note, cx)));
+	}
+	if let Some(reason) = app.nixos.hardware.exclusion_reason(&option.path) {
+		body = body.child(div().px_6().pb_2().child(muted(
+			format!("{reason}. Visible because it is configured, staged, or Show all is enabled."),
+			cx,
+		)));
 	}
 	if let Some(error) = &app.nixos.detail_error {
 		body = body.child(
@@ -681,33 +736,16 @@ fn control(
 	let nullable = matches!(kind, OptionKind::Nullable(_));
 	match kind.inner() {
 		OptionKind::Bool if !nullable => Switch::new(("nixos-bool", index))
+			.label(if matches!(current, Some(SettingValue::Bool(true))) {
+				"Enabled"
+			} else {
+				"Disabled"
+			})
 			.checked(matches!(current, Some(SettingValue::Bool(true))))
 			.on_click(cx.listener(move |this, checked: &bool, _, cx| {
 				this.stage_nixos(&path, Some(SettingValue::Bool(*checked)), cx);
 			}))
 			.into_any_element(),
-		OptionKind::Bool | OptionKind::Enum(_) if choices(kind).len() <= CHOICE_BUTTONS => {
-			let values = choices(kind);
-			h_flex()
-				.child(
-					ButtonGroup::new(("nixos-choice", index))
-						.outline()
-						.small()
-						.children(values.iter().enumerate().map(|(choice, value)| {
-							Button::new(("nixos-choice-value", choice))
-								.label(choice_label(value))
-								.selected(current.as_ref() == Some(value))
-						}))
-						.on_click(cx.listener(move |this, clicked: &Vec<usize>, _, cx| {
-							if let Some(value) =
-								clicked.first().and_then(|choice| values.get(*choice))
-							{
-								this.stage_nixos(&path, Some(value.clone()), cx);
-							}
-						})),
-				)
-				.into_any_element()
-		}
 		OptionKind::Bool | OptionKind::Enum(_) => {
 			let values = choices(kind);
 			let label = current
@@ -774,9 +812,6 @@ fn control(
 		.into_any_element(),
 	}
 }
-
-/// Choices up to this many show as buttons; more open a menu.
-const CHOICE_BUTTONS: usize = 4;
 
 fn choice_label(value: &SettingValue) -> String {
 	match value {

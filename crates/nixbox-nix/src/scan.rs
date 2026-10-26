@@ -72,7 +72,7 @@ pub fn scan_flake_packages(path: &Path, target: ScanTarget) -> Result<Vec<Extern
 	Ok(parse_flake_packages(&raw, target))
 }
 
-fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
+pub(crate) fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
 	list_entries(raw, target)
 		.into_iter()
 		.filter_map(|entry| {
@@ -87,7 +87,7 @@ fn parse(raw: &str, target: ScanTarget) -> Vec<ExternalPackage> {
 		.collect()
 }
 
-fn parse_flake_packages(raw: &str, target: ScanTarget) -> Vec<ExternalFlakePackage> {
+pub(crate) fn parse_flake_packages(raw: &str, target: ScanTarget) -> Vec<ExternalFlakePackage> {
 	list_entries(raw, target)
 		.into_iter()
 		.filter_map(|entry| {

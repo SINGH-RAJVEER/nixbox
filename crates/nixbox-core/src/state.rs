@@ -14,8 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use directories::BaseDirs;
-use nixbox_config::Target;
+use nixbox_config::{Config, ConfigurationIdentity, Target};
 use serde::{Deserialize, Serialize};
 
 use crate::op::Op;
@@ -32,6 +31,8 @@ pub struct InProgress {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersistedState {
 	#[serde(default)]
+	pub context: Option<ConfigurationIdentity>,
+	#[serde(default)]
 	pub pending_queue: Vec<Op>,
 	#[serde(default)]
 	pub in_progress: Option<InProgress>,
@@ -40,6 +41,22 @@ pub struct PersistedState {
 }
 
 impl PersistedState {
+	pub fn ensure_context(&self, config: &Config) -> Result<()> {
+		if self.pending_queue.is_empty() && self.in_progress.is_none() {
+			return Ok(());
+		}
+		match &self.context {
+			Some(context) => anyhow::ensure!(
+				context == &config.identity(),
+				"saved work belongs to another configuration/host/user; select its original target or explicitly discard it"
+			),
+			None => anyhow::ensure!(
+				config.native_modules_dir.is_none(),
+				"legacy saved work has no host/user identity; finish or discard it before using dendritic target selection"
+			),
+		}
+		Ok(())
+	}
 	#[must_use]
 	pub fn is_empty(&self) -> bool {
 		self.pending_queue.is_empty() && self.in_progress.is_none() && self.last_error.is_none()
@@ -84,6 +101,5 @@ impl PersistedState {
 }
 
 pub fn state_path() -> Result<PathBuf> {
-	let base = BaseDirs::new().context("locating user directories")?;
-	Ok(base.config_dir().join("nixbox").join("state.json"))
+	Ok(nixbox_config::settings_path()?.with_file_name("state.json"))
 }

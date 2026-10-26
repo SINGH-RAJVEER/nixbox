@@ -1,4 +1,5 @@
 /target
+__pycache__/
 /result
 *.qcow2
 AGENTS.md

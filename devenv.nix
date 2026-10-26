@@ -11,11 +11,13 @@ let
 in
 {
 	dotenv.disableHint = true;
+	cachix.push = "nixbox";
 
 	packages = [
 		# Build, lint, and test commands.
 		pkgs.bash
 		pkgs.just
+		pkgs.uv
 		pkgs.cargo-nextest
 		pkgs.nixd
 		pkgs.nil
@@ -41,14 +43,13 @@ in
 
 	languages.rust = {
 		enable = true;
-		channel = "stable";
+		channel = "nixpkgs";
 		components = [
 			"rustc"
 			"cargo"
 			"clippy"
 			"rustfmt"
 			"rust-analyzer"
-			"rust-src"
 		];
 	};
 

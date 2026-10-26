@@ -30,6 +30,10 @@ pub struct NixosConfiguration {
 #[serde(rename_all = "camelCase")]
 pub struct SystemOption {
 	pub path: OptionPath,
+	/// A non-default definition outside nixpkgs, or unknown when its
+	/// provenance cannot be read. This never evaluates the option's value.
+	#[serde(default)]
+	pub configured: Option<bool>,
 	pub description: Option<String>,
 	pub type_description: String,
 	pub declarations: Vec<String>,
@@ -41,6 +45,15 @@ pub struct SystemOption {
 	/// A failed or recursive submodule expansion remains visible in the index.
 	pub children_unavailable: bool,
 	pub children_truncated: bool,
+}
+
+impl SystemOption {
+	/// A concrete option with a detected configuration definition. Inherited
+	/// metadata on a nested schema describes its parent, not an actual instance.
+	#[must_use]
+	pub fn is_configured(&self) -> bool {
+		self.configured == Some(true) && !self.nested && !self.template
+	}
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -436,6 +449,16 @@ mod tests {
 			include_str!("../tests/fixtures/system-options/flake.nix"),
 		)
 		.unwrap();
+		std::fs::write(
+			root.0.join("configuration.nix"),
+			include_str!("../tests/fixtures/system-options/configuration.nix"),
+		)
+		.unwrap();
+		std::fs::write(
+			root.0.join("hardware-configuration.nix"),
+			include_str!("../tests/fixtures/system-options/hardware-configuration.nix"),
+		)
+		.unwrap();
 		let limit = Duration::from_secs(30);
 		let hosts = discover_hosts(&root.0, limit).await.unwrap();
 		assert_eq!(hosts, ["broken", "host with \"quotes\"", "workstation"]);
@@ -458,8 +481,24 @@ mod tests {
 		);
 		assert!(entry("custom.missingDescription").description.is_none());
 		assert!(entry("custom.debug").diagnostic);
+		assert_eq!(entry("custom.greeting").configured, Some(true));
+		assert_eq!(entry("custom.enable").configured, Some(false));
+		assert_eq!(entry("custom.generated").configured, Some(false));
+		assert_eq!(entry("credentials.apiToken").configured, Some(false));
+		assert!(entry("credentials.password").is_configured());
+		assert!(entry("custom.imported").is_configured());
+		assert!(entry("hardware.bluetooth.enable").is_configured());
+		assert!(entry("users.users").is_configured());
+		assert!(entry("services.jobs").is_configured());
+		assert_eq!(entry("hardware.nvidia.open").configured, Some(true));
+		assert_eq!(
+			entry("hardware.nvidia.modesetting.enable").configured,
+			Some(false)
+		);
 		assert!(entry("custom.fixed").read_only);
 		assert!(entry("users.users.<name>.active").template);
+		assert!(!entry("users.users.<name>.active").is_configured());
+		assert!(!entry("services.jobs.*.name").is_configured());
 		assert!(entry("services.jobs.*.name").nested);
 		assert!(
 			catalog
@@ -483,6 +522,7 @@ mod tests {
 			("custom.nullable", InspectedValue::Available(Value::Null)),
 			("custom.broken", InspectedValue::Unavailable),
 			("credentials.apiToken", InspectedValue::Sensitive),
+			("credentials.password", InspectedValue::Sensitive),
 			("users.users.<name>.active", InspectedValue::Template),
 		] {
 			let inspected = inspect_option(&configuration, &path(name), limit)

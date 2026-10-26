@@ -51,6 +51,7 @@ pub fn scope_matches(scan_scope: ScanTarget, target: Target) -> bool {
 /// that invariant as packages migrate in.
 pub struct Engine {
 	pub config: Config,
+	identity: nixbox_config::ConfigurationIdentity,
 	/// Packages tracked in `nixbox-home-packages.nix`.
 	pub home_manifest: Manifest,
 	/// Packages tracked in `nixbox-system-packages.nix`.
@@ -67,6 +68,52 @@ pub struct Engine {
 }
 
 impl Engine {
+	/// Resolve placement and target identity without writing or loading manifests.
+	pub fn resolve_config(mut config: Config) -> Result<Config> {
+		config.native_modules_dir = None;
+		config.legacy_system_module = false;
+		config.legacy_home_module = false;
+		if let Some(layout) = crate::configurations::selected_layout(&config)? {
+			if layout.standalone {
+				config.home_configuration = Some(layout.host.clone());
+				config.nixos_host = None;
+				config.target = Target::HomeManager;
+			} else {
+				config.nixos_host = Some(layout.host.clone());
+			}
+			config.home_user.clone_from(&layout.home_user);
+			config.native_modules_dir = Some(layout.tree.clone());
+			config.legacy_system_module =
+				layout.owns_root_file(&config.config_root().join("nixbox-system-packages.nix"))?;
+			config.legacy_home_module =
+				layout.owns_root_file(&config.config_root().join("nixbox-home-packages.nix"))?;
+		}
+		Ok(config)
+	}
+
+	pub fn ensure_identity(&self) -> Result<()> {
+		anyhow::ensure!(
+			self.identity == self.config.identity(),
+			"configuration selection changed; reload the engine before applying work"
+		);
+		crate::configurations::ensure_detection_mode(&self.config)?;
+		Ok(())
+	}
+
+	/// The file where target integration is attached. Dendritic package
+	/// modules enter through flake-parts rather than a conventional entry file.
+	#[must_use]
+	pub fn integration_file_for(&self, scope: Target) -> std::path::PathBuf {
+		if matches!(
+			crate::configurations::selected_layout(&self.config),
+			Ok(Some(_))
+		) {
+			self.config.flake_file()
+		} else {
+			self.config.main_file_for(scope)
+		}
+	}
+
 	/// Loads settings from disk, then both manifests, then scans for
 	/// externally-declared packages.
 	pub fn load() -> Result<Self> {
@@ -76,10 +123,20 @@ impl Engine {
 	/// Same as [`Engine::load`] but with settings supplied by the caller —
 	/// used when a front-end overrides the target or channel per invocation.
 	pub fn with_config(config: Config) -> Result<Self> {
+		let config = Self::resolve_config(config)?;
+		if crate::configurations::selected_layout(&config)?.is_some() {
+			anyhow::ensure!(
+				[Target::HomeManager, Target::NixosSystem]
+					.into_iter()
+					.all(|scope| !config.legacy_flake_manifest_for(scope).exists()),
+				"legacy flake-file migration must be completed before dendritic integration"
+			);
+		}
 		if [Target::HomeManager, Target::NixosSystem]
 			.into_iter()
 			.any(|scope| config.legacy_flake_manifest_for(scope).exists())
 		{
+			crate::configurations::ensure_detection_mode(&config)?;
 			let _journal = crate::vcs::AppliedJournal::acquire(&config)?;
 			let mut sources = vec![config.config_root()];
 			sources.extend(
@@ -110,6 +167,7 @@ impl Engine {
 		let nixos_settings =
 			SettingsFile::new(config.settings_file_for(Target::NixosSystem)).load()?;
 		Ok(Self {
+			identity: config.identity(),
 			config,
 			home_manifest,
 			nixos_manifest,
@@ -129,6 +187,7 @@ impl Engine {
 		external_packages: Vec<ExternalPackage>,
 	) -> Self {
 		Self {
+			identity: config.identity(),
 			config,
 			home_manifest,
 			nixos_manifest,
@@ -183,6 +242,13 @@ impl Engine {
 	/// across into it needs to be imported from.
 	#[must_use]
 	pub fn has_main_file(&self, scope: Target) -> bool {
+		if let Ok(Some(layout)) = crate::configurations::selected_layout(&self.config) {
+			return if layout.standalone {
+				scope == Target::HomeManager
+			} else {
+				scope == Target::NixosSystem || layout.home_user.is_some()
+			};
+		}
 		self.config.main_file_for(scope).exists()
 	}
 
@@ -190,6 +256,21 @@ impl Engine {
 	/// anything — [`Engine::apply`] is what repairs a missing import.
 	#[must_use]
 	pub fn import_state(&self, scope: Target) -> ImportState {
+		match crate::configurations::selected_layout(&self.config) {
+			Ok(Some(layout)) => {
+				return if layout
+					.is_loaded(&self.config.managed_file_for(scope))
+					.unwrap_or(false)
+					&& self.config.managed_file_for(scope).exists()
+				{
+					ImportState::Imported
+				} else {
+					ImportState::NotImported
+				};
+			}
+			Err(_) => return ImportState::NotImported,
+			Ok(None) => {}
+		}
 		let main_file = self.config.main_file_for(scope);
 		let managed_file = self.config.managed_file_for(scope);
 		let Some(name) = managed_file.file_name().and_then(|n| n.to_str()) else {
@@ -215,10 +296,19 @@ impl Engine {
 
 	/// Writes `scope`'s manifest to its managed file in the right format.
 	pub fn write_manifest(&self, scope: Target) -> Result<ManagedFile> {
+		self.ensure_identity()?;
+		anyhow::ensure!(
+			self.config.home_configuration.is_none() || scope == Target::HomeManager,
+			"standalone Home Manager has no NixOS scope"
+		);
 		let managed = ManagedFile::new(self.config.managed_file_for(scope));
 		match scope {
 			Target::HomeManager => managed.write_home_manager(self.manifest_for(scope))?,
 			Target::NixosSystem => managed.write_nixos(self.manifest_for(scope))?,
+		}
+		if crate::configurations::selected_layout(&self.config)?.is_some() {
+			git_track(managed.path(), &mut crate::SilentReporter);
+			git_track(&self.config.flake_file(), &mut crate::SilentReporter);
 		}
 		Ok(managed)
 	}
@@ -233,18 +323,20 @@ impl Engine {
 		home_inside_nixos: bool,
 		reporter: &mut dyn Reporter,
 	) -> Result<()> {
-		let main = self.config.main_file_for(scope);
+		let main = self.integration_file_for(scope);
 		anyhow::ensure!(
-			main.exists(),
+			self.has_main_file(scope),
 			"{} is missing; create the main {} configuration first",
 			main.display(),
 			scope.label()
 		);
-		let integrate =
-			scope == Target::HomeManager && mode == PackageMode::Profile && home_inside_nixos;
-		let nixos_main = self.config.main_file_for(Target::NixosSystem);
+		let integrate = scope == Target::HomeManager
+			&& mode == PackageMode::Profile
+			&& home_inside_nixos
+			&& self.config.home_configuration.is_none();
+		let nixos_main = self.integration_file_for(Target::NixosSystem);
 		anyhow::ensure!(
-			!integrate || nixos_main.exists(),
+			!integrate || self.has_main_file(Target::NixosSystem),
 			"Home Manager runs inside NixOS, but {} is missing; set `nixos_main_file` so the profile can join PATH",
 			nixos_main.display()
 		);
@@ -286,9 +378,96 @@ impl Engine {
 	/// is interrupted the on-disk state already reflects the intent, so
 	/// recovery is just re-running the rebuild.
 	pub fn apply(&mut self, op: &Op, reporter: &mut dyn Reporter) -> Result<()> {
+		self.ensure_identity()?;
+		let dendritic = crate::configurations::selected_layout(&self.config)?;
+		if let Some(layout) = &dendritic {
+			anyhow::ensure!(
+				!layout.standalone || op.scope() == Target::HomeManager,
+				"standalone Home Manager has no NixOS scope"
+			);
+			if op.scope() == Target::HomeManager {
+				layout.require_home()?;
+			}
+			layout.validate_import(&self.config.managed_file_for(op.scope()))?;
+			for scope in [Target::HomeManager, Target::NixosSystem] {
+				anyhow::ensure!(
+					!self.config.legacy_flake_manifest_for(scope).exists(),
+					"legacy flake-file migration must be completed before dendritic integration"
+				);
+			}
+		}
+		let source_edits = if let Some(layout) = &dendritic {
+			self.dendritic_source_edits(layout, op)?
+		} else {
+			Vec::new()
+		};
 		let journal = crate::vcs::AppliedJournal::acquire(&self.config)?;
 		let before = crate::vcs::operation_files(&self.config);
-		self.apply_inner(op, reporter)?;
+		let home = self.home_manifest.clone();
+		let system = self.nixos_manifest.clone();
+		let home_settings = self.home_settings.clone();
+		let system_settings = self.nixos_settings.clone();
+		let result = (|| {
+			if let Some(layout) = &dendritic
+				&& self.apply_dendritic_sources(layout, op, reporter)?
+			{
+				return Ok(());
+			}
+			self.apply_inner(op, reporter)
+		})();
+		if let Err(error) = result {
+			if dendritic.is_some() {
+				self.home_manifest = home;
+				self.nixos_manifest = system;
+				self.home_settings = home_settings;
+				self.nixos_settings = system_settings;
+				let mut writable = vec![
+					self.config.flake_file(),
+					self.config.config_root().join("flake.lock"),
+					self.config.managed_file_for(op.scope()),
+					self.config.settings_file_for(op.scope()),
+					self.config.home_integration_file(),
+				];
+				if let Some(layout) = &dendritic {
+					writable.extend(source_edits.iter().map(|edit| edit.path.clone()));
+					writable.push(layout.tree.join("nixbox/inputs.nix"));
+				}
+				for (path, original) in &before {
+					// Conventional entry files and the other target are read-only
+					// during this operation, including paths outside the root.
+					if !writable.contains(path) {
+						continue;
+					}
+					if std::fs::read(path).ok().as_ref() == original.as_ref() {
+						continue;
+					}
+					if let Some(edit) = source_edits.iter().find(|edit| &edit.path == path)
+						&& std::fs::read_to_string(path).ok().as_deref()
+							!= Some(edit.after.as_str())
+					{
+						reporter.warn(format!(
+							"Left a concurrent source edit intact in {}.",
+							path.display()
+						));
+						continue;
+					}
+					match original {
+						Some(bytes) => std::fs::write(path, bytes)?,
+						None if path.exists() => std::fs::remove_file(path)?,
+						None => {}
+					}
+				}
+				self.refresh_externals();
+			}
+			return Err(error);
+		}
+		if let Some(layout) = &dendritic {
+			git_track(&self.config.flake_file(), reporter);
+			let inputs = layout.tree.join("nixbox/inputs.nix");
+			if inputs.exists() {
+				git_track(&inputs, reporter);
+			}
+		}
 		if let Err(error) = journal.record(&self.config, op, before) {
 			reporter.warn(format!(
 				"Configuration applied, but VCS journal could not be saved: {error:#}"
@@ -418,6 +597,22 @@ pub fn scan_externals(
 	nixos_manifest: &Manifest,
 ) -> Vec<ExternalPackage> {
 	let mut out: Vec<ExternalPackage> = Vec::new();
+	match crate::configurations::selected_layout(config) {
+		Ok(Some(layout)) => {
+			for (home, manifest) in [(true, home_manifest), (false, nixos_manifest)] {
+				out.extend(
+					layout
+						.scan_packages(home)
+						.unwrap_or_default()
+						.into_iter()
+						.filter(|entry| !manifest.packages.contains(&entry.name)),
+				);
+			}
+			return out;
+		}
+		Err(_) => return out,
+		Ok(None) => {}
+	}
 
 	if let Ok(found) = scan(
 		&config.main_file_for(Target::HomeManager),

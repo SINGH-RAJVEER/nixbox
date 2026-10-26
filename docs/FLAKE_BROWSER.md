@@ -109,6 +109,8 @@ Either way, NixBox then removes the root input only when nothing else uses it: t
 
 ## Required root-flake shape
 
+Dendritic discovery starts from flake-parts and one literal import-tree. Named hosts, directly attached users, and standalone Home Manager outputs can be selected. Literal constructor aliases, inline root definitions, extra literal imports, and supported tree filters also work. Generated modules capture inputs lexically, so constructors can remain in feature files without global special arguments. Hand-maintained inputs are edited in the root. For `flake-file`, NixBox edits its own declarative input module and runs the generator, restoring the source and generated files on failure. See [Dendritic support](DENDRITIC_PLAN.md) for scope and unsupported layouts. The conventional shape below remains supported.
+
 The text editor expects conventional literal text similar to:
 
 ```nix

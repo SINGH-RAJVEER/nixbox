@@ -1,5 +1,20 @@
 {
   "nodes": {
+    "crane": {
+      "locked": {
+        "lastModified": 1792350552,
+        "narHash": "sha256-292lvpvxTGKryKxh3/3tcIVi85CwYGdl4oOi113Sob8=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "e675a36b7377bebe41d548388a2501cbb16d380d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1789286504,
@@ -18,7 +33,26 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "crane": "crane",
+        "nixpkgs": "nixpkgs",
+        "stable-source": "stable-source"
+      }
+    },
+    "stable-source": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792697001,
+        "narHash": "sha256-HhRjM4MuTgLoSsxjVTYML9WdAssuCd9fUQX+tRCAF6A=",
+        "owner": "SINGH-RAJVEER",
+        "repo": "nixbox",
+        "rev": "7bab22d13a6ab70b9dede01d359dd546bb489060",
+        "type": "github"
+      },
+      "original": {
+        "owner": "SINGH-RAJVEER",
+        "ref": "v0.4.5",
+        "repo": "nixbox",
+        "type": "github"
       }
     }
   },

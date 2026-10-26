@@ -7,8 +7,11 @@
 //! through rebuilds for the interactive front-ends; front-ends own
 //! presentation, not policy.
 
+pub mod configurations;
+mod dendritic_ops;
 pub mod engine;
 pub mod flakes;
+pub mod hardware;
 pub mod op;
 pub mod options;
 pub mod profile;
@@ -23,6 +26,7 @@ pub mod telemetry;
 pub mod text_motion;
 pub mod vcs;
 
+pub use dendritic_ops::apply_managed_migration;
 pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};
 pub use flakes::InstalledFlake;
 pub use op::{FlakeChoice, Op, flake_choices};
@@ -130,3 +134,5 @@ pub(crate) mod tests {
 		}
 	}
 }
+#[cfg(test)]
+mod dendritic_tests;

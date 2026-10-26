@@ -50,6 +50,7 @@ mod tests {
 	#[test]
 	fn queue_with_mixed_op_kinds_round_trips_through_json() {
 		let state = PersistedState {
+			context: None,
 			pending_queue: vec![
 				QueuedOp::Install {
 					hit: hit("ripgrep"),

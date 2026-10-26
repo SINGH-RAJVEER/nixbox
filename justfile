@@ -11,6 +11,11 @@ build:
 release:
 	cargo build --workspace --exclude nixbox --release
 
+# Set the workspace release channel, for example: just version --nightly
+[positional-arguments]
+version *args:
+	uv run scripts/version.py "$@"
+
 # Type-check without codegen
 check:
 	cargo check --workspace --exclude nixbox
@@ -62,6 +67,22 @@ clean:
 	cargo clean
 
 # ── Test VM ────────────────────────────────────────────────────────────────────
+
+# Copy a dendritic configuration into this workspace's disposable VM area
+vm-dendritic-seed source:
+	bash vm/dendritic.sh seed {{quote(source)}}
+
+# Exercise the checkout's CLI against that copy; activations build only the VM
+[positional-arguments]
+vm-dendritic-cli *args="--help":
+	devenv shell -- bash vm/dendritic.sh cli "$@"
+
+# Build or boot the copied configuration without switching the host
+vm-dendritic-build:
+	devenv shell -- bash vm/dendritic.sh build
+
+vm-dendritic:
+	devenv shell -- bash vm/dendritic.sh run
 
 # Run the checkout's GUI against an isolated VM configuration; Apply builds the VM
 [positional-arguments]
@@ -131,7 +152,11 @@ dev-test:
 	devenv test
 
 # Full pre-commit gate: format, lint, test
-ci: fmt lint test telemetry-ci
+ci: fmt lint test telemetry-ci version-ci
+
+# Validate stable/nightly transitions and workspace version consistency
+version-ci:
+	uv run --no-project python -m unittest discover -s scripts -p 'test_*.py'
 
 # Validate the optional Axum receiver and local telemetry delivery.
 telemetry-ci:

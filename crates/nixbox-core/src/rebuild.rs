@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nixbox_config::Target;
+use nixbox_config::{Config, Target};
 use nixbox_nix::build::{
 	BuildEvent, NIXOS_HOST, flake_has_home_configuration, home_manager_switch_cmd,
 	nixos_rebuild_switch_cmd, rebuild,
@@ -157,6 +157,80 @@ pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
 	}
 }
 
+/// Resolve a command using the selection frozen into the engine/session.
+pub async fn resolve_for(config: &Config, scope: Target) -> anyhow::Result<RebuildCommand> {
+	crate::configurations::ensure_detection_mode(config)?;
+	if let Some(layout) = crate::configurations::selected_layout(config)? {
+		if scope == Target::HomeManager {
+			layout.require_home()?;
+		}
+		let root = config.config_root();
+		let host = nixbox_nix::wiring::attr_name(&layout.host);
+		if layout.standalone {
+			anyhow::ensure!(
+				scope == Target::HomeManager,
+				"standalone Home Manager has no NixOS scope"
+			);
+			if let Some(output) = std::env::var_os(VM_BUILD_ENV) {
+				return Ok(RebuildCommand {
+					program: "nix".into(),
+					args: vec![
+						"build".into(),
+						"--out-link".into(),
+						output.to_string_lossy().into_owned(),
+						format!(
+							"{}#homeConfigurations.{host}.activationPackage",
+							root.display()
+						),
+					],
+					envs: Vec::new(),
+					via_nixos_fallback: false,
+				});
+			}
+			let (program, mut args) = home_manager_switch_cmd(&root);
+			*args
+				.last_mut()
+				.expect("Home Manager command includes a flake reference") =
+				format!("{}#{}", root.display(), layout.host);
+			return Ok(RebuildCommand {
+				program,
+				args,
+				envs: Vec::new(),
+				via_nixos_fallback: false,
+			});
+		}
+		if let Some(output) = std::env::var_os(VM_BUILD_ENV) {
+			return Ok(RebuildCommand {
+				program: "nix".into(),
+				args: vec![
+					"build".into(),
+					"--print-build-logs".into(),
+					"--out-link".into(),
+					output.to_string_lossy().into_owned(),
+					format!(
+						"{}#nixosConfigurations.{host}.config.system.build.vm",
+						root.display()
+					),
+				],
+				envs: Vec::new(),
+				via_nixos_fallback: false,
+			});
+		}
+		return Ok(RebuildCommand {
+			program: "sudo".into(),
+			args: vec![
+				"nixos-rebuild".into(),
+				"switch".into(),
+				"--flake".into(),
+				format!("{}#{host}", root.display()),
+			],
+			envs: Vec::new(),
+			via_nixos_fallback: scope == Target::HomeManager,
+		});
+	}
+	Ok(resolve(&config.config_root(), scope).await)
+}
+
 /// The NixOS switch or, with [`VM_BUILD_ENV`], VM build for `config_dir`,
 /// without evaluating anything.
 #[must_use]
@@ -207,10 +281,27 @@ pub async fn run_activation(
 	escalation: Escalation,
 	log: LogFormat,
 	tx: mpsc::Sender<BuildEvent>,
+	cancel: oneshot::Receiver<()>,
+) {
+	let config = Config {
+		config_dir: Some(config_dir),
+		..Config::default()
+	};
+	run_activation_for(config, scope, activation, escalation, log, tx, cancel).await;
+}
+
+pub async fn run_activation_for(
+	config: Config,
+	scope: Target,
+	activation: Activation,
+	escalation: Escalation,
+	log: LogFormat,
+	tx: mpsc::Sender<BuildEvent>,
 	mut cancel: oneshot::Receiver<()>,
 ) {
+	let config_dir = config.config_root();
 	// The VM build carries the profile inside its own system instead.
-	let activation = if builds_vm() {
+	let activation = if builds_vm() && activation == Activation::Packages {
 		Activation::Configuration
 	} else {
 		activation
@@ -224,7 +315,7 @@ pub async fn run_activation(
 				return;
 			}
 			let build = tokio::select! {
-				command = profile::command(&config_dir, scope) => command,
+				command = profile::command_for(&config, scope) => command,
 				_ = &mut cancel => {
 					let _ = tx.send(BuildEvent::Cancelled).await;
 					return;
@@ -245,13 +336,40 @@ pub async fn run_activation(
 		}
 		Activation::Configuration => {
 			let command = tokio::select! {
-				command = resolve(&config_dir, scope) => command.escalated(&escalation).with_log(log),
+				command = resolve_for(&config, scope) => match command {
+					Ok(command) => command.escalated(&escalation).with_log(log),
+					Err(error) => { let _ = tx.send(BuildEvent::Finished(Err(error.to_string()))).await; return; }
+				},
 				_ = &mut cancel => {
 					let _ = tx.send(BuildEvent::Cancelled).await;
 					return;
 				}
 			};
 			vec![command]
+		}
+		Activation::Update => {
+			let commands = tokio::select! {
+				commands = update_commands_for(&config) => match commands {
+					Ok(commands) => commands,
+					Err(error) => { let _ = tx.send(BuildEvent::Finished(Err(format!("{error:#}")))).await; return; }
+				},
+				_ = &mut cancel => {
+					let _ = tx.send(BuildEvent::Cancelled).await;
+					return;
+				}
+			};
+			// Only the NixOS switch reports a structured log. The lock update
+			// never needs root, and a Home Manager switch after activation
+			// would otherwise reopen the build and download steps; its plain
+			// output stays under activation instead.
+			commands
+				.into_iter()
+				.enumerate()
+				.map(|(step, command)| match step {
+					1 => command.escalated(&escalation).with_log(log),
+					_ => command.escalated(&escalation),
+				})
+				.collect()
 		}
 	};
 	if !run_commands(commands, &tx, cancel).await {
@@ -267,6 +385,43 @@ pub async fn run_activation(
 			.await;
 	}
 	let _ = tx.send(BuildEvent::Finished(Ok(()))).await;
+}
+
+/// Resolve a full update using the same configuration selection as other builds.
+pub async fn update_commands_for(config: &Config) -> anyhow::Result<Vec<RebuildCommand>> {
+	crate::configurations::ensure_detection_mode(config)?;
+	let root = config.config_root();
+	if builds_vm() || crate::configurations::selected_layout(config)?.is_some() {
+		let scope = if config.home_configuration.is_some() {
+			Target::HomeManager
+		} else {
+			Target::NixosSystem
+		};
+		return Ok(vec![
+			profile::update_command(&root),
+			resolve_for(config, scope).await?,
+		]);
+	}
+	let standalone = flake_has_home_configuration(&root).await;
+	Ok(update_commands(&root, standalone))
+}
+
+/// The steps of a full system update: refresh every flake input, switch
+/// NixOS, then switch a standalone Home Manager configuration. Without one,
+/// Home Manager is a NixOS module and the NixOS switch already applied it.
+#[must_use]
+pub fn update_commands(config_dir: &Path, standalone_home: bool) -> Vec<RebuildCommand> {
+	let mut commands = vec![profile::update_command(config_dir), nixos(config_dir)];
+	if standalone_home {
+		let (program, args) = home_manager_switch_cmd(config_dir);
+		commands.push(RebuildCommand {
+			program,
+			args,
+			envs: Vec::new(),
+			via_nixos_fallback: false,
+		});
+	}
+	commands
 }
 
 /// `nix build --profile` does not create the directory a user profile lives
@@ -350,7 +505,9 @@ async fn run_commands(
 
 #[cfg(test)]
 mod tests {
-	use super::{Escalation, LogFormat, RebuildCommand, nixos, run_commands, vm_build};
+	use super::{
+		Escalation, LogFormat, RebuildCommand, nixos, run_commands, update_commands, vm_build,
+	};
 	use nixbox_nix::BuildEvent;
 	use std::path::{Path, PathBuf};
 	use tokio::sync::{mpsc, oneshot};
@@ -480,6 +637,20 @@ mod tests {
 				.display()
 				.ends_with("#nixos --log-format internal-json -v")
 		);
+	}
+
+	#[test]
+	fn an_update_refreshes_the_lock_before_switching_each_configuration() {
+		let dir = Path::new("/tmp/nixos");
+		let module = update_commands(dir, false);
+		assert_eq!(module.len(), 2);
+		assert_eq!(module[0].display(), "nix flake update --flake /tmp/nixos");
+		assert_eq!(module[1], nixos(dir));
+
+		let standalone = update_commands(dir, true);
+		assert_eq!(standalone.len(), 3);
+		assert!(standalone[2].display().contains("switch"));
+		assert!(standalone[2].display().contains("/tmp/nixos#"));
 	}
 
 	#[test]

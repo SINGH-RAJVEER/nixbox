@@ -107,7 +107,7 @@ fn run(args: Args) -> Result<()> {
 	if let Some(channel) = args.channel {
 		config.channel = channel;
 	}
-	let engine = Engine::with_config(config)?;
+	let engine = Engine::for_interface(config)?;
 	let helper = std::env::current_exe().context("locating the nixbox executable")?;
 	let telemetry = Telemetry::new(Interface::Gui, handle.clone());
 	let window_telemetry = telemetry.clone();

@@ -13,7 +13,7 @@ use crate::nav::{
 use crate::ops::{
 	cancel_build, confirm_flake_choice, install_selected, install_selected_flake, migrate_all,
 	migrate_selected, migrate_selected_across, schedule_flake_details, schedule_flake_search,
-	schedule_search, uninstall_selected,
+	schedule_search, uninstall_selected, update_system,
 };
 use crate::options::{
 	handle_panel_key, on_build_ended, on_options_failed, on_options_loaded, open_options_panel,
@@ -169,8 +169,12 @@ async fn handle_key_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: CtEven
 
 	let vim = app.session.engine.config.input_mode == InputMode::Vim;
 	let Some(input) = active_input(app) else {
-		if app.tab == Tab::Building && key.code == KeyCode::Char('c') {
-			cancel_build(app);
+		if app.tab == Tab::Building {
+			match key.code {
+				KeyCode::Char('c') => cancel_build(app),
+				KeyCode::Char('u') => update_system(app),
+				_ => {}
+			}
 		}
 		return Ok(());
 	};
@@ -257,7 +261,7 @@ fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 			if matches!(code, KeyCode::Up)
 				|| app.session.engine.config.input_mode == InputMode::Vim =>
 		{
-			let n = settings_option_count(app.settings_page);
+			let n = settings_option_count(app, app.settings_page);
 			app.settings_cursor = app.settings_cursor.checked_sub(1).unwrap_or(n - 1);
 		}
 		KeyCode::Down | KeyCode::Char('j')
@@ -265,7 +269,7 @@ fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 				|| app.session.engine.config.input_mode == InputMode::Vim =>
 		{
 			app.settings_cursor =
-				(app.settings_cursor + 1) % settings_option_count(app.settings_page);
+				(app.settings_cursor + 1) % settings_option_count(app, app.settings_page);
 		}
 		KeyCode::Enter => select_setting(app),
 		KeyCode::Esc => close_settings_page(app),
@@ -273,9 +277,10 @@ fn handle_settings_select(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 	}
 }
 
-fn settings_option_count(page: SettingsPage) -> usize {
+fn settings_option_count(app: &App, page: SettingsPage) -> usize {
 	match page {
-		SettingsPage::Main => 5,
+		SettingsPage::Main => 6,
+		SettingsPage::Configurations => app.configuration_choices.len().max(1),
 		SettingsPage::InputMode => INPUT_MODES.len(),
 		SettingsPage::Theme => theme::ALL.len(),
 		SettingsPage::Target => TARGETS.len(),
@@ -296,7 +301,8 @@ fn select_setting(app: &mut App) {
 			1 => SettingsPage::Theme,
 			2 => SettingsPage::Target,
 			3 => SettingsPage::Channel,
-			_ => SettingsPage::Telemetry,
+			4 => SettingsPage::Telemetry,
+			_ => SettingsPage::Configurations,
 		};
 		app.settings_cursor = match app.settings_page {
 			SettingsPage::InputMode => INPUT_MODES
@@ -313,6 +319,11 @@ fn select_setting(app: &mut App) {
 				.position(|channel| *channel == app.session.engine.config.channel)
 				.unwrap_or(0),
 			SettingsPage::Main => 0,
+			SettingsPage::Configurations => app
+				.configuration_choices
+				.iter()
+				.position(|choice| choice.selected(&app.session.engine.config))
+				.unwrap_or(0),
 			SettingsPage::Telemetry => usize::from(app.session.engine.config.telemetry.enabled),
 			SettingsPage::TelemetryPreview => 0,
 		};
@@ -351,6 +362,34 @@ fn select_setting(app: &mut App) {
 
 	let page = app.settings_page;
 	app.status = match page {
+		SettingsPage::Configurations => {
+			if app
+				.options_panel
+				.as_ref()
+				.is_some_and(|panel| !panel.staged.is_empty())
+			{
+				app.status =
+					"Apply or discard staged options before changing configuration.".into();
+				return;
+			}
+			match app.configuration_choices.get(app.settings_cursor).cloned() {
+				Some(choice) => match app.session.select_configuration(&choice) {
+					Ok(()) => {
+						app.nixos.abort();
+						app.nixos = Default::default();
+						app.options_cache.clear();
+						app.options_epoch = app.options_epoch.wrapping_add(1);
+						app.options_panel = None;
+						if let Some(task) = app.options_task.take() {
+							task.abort();
+						}
+						format!("Configuration set to {}.", choice.label)
+					}
+					Err(error) => format!("Could not change configuration: {error:#}"),
+				},
+				None => "No supported configuration outputs were discovered.".into(),
+			}
+		}
 		SettingsPage::InputMode => {
 			let mode = INPUT_MODES[app.settings_cursor];
 			app.apply_input_mode(mode);
@@ -409,6 +448,7 @@ fn settings_main_index(page: SettingsPage) -> usize {
 		SettingsPage::Target => 2,
 		SettingsPage::Channel => 3,
 		SettingsPage::Telemetry | SettingsPage::TelemetryPreview => 4,
+		SettingsPage::Configurations => 5,
 	}
 }
 

@@ -9,8 +9,19 @@
 				modules = [
 					({ lib, ... }: {
 						_file = "${self.outPath}/flake.nix";
+						imports = [ ./configuration.nix ];
 						options = {
+							hardware.cpu.intel.updateMicrocode = lib.mkEnableOption "Intel microcode";
+							hardware.cpu.amd.updateMicrocode = lib.mkEnableOption "AMD microcode";
+							hardware.nvidia.open = lib.mkEnableOption "NVIDIA open driver";
+							hardware.nvidia.modesetting.enable = lib.mkEnableOption "NVIDIA modesetting";
+							hardware.bluetooth.enable = lib.mkEnableOption "Bluetooth";
+							services.undervolt.tempBat = lib.mkOption {
+								type = lib.types.nullOr lib.types.int;
+								default = null;
+							};
 							custom.enable = lib.mkEnableOption "the fixture service";
+							custom.imported = lib.mkEnableOption "an imported setting";
 							custom.greeting = lib.mkOption {
 								type = lib.types.str;
 								default = "hello";
@@ -69,12 +80,22 @@
 								type = lib.types.str;
 								default = builtins.abort "credential was evaluated";
 							};
+							credentials.password = lib.mkOption {
+								type = lib.types.str;
+								default = "";
+							};
 						};
 						config.custom.greeting = "from configuration";
+						config.hardware.nvidia.open = false;
+					})
+					({ lib, ... }: {
+						_file = builtins.getEnv "NIXBOX_TEST_NIXPKGS" + "/nixos/modules/generated.nix";
+						options.custom.generated = lib.mkEnableOption "a generated module setting";
+						config.custom.generated = true;
 					})
 				];
 			};
-			host = { inherit (configuration) options config; pkgs = { inherit lib; }; };
+			host = { inherit (configuration) options config; pkgs = { inherit lib; path = builtins.toPath (builtins.getEnv "NIXBOX_TEST_NIXPKGS"); }; };
 		in {
 			nixosConfigurations = {
 				workstation = host;

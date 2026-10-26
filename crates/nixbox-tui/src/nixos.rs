@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nixbox_config::InputMode;
+use nixbox_core::hardware::HardwareFilter;
 use nixbox_core::system_options::{Category, Filtered, default_host, filter_options};
+use nixbox_nix::hardware::HardwareInventory;
 use nixbox_nix::system_options::{
 	NixosConfiguration, SystemOption, SystemOptionDetails, discover_hosts, discover_options,
 	inspect_option,
@@ -27,7 +29,7 @@ pub(crate) enum Event {
 	},
 	Catalog {
 		epoch: u64,
-		result: Result<Vec<SystemOption>, String>,
+		result: Result<(Vec<SystemOption>, HardwareInventory), String>,
 	},
 	Details {
 		epoch: u64,
@@ -45,6 +47,9 @@ pub(crate) struct Panel {
 	pub(crate) filtered: Filtered,
 	pub(crate) category: Category,
 	pub(crate) show_diagnostic: bool,
+	pub(crate) hardware: HardwareFilter,
+	local_hardware: HardwareInventory,
+	hardware_configuration: Option<NixosConfiguration>,
 	/// Position in `filtered.visible`.
 	pub(crate) cursor: usize,
 	pub(crate) details: Option<SystemOptionDetails>,
@@ -149,15 +154,22 @@ fn select_host(app: &mut App, tx: &mpsc::Sender<AppEvent>, host: String) {
 		root: app.session.config_dir(),
 		host,
 	};
+	if panel.hardware_configuration.as_ref() != Some(&configuration) {
+		panel.hardware.inventory = None;
+		panel.hardware_configuration = None;
+	}
 	panel.configuration = Some(configuration.clone());
 	panel.loading = true;
 	let epoch = panel.catalog_epoch;
 	let tx = tx.clone();
 	app.status = format!("Reading the option schema of {}…", configuration.host);
 	app.nixos.catalog_task = Some(tokio::spawn(async move {
-		let result = discover_options(&configuration, EVALUATION_LIMIT)
-			.await
-			.map(|catalog| catalog.options)
+		let (catalog, hardware) = tokio::join!(
+			discover_options(&configuration, EVALUATION_LIMIT),
+			tokio::task::spawn_blocking(HardwareInventory::detect)
+		);
+		let result = catalog
+			.map(|catalog| (catalog.options, hardware.unwrap_or_default()))
 			.map_err(|error| format!("{error:#}"));
 		let _ = tx
 			.send(AppEvent::Nixos(Event::Catalog { epoch, result }))
@@ -219,8 +231,12 @@ pub(crate) fn on_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, event: Event)
 			app.nixos.catalog_task = None;
 			app.nixos.loading = false;
 			match result {
-				Ok(options) => {
+				Ok((options, hardware)) => {
 					app.nixos.options = options;
+					app.nixos.local_hardware = hardware.clone();
+					if app.nixos.hardware_configuration == app.nixos.configuration {
+						app.nixos.hardware.inventory = Some(hardware);
+					}
 					refilter(app);
 					app.status = format!("{} NixOS options.", app.nixos.options.len());
 				}
@@ -254,6 +270,7 @@ pub(crate) fn refilter(app: &mut App) {
 		app.nixos_input.value(),
 		panel.category,
 		panel.show_diagnostic,
+		&panel.hardware,
 	);
 	panel.cursor = current
 		.and_then(|path| {
@@ -307,6 +324,34 @@ pub(crate) fn handle_key(app: &mut App, tx: &mpsc::Sender<AppEvent>, key: KeyEve
 		KeyCode::Char(']') if normal => cycle_category(app, 1),
 		KeyCode::Char('[') if normal => cycle_category(app, -1),
 		KeyCode::Char('t') if ctrl => cycle_host(app, tx),
+		KeyCode::Char('h') if alt => {
+			let panel = &mut app.nixos;
+			if panel.configuration.is_some() && !panel.loading {
+				if panel.hardware.inventory.is_some() {
+					panel.hardware.inventory = None;
+					panel.hardware_configuration = None;
+					app.status =
+						"Hardware unlinked. All hardware remains possible for this host.".into();
+				} else {
+					panel.hardware_configuration = panel.configuration.clone();
+					panel.hardware.inventory = Some(panel.local_hardware.clone());
+					app.status = format!(
+						"Using this machine's hardware for this host. {}",
+						panel.local_hardware.summary()
+					);
+				}
+				refilter(app);
+			}
+		}
+		KeyCode::Char('a') if alt => {
+			app.nixos.hardware.show_all = !app.nixos.hardware.show_all;
+			refilter(app);
+			app.status = if app.nixos.hardware.show_all {
+				"Showing all hardware options.".into()
+			} else {
+				"Showing relevant, configured, and unknown hardware options.".into()
+			};
+		}
 		KeyCode::Char('d') if ctrl => {
 			app.nixos.show_diagnostic = !app.nixos.show_diagnostic;
 			refilter(app);
@@ -357,6 +402,7 @@ mod tests {
 	fn option(path: &str) -> SystemOption {
 		SystemOption {
 			path: path.split('.').map(str::to_string).collect(),
+			configured: Some(false),
 			description: Some(format!("{path} description")),
 			type_description: "boolean".into(),
 			declarations: vec!["configuration.nix".into()],
@@ -396,12 +442,41 @@ mod tests {
 	}
 
 	#[tokio::test]
+	async fn hardware_controls_filter_and_unlink_on_host_changes() {
+		use nixbox_nix::hardware::Presence;
+		let (tx, _rx) = mpsc::channel(4);
+		let mut app = loaded_app();
+		app.nixos.options.push(option("hardware.nvidia.open"));
+		app.nixos.local_hardware.nvidia_gpu = Presence::Absent;
+		refilter(&mut app);
+		assert_eq!(app.nixos.filtered.visible.len(), 4);
+		handle_key(&mut app, &tx, key(KeyCode::Char('h'), KeyModifiers::ALT));
+		assert_eq!(app.nixos.filtered.visible.len(), 3);
+		handle_key(&mut app, &tx, key(KeyCode::Char('a'), KeyModifiers::ALT));
+		assert_eq!(app.nixos.filtered.visible.len(), 4);
+		handle_key(&mut app, &tx, key(KeyCode::Char('a'), KeyModifiers::ALT));
+		assert_eq!(app.nixos.filtered.visible.len(), 3);
+		app.nixos.hosts.push("other".into());
+		select_host(&mut app, &tx, "other".into());
+		app.nixos.abort();
+		assert!(app.nixos.hardware.inventory.is_none());
+		assert!(app.nixos.hardware_configuration.is_none());
+	}
+
+	#[tokio::test]
 	async fn categories_and_search_keep_the_cursor_on_its_option() {
 		let (tx, _rx) = mpsc::channel(4);
 		let mut app = loaded_app();
 		move_cursor(&mut app, 2);
 		assert_eq!(app.nixos.current().unwrap().path, ["custom", "welcome"]);
 
+		assert!(handle_key(
+			&mut app,
+			&tx,
+			key(KeyCode::Right, KeyModifiers::ALT)
+		));
+		assert_eq!(app.nixos.category, Category::Configured);
+		assert!(app.nixos.filtered.visible.is_empty());
 		assert!(handle_key(
 			&mut app,
 			&tx,
