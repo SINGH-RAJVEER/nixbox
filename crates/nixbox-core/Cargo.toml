@@ -17,8 +17,8 @@ test-util = []
 telemetry-receiver = ["dep:axum", "dep:rusqlite"]
 
 [dependencies]
-nixbox-config = { path = "../nixbox-config", version = "=0.4.6-nightly.20261025" }
-nixbox-nix = { path = "../nixbox-nix", version = "=0.4.6-nightly.20261025" }
+nixbox-config = { path = "../nixbox-config", version = "=0.4.7-nightly.20261026" }
+nixbox-nix = { path = "../nixbox-nix", version = "=0.4.7-nightly.20261026" }
 anyhow = { workspace = true }
 directories = { workspace = true }
 serde = { workspace = true }

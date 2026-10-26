@@ -27,4 +27,4 @@ path = "src/nb.rs"
 [dependencies]
 # Only the command tree: no front-end is passed to it, so neither ratatui nor
 # gpui is ever compiled.
-nixbox-cmd = { path = "../nixbox-cmd", version = "=0.4.6-nightly.20261025" }
+nixbox-cmd = { path = "../nixbox-cmd", version = "=0.4.7-nightly.20261026" }
