@@ -1084,6 +1084,46 @@ impl NixboxApp {
 		self.save_config(format!("Close button {state}."), cx);
 	}
 
+	pub fn set_dendritic_detection(&mut self, enabled: bool, cx: &mut Context<Self>) {
+		if !self.nixos.staged.is_empty()
+			|| self
+				.options
+				.as_ref()
+				.is_some_and(|options| !options.staged.is_empty())
+		{
+			self.set_status(
+				"Apply or discard staged option edits before changing detection mode.",
+				cx,
+			);
+			return;
+		}
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		match self.session.set_dendritic_detection(enabled) {
+			Ok(()) => {
+				self.options_epoch = self.options_epoch.wrapping_add(1);
+				self.options_cache.clear();
+				self.options = None;
+				self.options_task = None;
+				self.nixos.reset();
+				if self.page == Page::Options {
+					self.page = Page::Installed;
+				}
+				self.repository.forget(&self.session.config_dir());
+				self.refresh_configuration_choices();
+				let mode = if enabled { "enabled" } else { "disabled" };
+				self.set_status(
+					format!("Dendritic detection {mode}. Configuration reloaded."),
+					cx,
+				);
+			}
+			Err(error) => {
+				self.set_status(format!("Could not change detection mode: {error:#}"), cx)
+			}
+		}
+	}
+
 	pub fn set_telemetry(&mut self, enabled: bool, cx: &mut Context<Self>) {
 		if !enabled {
 			self.session.telemetry.disable();
@@ -1856,6 +1896,12 @@ mod tests {
 		cx.update_window(handle.into(), |_, window, cx| {
 			window.render_frame(cx);
 			assert!(window.find("configuration-0").bounds().size.width > px(0.));
+			assert!(window.find("dendritic-detection").bounds().size.width > px(0.));
+			view.update(cx, |app, cx| {
+				app.set_dendritic_detection(false, cx);
+				assert!(app.session.engine.config.dendritic_detection);
+				assert!(app.status.contains("queued work"), "{}", app.status);
+			});
 			window
 				.within("configuration-selection")
 				.click("configuration-0", cx);

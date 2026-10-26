@@ -27,6 +27,127 @@ fn fixture(dir: &crate::tests::TempConfigDir) {
 }
 
 #[tokio::test]
+async fn detection_mode_switches_placement_and_blocks_disabled_dendritic_writes() {
+	let dir = crate::tests::temp_dir("dendritic-detection-mode");
+	fixture(&dir);
+	let engine = Engine::with_config(dir.config()).unwrap();
+	let native = engine.config.managed_file_for(Target::NixosSystem);
+	let root = engine.config.config_root();
+	let before = crate::vcs::operation_files(&engine.config);
+	let original_identity = engine.config.identity();
+	let (mut session, _events) = crate::Session::new(engine);
+	session.set_dendritic_detection(false).unwrap();
+	assert!(
+		!nixbox_config::Config::load_or_default()
+			.unwrap()
+			.dendritic_detection
+	);
+	assert!(session.engine.config.native_modules_dir.is_none());
+	assert_eq!(
+		session.engine.config.managed_file_for(Target::NixosSystem),
+		root.join("nixbox-system-packages.nix")
+	);
+	assert!(
+		crate::configurations::choices(&session.engine.config)
+			.unwrap()
+			.is_empty()
+	);
+	assert_ne!(original_identity, session.engine.config.identity());
+	let op = Op::Install {
+		hit: crate::tests::hit("hello"),
+		scope: Target::NixosSystem,
+	};
+	assert!(
+		session
+			.engine
+			.apply(&op, &mut SilentReporter)
+			.unwrap_err()
+			.to_string()
+			.contains("enable dendritic detection")
+	);
+	assert!(session.engine.write_manifest(Target::NixosSystem).is_err());
+	assert!(
+		crate::rebuild::resolve_for(&session.engine.config, Target::NixosSystem)
+			.await
+			.is_err()
+	);
+	assert!(
+		crate::profile::command_for(&session.engine.config, Target::NixosSystem)
+			.await
+			.is_err()
+	);
+	assert!(!root.join("nixbox-system-packages.nix").exists());
+	session.set_dendritic_detection(true).unwrap();
+	assert_eq!(
+		session.engine.config.managed_file_for(Target::NixosSystem),
+		native
+	);
+	assert_eq!(crate::vcs::operation_files(&session.engine.config), before);
+	assert!(
+		nixbox_config::Config::load_or_default()
+			.unwrap()
+			.dendritic_detection
+	);
+	session.queue.push_back(op);
+	assert!(session.set_dendritic_detection(false).is_err());
+	assert!(session.engine.config.dendritic_detection);
+	session.queue.clear();
+	crate::PersistedState {
+		pending_queue: vec![Op::Install {
+			hit: crate::tests::hit("hello"),
+			scope: Target::NixosSystem,
+		}],
+		..Default::default()
+	}
+	.save()
+	.unwrap();
+	assert!(session.set_dendritic_detection(false).is_err());
+	assert!(session.engine.config.dendritic_detection);
+}
+
+#[test]
+fn detection_disabled_keeps_conventional_imports_and_ignores_ambiguous_choices() {
+	let dir = crate::tests::temp_dir("dendritic-detection-conventional");
+	let root = dir.config().config_root();
+	std::fs::write(
+		root.join("configuration.nix"),
+		"{ pkgs, ... }: { imports = []; }",
+	)
+	.unwrap();
+	let mut config = dir.config();
+	config.dendritic_detection = false;
+	let mut engine = Engine::with_config(config).unwrap();
+	engine
+		.apply(
+			&Op::Install {
+				hit: crate::tests::hit("hello"),
+				scope: Target::NixosSystem,
+			},
+			&mut SilentReporter,
+		)
+		.unwrap();
+	assert!(
+		std::fs::read_to_string(root.join("configuration.nix"))
+			.unwrap()
+			.contains("./nixbox-system-packages.nix")
+	);
+	assert!(
+		!std::fs::read_to_string(root.join("nixbox-system-packages.nix"))
+			.unwrap()
+			.contains("flake.modules")
+	);
+	multiple_targets(&dir);
+	assert!(Engine::with_config(engine.config.clone()).is_ok());
+	assert!(
+		crate::configurations::choices(&engine.config)
+			.unwrap()
+			.is_empty()
+	);
+	engine.config.dendritic_detection = true;
+	assert!(engine.ensure_identity().is_err());
+}
+
+#[tokio::test]
 async fn standalone_home_outputs_use_their_own_class_and_activation() {
 	let dir = crate::tests::temp_dir("dendritic-standalone");
 	fixture(&dir);

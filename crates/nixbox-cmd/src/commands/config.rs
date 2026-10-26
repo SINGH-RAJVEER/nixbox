@@ -16,13 +16,14 @@ use crate::commands::target_name;
 use crate::render;
 
 /// Every key `get`/`set` understands, in the order `show` prints them.
-const KEYS: [&str; 13] = [
+const KEYS: [&str; 14] = [
 	"channel",
 	"target",
 	"theme",
 	"input-mode",
 	"tab-labels",
 	"close-button",
+	"dendritic-detection",
 	"telemetry-enabled",
 	"config-dir",
 	"home-manager-main-file",
@@ -73,6 +74,10 @@ pub fn run(action: &Action, global: &GlobalArgs) -> Result<ExitCode> {
 		} => {
 			let mut config = Config::load_or_default()?;
 			global.apply(&mut config);
+			anyhow::ensure!(
+				config.dendritic_detection,
+				"enable dendritic detection before migrating dendritic modules"
+			);
 			let layout = nixbox_nix::dendritic::Layout::select_output(
 				&config.config_root(),
 				config.nixos_host.as_deref(),
@@ -139,6 +144,7 @@ fn show(global: &GlobalArgs) -> Result<ExitCode> {
 				"input-mode": input_mode_name(config.input_mode),
 				"tab-labels": config.tab_labels.name(),
 				"close-button": config.close_button,
+				"dendritic-detection": config.dendritic_detection,
 				"telemetry-enabled": config.telemetry.enabled,
 				"config-dir": config.config_dir,
 				"home-manager-main-file": config.home_manager_main_file,
@@ -198,6 +204,19 @@ fn set(key: &str, value: &str) -> Result<ExitCode> {
 		"input-mode" => config.input_mode = parse_input_mode(value)?,
 		"tab-labels" => config.tab_labels = parse_tab_labels(value)?,
 		"close-button" => config.close_button = parse_close_button(value)?,
+		"dendritic-detection" => {
+			if let Some(saved) = nixbox_core::PersistedState::load() {
+				anyhow::ensure!(
+					saved.pending_queue.is_empty() && saved.in_progress.is_none(),
+					"finish or discard saved work before changing detection mode"
+				);
+			}
+			config.dendritic_detection = match value {
+				"true" => true,
+				"false" => false,
+				_ => bail!("dendritic-detection must be true or false"),
+			};
+		}
 		"config-dir" => {
 			config.config_dir = parse_path(value);
 			config.nixos_host = None;
@@ -238,6 +257,7 @@ fn read(config: &Config, key: &str) -> Option<String> {
 		"input-mode" => input_mode_name(config.input_mode).to_string(),
 		"tab-labels" => config.tab_labels.name().to_string(),
 		"close-button" => config.close_button.to_string(),
+		"dendritic-detection" => config.dendritic_detection.to_string(),
 		"telemetry-enabled" => config.telemetry.enabled.to_string(),
 		"config-dir" => path_value(config.config_dir.as_ref()),
 		"home-manager-main-file" => path_value(config.home_manager_main_file.as_ref()),
@@ -261,7 +281,11 @@ fn inspect(global: &GlobalArgs) -> Result<ExitCode> {
 	let mut config = Config::load_or_default()?;
 	global.apply(&mut config);
 	let root = config.config_root();
-	let discovery = nixbox_nix::dendritic::Layout::inspect(&root);
+	let discovery = if config.dendritic_detection {
+		nixbox_nix::dendritic::Layout::inspect(&root)
+	} else {
+		Ok(None)
+	};
 	let mut diagnostics = Vec::new();
 	let (layout, discovered) = match discovery {
 		Ok(Some(discovery)) => ("dendritic", json!(discovery)),

@@ -60,12 +60,7 @@ impl InstalledFlake {
 /// removes both.
 #[must_use]
 pub fn scan_flakes(config: &Config) -> Vec<InstalledFlake> {
-	let dendritic = nixbox_nix::dendritic::Layout::select_output(
-		&config.config_root(),
-		config.nixos_host.as_deref(),
-		config.home_user.as_deref(),
-		config.home_configuration.as_deref(),
-	);
+	let dendritic = crate::configurations::selected_layout(config);
 	let repos = input_repos(&config.flake_file());
 	let mut out = Vec::new();
 	for scope in [Target::HomeManager, Target::NixosSystem] {
@@ -222,13 +217,7 @@ impl Engine {
 		let main_file = self.config.main_file_for(scope);
 
 		if let FlakeOutput::Package(package) = output
-			&& nixbox_nix::dendritic::Layout::select_output(
-				&self.config.config_root(),
-				self.config.nixos_host.as_deref(),
-				self.config.home_user.as_deref(),
-				self.config.home_configuration.as_deref(),
-			)?
-			.is_none()
+			&& crate::configurations::selected_layout(&self.config)?.is_none()
 			&& scan_flake_packages(&main_file, scan_target(scope))?
 				.iter()
 				.any(|entry| entry.input == input && &entry.package == package)
@@ -286,12 +275,7 @@ impl Engine {
 	/// goes through `specialArgs` into the system configuration and on from
 	/// there through `home-manager.extraSpecialArgs`.
 	fn pass_inputs(&self, scope: Target) -> Result<Option<PathBuf>> {
-		if let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
-			&self.config.config_root(),
-			self.config.nixos_host.as_deref(),
-			self.config.home_user.as_deref(),
-			self.config.home_configuration.as_deref(),
-		)? {
+		if let Some(layout) = crate::configurations::selected_layout(&self.config)? {
 			if scope == Target::HomeManager {
 				layout.require_home()?;
 			}
@@ -391,12 +375,7 @@ impl Engine {
 		}
 
 		let main_file = self.config.main_file_for(scope);
-		let dendritic = nixbox_nix::dendritic::Layout::select_output(
-			&self.config.config_root(),
-			self.config.nixos_host.as_deref(),
-			self.config.home_user.as_deref(),
-			self.config.home_configuration.as_deref(),
-		)?;
+		let dendritic = crate::configurations::selected_layout(&self.config)?;
 		let removed_by_hand = match output {
 			FlakeOutput::Package(package) if dendritic.is_some() => {
 				let edits = dendritic

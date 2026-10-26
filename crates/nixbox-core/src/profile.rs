@@ -228,13 +228,8 @@ pub async fn command(config_dir: &Path, scope: Target) -> Result<RebuildCommand>
 
 /// Build the profile from the same selected host/user as mutation and recovery.
 pub async fn command_for(config: &nixbox_config::Config, scope: Target) -> Result<RebuildCommand> {
-	let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
-		&config.config_root(),
-		config.nixos_host.as_deref(),
-		config.home_user.as_deref(),
-		config.home_configuration.as_deref(),
-	)?
-	else {
+	crate::configurations::ensure_detection_mode(config)?;
+	let Some(layout) = crate::configurations::selected_layout(config)? else {
 		return command(&config.config_root(), scope).await;
 	};
 	// Applying a different user's profile locally would modify the invoking

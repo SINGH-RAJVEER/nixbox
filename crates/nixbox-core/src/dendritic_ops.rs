@@ -12,6 +12,10 @@ pub fn apply_managed_migration(
 	config: &nixbox_config::Config,
 	changes: &[nixbox_nix::dendritic::FileChange],
 ) -> Result<()> {
+	ensure!(
+		config.dendritic_detection,
+		"enable dendritic detection before migrating dendritic modules"
+	);
 	let _guard = crate::vcs::AppliedJournal::acquire(config)?;
 	nixbox_nix::dendritic::FileChange::apply_all(changes)?;
 	for change in changes.iter().filter(|change| change.after.is_some()) {

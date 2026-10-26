@@ -892,12 +892,7 @@ pub(crate) fn operation_files(config: &Config) -> BTreeMap<PathBuf, Option<Vec<u
 		config.config_root().join("flake.lock"),
 		config.home_integration_file(),
 	];
-	if let Ok(Some(layout)) = nixbox_nix::dendritic::Layout::select_output(
-		&config.config_root(),
-		config.nixos_host.as_deref(),
-		config.home_user.as_deref(),
-		config.home_configuration.as_deref(),
-	) {
+	if let Ok(Some(layout)) = crate::configurations::selected_layout(config) {
 		files.extend(layout.source_files().iter().cloned());
 		files.push(layout.tree.join("nixbox/inputs.nix"));
 	}

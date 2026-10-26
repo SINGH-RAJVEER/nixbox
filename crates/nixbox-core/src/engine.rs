@@ -73,12 +73,7 @@ impl Engine {
 		config.native_modules_dir = None;
 		config.legacy_system_module = false;
 		config.legacy_home_module = false;
-		if let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
-			&config.config_root(),
-			config.nixos_host.as_deref(),
-			config.home_user.as_deref(),
-			config.home_configuration.as_deref(),
-		)? {
+		if let Some(layout) = crate::configurations::selected_layout(&config)? {
 			if layout.standalone {
 				config.home_configuration = Some(layout.host.clone());
 				config.nixos_host = None;
@@ -101,6 +96,7 @@ impl Engine {
 			self.identity == self.config.identity(),
 			"configuration selection changed; reload the engine before applying work"
 		);
+		crate::configurations::ensure_detection_mode(&self.config)?;
 		Ok(())
 	}
 
@@ -109,12 +105,7 @@ impl Engine {
 	#[must_use]
 	pub fn integration_file_for(&self, scope: Target) -> std::path::PathBuf {
 		if matches!(
-			nixbox_nix::dendritic::Layout::select_output(
-				&self.config.config_root(),
-				self.config.nixos_host.as_deref(),
-				self.config.home_user.as_deref(),
-				self.config.home_configuration.as_deref()
-			),
+			crate::configurations::selected_layout(&self.config),
 			Ok(Some(_))
 		) {
 			self.config.flake_file()
@@ -133,14 +124,7 @@ impl Engine {
 	/// used when a front-end overrides the target or channel per invocation.
 	pub fn with_config(config: Config) -> Result<Self> {
 		let config = Self::resolve_config(config)?;
-		if nixbox_nix::dendritic::Layout::select_output(
-			&config.config_root(),
-			config.nixos_host.as_deref(),
-			config.home_user.as_deref(),
-			config.home_configuration.as_deref(),
-		)?
-		.is_some()
-		{
+		if crate::configurations::selected_layout(&config)?.is_some() {
 			anyhow::ensure!(
 				[Target::HomeManager, Target::NixosSystem]
 					.into_iter()
@@ -152,6 +136,7 @@ impl Engine {
 			.into_iter()
 			.any(|scope| config.legacy_flake_manifest_for(scope).exists())
 		{
+			crate::configurations::ensure_detection_mode(&config)?;
 			let _journal = crate::vcs::AppliedJournal::acquire(&config)?;
 			let mut sources = vec![config.config_root()];
 			sources.extend(
@@ -257,12 +242,7 @@ impl Engine {
 	/// across into it needs to be imported from.
 	#[must_use]
 	pub fn has_main_file(&self, scope: Target) -> bool {
-		if let Ok(Some(layout)) = nixbox_nix::dendritic::Layout::select_output(
-			&self.config.config_root(),
-			self.config.nixos_host.as_deref(),
-			self.config.home_user.as_deref(),
-			self.config.home_configuration.as_deref(),
-		) {
+		if let Ok(Some(layout)) = crate::configurations::selected_layout(&self.config) {
 			return if layout.standalone {
 				scope == Target::HomeManager
 			} else {
@@ -276,12 +256,7 @@ impl Engine {
 	/// anything — [`Engine::apply`] is what repairs a missing import.
 	#[must_use]
 	pub fn import_state(&self, scope: Target) -> ImportState {
-		match nixbox_nix::dendritic::Layout::select_output(
-			&self.config.config_root(),
-			self.config.nixos_host.as_deref(),
-			self.config.home_user.as_deref(),
-			self.config.home_configuration.as_deref(),
-		) {
+		match crate::configurations::selected_layout(&self.config) {
 			Ok(Some(layout)) => {
 				return if layout
 					.is_loaded(&self.config.managed_file_for(scope))
@@ -331,14 +306,7 @@ impl Engine {
 			Target::HomeManager => managed.write_home_manager(self.manifest_for(scope))?,
 			Target::NixosSystem => managed.write_nixos(self.manifest_for(scope))?,
 		}
-		if nixbox_nix::dendritic::Layout::select_output(
-			&self.config.config_root(),
-			self.config.nixos_host.as_deref(),
-			self.config.home_user.as_deref(),
-			self.config.home_configuration.as_deref(),
-		)?
-		.is_some()
-		{
+		if crate::configurations::selected_layout(&self.config)?.is_some() {
 			git_track(managed.path(), &mut crate::SilentReporter);
 			git_track(&self.config.flake_file(), &mut crate::SilentReporter);
 		}
@@ -411,12 +379,7 @@ impl Engine {
 	/// recovery is just re-running the rebuild.
 	pub fn apply(&mut self, op: &Op, reporter: &mut dyn Reporter) -> Result<()> {
 		self.ensure_identity()?;
-		let dendritic = nixbox_nix::dendritic::Layout::select_output(
-			&self.config.config_root(),
-			self.config.nixos_host.as_deref(),
-			self.config.home_user.as_deref(),
-			self.config.home_configuration.as_deref(),
-		)?;
+		let dendritic = crate::configurations::selected_layout(&self.config)?;
 		if let Some(layout) = &dendritic {
 			anyhow::ensure!(
 				!layout.standalone || op.scope() == Target::HomeManager,
@@ -634,12 +597,7 @@ pub fn scan_externals(
 	nixos_manifest: &Manifest,
 ) -> Vec<ExternalPackage> {
 	let mut out: Vec<ExternalPackage> = Vec::new();
-	match nixbox_nix::dendritic::Layout::select_output(
-		&config.config_root(),
-		config.nixos_host.as_deref(),
-		config.home_user.as_deref(),
-		config.home_configuration.as_deref(),
-	) {
+	match crate::configurations::selected_layout(config) {
 		Ok(Some(layout)) => {
 			for (home, manifest) in [(true, home_manifest), (false, nixos_manifest)] {
 				out.extend(

@@ -159,12 +159,8 @@ pub async fn resolve(config_dir: &Path, scope: Target) -> RebuildCommand {
 
 /// Resolve a command using the selection frozen into the engine/session.
 pub async fn resolve_for(config: &Config, scope: Target) -> anyhow::Result<RebuildCommand> {
-	if let Some(layout) = nixbox_nix::dendritic::Layout::select_output(
-		&config.config_root(),
-		config.nixos_host.as_deref(),
-		config.home_user.as_deref(),
-		config.home_configuration.as_deref(),
-	)? {
+	crate::configurations::ensure_detection_mode(config)?;
+	if let Some(layout) = crate::configurations::selected_layout(config)? {
 		if scope == Target::HomeManager {
 			layout.require_home()?;
 		}

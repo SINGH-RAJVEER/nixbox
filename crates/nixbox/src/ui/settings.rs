@@ -116,6 +116,12 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.on_click(cx.listener(|this, checked: &bool, _, cx| {
 			this.set_close_button(*checked, cx);
 		}));
+	let dendritic_detection = Switch::new("dendritic-detection")
+		.checked(config.dendritic_detection)
+		.disabled(busy || app.session.is_building() || !app.session.queue.is_empty())
+		.on_click(cx.listener(|this, checked: &bool, _, cx| {
+			this.set_dendritic_detection(*checked, cx);
+		}));
 
 	let location = configuration(app, cx);
 	let input_modes = ButtonGroup::new("input-mode")
@@ -160,6 +166,12 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 					cx,
 				))
 				.child(privacy)
+				.child(setting(
+					"Detect dendritic configurations",
+					"Discover flake-parts hosts and Home Manager outputs. Turn off for conventional configuration handling. Finish queued work before switching.",
+					dendritic_detection,
+					cx,
+				))
 				.child(setting("Configuration", app.configuration_diagnostic.as_deref().unwrap_or("Select a host, attached user, or standalone Home Manager output. Queued work must finish first."), configurations, cx))
 				.child(setting(
 					"Install target",

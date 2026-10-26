@@ -14,6 +14,7 @@ The complete shape is:
 	"input_mode": "vim",
 	"tab_labels": "icons-and-names",
 	"close_button": true,
+	"dendritic_detection": true,
 	"telemetry": {
 		"enabled": false,
 		"consent_version": 0,
@@ -37,6 +38,7 @@ The complete shape is:
 | `input_mode` | `vim` | Text editing behavior. Valid values are `vim` and `normal`. |
 | `tab_labels` | `icons-and-names` | What the desktop GUI's navigation tabs show. Valid values are `icons`, `icons-and-names`, and `names`. `nixbox config set tab-labels` accepts the same values. |
 | `close_button` | `true` | Whether the desktop GUI shows a GTK-style close button at the top right. `nixbox config set close-button` accepts `true` or `false`. |
+| `dendritic_detection` | `true` | Detect supported flake-parts/import-tree configurations and use their native modules and output pickers. The GUI's Detect dendritic configurations switch and `nixbox config set dendritic-detection true` or `false` control it. Off uses conventional file placement; dendritic writes and rebuilds require enabling detection again. |
 | `telemetry.enabled` | `false` | Saved telemetry consent. Missing fields on upgrades stay disabled. The shared recipient is `https://nixb.duckdns.org:58443/v1/telemetry`. |
 | `telemetry.consent_version` | `0` | Version of the disclosed collection contract. A saved enablement is valid only for the current version, `3`, which discloses the selected recipient. |
 | `telemetry.revision` | `0` | Local counter advanced by explicit consent changes, so queued work can detect a disable/enable cycle. It is never part of a report. |

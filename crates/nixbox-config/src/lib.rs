@@ -118,6 +118,8 @@ pub const DEFAULT_CHANNEL: &str = "nixpkgs-26.05";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigurationIdentity {
 	pub root: PathBuf,
+	#[serde(default = "default_dendritic_detection")]
+	pub dendritic_detection: bool,
 	pub host: Option<String>,
 	pub user: Option<String>,
 	#[serde(default)]
@@ -137,6 +139,9 @@ pub struct Config {
 	/// Whether the desktop GUI draws a close button at the right of its tabs.
 	#[serde(default = "default_close_button")]
 	pub close_button: bool,
+	/// Discover native flake-parts modules instead of conventional entry files.
+	#[serde(default = "default_dendritic_detection")]
+	pub dendritic_detection: bool,
 	/// Desktop keyboard overrides. Missing actions use their defaults; empty lists disable them.
 	#[serde(default)]
 	pub gui_shortcuts: BTreeMap<String, Vec<String>>,
@@ -195,6 +200,10 @@ fn default_close_button() -> bool {
 	true
 }
 
+fn default_dendritic_detection() -> bool {
+	true
+}
+
 impl Default for Config {
 	fn default() -> Self {
 		Self {
@@ -204,6 +213,7 @@ impl Default for Config {
 			input_mode: InputMode::default(),
 			tab_labels: TabLabels::default(),
 			close_button: default_close_button(),
+			dendritic_detection: default_dendritic_detection(),
 			gui_shortcuts: BTreeMap::new(),
 			telemetry: TelemetrySettings::default(),
 			recent_searches: Vec::new(),
@@ -224,6 +234,7 @@ impl Config {
 	pub fn identity(&self) -> ConfigurationIdentity {
 		let root = self.config_root();
 		ConfigurationIdentity {
+			dendritic_detection: self.dendritic_detection,
 			root: root.canonicalize().unwrap_or_else(|_| {
 				if root.is_absolute() {
 					root.clone()
@@ -477,6 +488,7 @@ mod tests {
 		assert_eq!(cfg.input_mode, InputMode::Vim);
 		assert_eq!(cfg.tab_labels, TabLabels::IconsAndNames);
 		assert!(cfg.close_button);
+		assert!(cfg.dendritic_detection);
 		assert!(cfg.gui_shortcuts.is_empty());
 		assert_eq!(cfg.telemetry, TelemetrySettings::default());
 		assert!(cfg.recent_searches.is_empty());

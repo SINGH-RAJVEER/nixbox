@@ -31,6 +31,8 @@ None of these are written back to the settings file. `nixbox config set` is the 
 
 For supported dendritic configurations, `status` and `doctor` report `flake.nix` as the integration entry point. `scan` includes packages in connected classed feature modules and marks those external entries read-only. Installs, managed removals, and profile operations use generated flake-parts modules. Unsupported layouts fail with a discovery diagnostic. See [Dendritic support](DENDRITIC_PLAN.md).
 
+`nixbox config set dendritic-detection false` disables native discovery and uses conventional file placement. Set it to `true` to restore automatic dendritic handling. Saved work must be completed or discarded before changing modes. Disabled detection refuses writes or rebuilds in a dendritic tree; it does not convert the tree to a conventional layout.
+
 | Command | Purpose |
 | --- | --- |
 | `nixbox search <query>` | Search the active channel. `-n` limits the result count. Uses the local package catalog when one is available and falls back to live search otherwise; `--channel` always searches live. |
