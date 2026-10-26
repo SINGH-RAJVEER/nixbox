@@ -340,15 +340,16 @@ impl Session {
 	/// Queued ops stay queued and run once it ends. Returns the label, or
 	/// `None` while another rebuild is running.
 	pub fn start_update(&mut self) -> Option<String> {
-		if self.is_building() {
+		if self.is_building() || !self.context_available() {
 			return None;
 		}
 		let label = UPDATE_LABEL.to_string();
-		self.start_activation(
-			Target::NixosSystem,
-			label.clone(),
-			crate::Activation::Update,
-		);
+		let scope = if self.engine.config.home_configuration.is_some() {
+			Target::HomeManager
+		} else {
+			Target::NixosSystem
+		};
+		self.start_activation(scope, label.clone(), crate::Activation::Update);
 		Some(label)
 	}
 

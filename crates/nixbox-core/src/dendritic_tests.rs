@@ -27,6 +27,65 @@ fn fixture(dir: &crate::tests::TempConfigDir) {
 }
 
 #[tokio::test]
+async fn full_updates_use_the_selected_host_and_standalone_output() {
+	let dir = crate::tests::temp_dir("dendritic-update-selection");
+	multiple_targets(&dir);
+	let mut config = dir.config();
+	config.nixos_host = Some("server".into());
+	let config = Engine::resolve_config(config).unwrap();
+	let commands = crate::rebuild::update_commands_for(&config).await.unwrap();
+	assert_eq!(commands.len(), 2);
+	assert_eq!(
+		commands[0],
+		crate::profile::update_command(&config.config_root())
+	);
+	assert_eq!(
+		commands[1],
+		crate::rebuild::resolve_for(&config, Target::NixosSystem)
+			.await
+			.unwrap()
+	);
+	std::fs::write(
+		config.config_root().join("modules/standalone.nix"),
+		r#"
+{ config, inputs, ... }: {
+	flake.homeConfigurations."alice@work" = inputs.home-manager.lib.homeManagerConfiguration {
+		modules = [ config.flake.modules.homeManager.work ];
+	};
+	flake.modules.homeManager.work = { home.username = "alice"; };
+}
+"#,
+	)
+	.unwrap();
+	let mut home = dir.config();
+	home.home_configuration = Some("alice@work".into());
+	let home = Engine::resolve_config(home).unwrap();
+	let commands = crate::rebuild::update_commands_for(&home).await.unwrap();
+	assert_eq!(commands.len(), 2);
+	assert_eq!(
+		commands[1],
+		crate::rebuild::resolve_for(&home, Target::HomeManager)
+			.await
+			.unwrap()
+	);
+	assert_ne!(commands[1].program, "sudo");
+	if crate::rebuild::builds_vm() {
+		assert!(commands.iter().all(|command| command.program == "nix"));
+		assert!(
+			commands
+				.iter()
+				.all(|command| !command.args.iter().any(|arg| arg == "switch"))
+		);
+		assert!(
+			commands[1]
+				.args
+				.iter()
+				.any(|arg| arg.ends_with("activationPackage"))
+		);
+	}
+}
+
+#[tokio::test]
 async fn detection_mode_switches_placement_and_blocks_disabled_dendritic_writes() {
 	let dir = crate::tests::temp_dir("dendritic-detection-mode");
 	fixture(&dir);

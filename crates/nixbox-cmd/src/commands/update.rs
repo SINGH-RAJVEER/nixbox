@@ -33,19 +33,24 @@ pub async fn run(args: &UpdateArgs, global: &GlobalArgs) -> Result<ExitCode> {
 		"  update every input in {}",
 		config_dir.join("flake.lock").display()
 	);
-	eprintln!("  rebuild NixOS, and a standalone Home Manager configuration if there is one");
+	let scope = if engine.config.home_configuration.is_some() {
+		Target::HomeManager
+	} else {
+		Target::NixosSystem
+	};
+	eprintln!("  rebuild the selected configuration; VM mode builds without activation");
 
 	if args.dry_run {
 		eprintln!("Dry run: nothing changed. Drop --dry-run to update the system.");
 		return Ok(ExitCode::SUCCESS);
 	}
-	if !confirm(args.yes, Target::NixosSystem, "Update the system?")? {
+	if !confirm(args.yes, scope, "Update the selected configuration?")? {
 		eprintln!("Cancelled.");
 		return Ok(ExitCode::SUCCESS);
 	}
 	run_activation(
 		&engine,
-		Target::NixosSystem,
+		scope,
 		UPDATE_LABEL,
 		Activation::Update,
 		&global.telemetry,

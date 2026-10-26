@@ -301,7 +301,7 @@ pub async fn run_activation_for(
 ) {
 	let config_dir = config.config_root();
 	// The VM build carries the profile inside its own system instead.
-	let activation = if builds_vm() {
+	let activation = if builds_vm() && activation == Activation::Packages {
 		Activation::Configuration
 	} else {
 		activation
@@ -348,8 +348,11 @@ pub async fn run_activation_for(
 			vec![command]
 		}
 		Activation::Update => {
-			let standalone_home = tokio::select! {
-				standalone = flake_has_home_configuration(&config_dir) => standalone,
+			let commands = tokio::select! {
+				commands = update_commands_for(&config) => match commands {
+					Ok(commands) => commands,
+					Err(error) => { let _ = tx.send(BuildEvent::Finished(Err(format!("{error:#}")))).await; return; }
+				},
 				_ = &mut cancel => {
 					let _ = tx.send(BuildEvent::Cancelled).await;
 					return;
@@ -359,7 +362,7 @@ pub async fn run_activation_for(
 			// never needs root, and a Home Manager switch after activation
 			// would otherwise reopen the build and download steps; its plain
 			// output stays under activation instead.
-			update_commands(&config_dir, standalone_home)
+			commands
 				.into_iter()
 				.enumerate()
 				.map(|(step, command)| match step {
@@ -382,6 +385,25 @@ pub async fn run_activation_for(
 			.await;
 	}
 	let _ = tx.send(BuildEvent::Finished(Ok(()))).await;
+}
+
+/// Resolve a full update using the same configuration selection as other builds.
+pub async fn update_commands_for(config: &Config) -> anyhow::Result<Vec<RebuildCommand>> {
+	crate::configurations::ensure_detection_mode(config)?;
+	let root = config.config_root();
+	if builds_vm() || crate::configurations::selected_layout(config)?.is_some() {
+		let scope = if config.home_configuration.is_some() {
+			Target::HomeManager
+		} else {
+			Target::NixosSystem
+		};
+		return Ok(vec![
+			profile::update_command(&root),
+			resolve_for(config, scope).await?,
+		]);
+	}
+	let standalone = flake_has_home_configuration(&root).await;
+	Ok(update_commands(&root, standalone))
 }
 
 /// The steps of a full system update: refresh every flake input, switch
