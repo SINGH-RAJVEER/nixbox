@@ -475,6 +475,13 @@ mod tests {
 			&tx,
 			key(KeyCode::Right, KeyModifiers::ALT)
 		));
+		assert_eq!(app.nixos.category, Category::Configured);
+		assert!(app.nixos.filtered.visible.is_empty());
+		assert!(handle_key(
+			&mut app,
+			&tx,
+			key(KeyCode::Right, KeyModifiers::ALT)
+		));
 		assert_eq!(app.nixos.category, Category::General);
 		assert_eq!(app.nixos.filtered.visible, [0]);
 		assert_eq!(app.nixos.filtered.count(Category::All), 3);

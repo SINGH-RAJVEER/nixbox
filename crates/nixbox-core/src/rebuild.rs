@@ -347,6 +347,27 @@ pub async fn run_activation_for(
 			};
 			vec![command]
 		}
+		Activation::Update => {
+			let standalone_home = tokio::select! {
+				standalone = flake_has_home_configuration(&config_dir) => standalone,
+				_ = &mut cancel => {
+					let _ = tx.send(BuildEvent::Cancelled).await;
+					return;
+				}
+			};
+			// Only the NixOS switch reports a structured log. The lock update
+			// never needs root, and a Home Manager switch after activation
+			// would otherwise reopen the build and download steps; its plain
+			// output stays under activation instead.
+			update_commands(&config_dir, standalone_home)
+				.into_iter()
+				.enumerate()
+				.map(|(step, command)| match step {
+					1 => command.escalated(&escalation).with_log(log),
+					_ => command.escalated(&escalation),
+				})
+				.collect()
+		}
 	};
 	if !run_commands(commands, &tx, cancel).await {
 		return;
@@ -361,6 +382,24 @@ pub async fn run_activation_for(
 			.await;
 	}
 	let _ = tx.send(BuildEvent::Finished(Ok(()))).await;
+}
+
+/// The steps of a full system update: refresh every flake input, switch
+/// NixOS, then switch a standalone Home Manager configuration. Without one,
+/// Home Manager is a NixOS module and the NixOS switch already applied it.
+#[must_use]
+pub fn update_commands(config_dir: &Path, standalone_home: bool) -> Vec<RebuildCommand> {
+	let mut commands = vec![profile::update_command(config_dir), nixos(config_dir)];
+	if standalone_home {
+		let (program, args) = home_manager_switch_cmd(config_dir);
+		commands.push(RebuildCommand {
+			program,
+			args,
+			envs: Vec::new(),
+			via_nixos_fallback: false,
+		});
+	}
+	commands
 }
 
 /// `nix build --profile` does not create the directory a user profile lives
@@ -444,7 +483,9 @@ async fn run_commands(
 
 #[cfg(test)]
 mod tests {
-	use super::{Escalation, LogFormat, RebuildCommand, nixos, run_commands, vm_build};
+	use super::{
+		Escalation, LogFormat, RebuildCommand, nixos, run_commands, update_commands, vm_build,
+	};
 	use nixbox_nix::BuildEvent;
 	use std::path::{Path, PathBuf};
 	use tokio::sync::{mpsc, oneshot};
@@ -574,6 +615,20 @@ mod tests {
 				.display()
 				.ends_with("#nixos --log-format internal-json -v")
 		);
+	}
+
+	#[test]
+	fn an_update_refreshes_the_lock_before_switching_each_configuration() {
+		let dir = Path::new("/tmp/nixos");
+		let module = update_commands(dir, false);
+		assert_eq!(module.len(), 2);
+		assert_eq!(module[0].display(), "nix flake update --flake /tmp/nixos");
+		assert_eq!(module[1], nixos(dir));
+
+		let standalone = update_commands(dir, true);
+		assert_eq!(standalone.len(), 3);
+		assert!(standalone[2].display().contains("switch"));
+		assert!(standalone[2].display().contains("/tmp/nixos#"));
 	}
 
 	#[test]

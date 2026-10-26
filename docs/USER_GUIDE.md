@@ -64,6 +64,8 @@ Press `Enter` on a managed or external package to open its options panel. The pa
 
 ### NixOS
 
+Choose **Configured options** with the category keys to list settings detected in the selected host's saved configuration and imported modules. Its count follows the search, and configured diagnostic options stay included. Structured settings appear under their parent option, rather than as concrete instances of nested schema templates. Reload after saving external configuration changes.
+
 Press `Alt-H` to link this machine's hardware to the selected host. Hardware filtering then hides settings known to require absent devices. Press `Alt-A` to show all hardware options, or `Alt-H` again to unlink. The association lasts for the session and clears when switching hosts or configuration directories. Configured options and uncertain hardware stay visible. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
 
 The NixOS tab browses the option schema of a host from the configuration flake's `nixosConfigurations` outputs. It reads the hosts the first time you open the tab, then picks `nixos` when it exists or the only host when there is one. A header line names the host and configuration directory. Below it are categories with their match counts, the matching options, and the selected option's details. Terminals narrower than 110 columns hide the category column and name the category in the list title.
@@ -84,7 +86,7 @@ The search field matches option paths and descriptions, with exact paths first. 
 
 ### Building
 
-The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
+The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `u`, when no rebuild is running, to update every flake input and rebuild the system: NixOS, then a standalone Home Manager configuration if the flake has one. See [Updating the system](CLI.md#updating-the-system). Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
 
 ### Queue
 

@@ -924,6 +924,21 @@ impl NixboxApp {
 		}
 	}
 
+	/// Updates every flake input and rebuilds the whole system onto them.
+	pub fn update_system(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		if self.repository_blocks_mutation(cx) {
+			return;
+		}
+		match self.session.start_update() {
+			Some(label) => {
+				window.push_notification(Notification::info(format!("Started: {label}")), cx);
+				self.set_page(Page::Build, window, cx);
+				self.set_status(format!("{label}..."), cx);
+			}
+			None => self.set_status("Wait for the running rebuild before updating.", cx),
+		}
+	}
+
 	pub fn cancel_build(&mut self, cx: &mut Context<Self>) {
 		if self.session.cancel_build() {
 			self.set_status("Cancelling the rebuild...", cx);

@@ -4,6 +4,9 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Added a system update to the GUI Build page, the TUI Building tab (`u`), and the CLI (`nixbox update`). It updates flake inputs and rebuilds the selected configuration. Package profiles follow the configuration switch.
+- Added a Configured options filter to the NixOS settings browser in the GUI and TUI. It detects settings from the selected host and its imports, supports search and counts, and groups structured settings under their parent option. Values remain lazily inspected and credential fields stay withheld.
+- Centered the close button vertically at the far right of the header and added a guarded dendritic-detection switch in Settings.
 - Added dendritic support for a literal import-tree with named NixOS hosts and directly attached Home Manager users. `--host`, `--home-user`, and read-only `config inspect` expose selection and diagnostics. New managed flake-parts modules live inside the tree in separate host/user directories; existing root files retain their placement. Rebuilds and recovery use the selected identity. Connected feature packages carry source locations and ownership checks. Added a disposable VM workflow; arbitrary computed layouts and mixed-host queues remain unsupported.
 - Completed standalone Home Manager selection, GUI/TUI configuration pickers, constructor aliases and filtered-tree discovery, per-source diagnostics, exclusive-source package migration/removal, explicit managed-module conversion/relocation, and declarative `flake-file` input generation with rollback.
 

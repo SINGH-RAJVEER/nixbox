@@ -47,7 +47,7 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Options | One package's module options, read from your configuration, with editors for the simple types. Staged changes are applied as one queued op. See [Package options](PACKAGE_OPTIONS.md). |
 | NixOS | The selected host's option schema, with categories and search by path and description, beside a settings editor for the selected option and its siblings. Simple values are staged and applied as one NixOS rebuild. |
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
-| Build | The output of the current or most recent rebuild, with a Cancel button while one runs. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
+| Build | The output of the current or most recent rebuild, with a Cancel button while one runs and an Update system button otherwise. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
 | Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, the close button, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
 

@@ -83,6 +83,7 @@ pub async fn execute_with(
 	let action = match activation {
 		Activation::Packages => format!("update the {} package profile", plan.scope.label()),
 		Activation::Configuration => format!("rebuild {}", target_name(plan.scope)),
+		Activation::Update => "update every flake input and rebuild the system".into(),
 	};
 	for line in &plan.summary {
 		eprintln!("  {line}");
@@ -133,7 +134,17 @@ pub async fn execute_with(
 /// Asks before changing anything. A non-interactive stdin has to pass
 /// `--yes`, so a script can never silently trigger `sudo nixos-rebuild`.
 fn confirm_action(opts: &ApplyOpts, scope: Target, action: &str) -> Result<bool> {
-	if opts.yes {
+	let prompt = if opts.no_rebuild {
+		"Write these changes?".into()
+	} else {
+		format!("Write these changes and {action}?")
+	};
+	confirm(opts.yes, scope, &prompt)
+}
+
+/// Asks `prompt` unless `yes`, refusing outright without a terminal.
+pub(crate) fn confirm(yes: bool, scope: Target, prompt: &str) -> Result<bool> {
+	if yes {
 		return Ok(true);
 	}
 	if !std::io::stdin().is_terminal() {
@@ -143,11 +154,6 @@ fn confirm_action(opts: &ApplyOpts, scope: Target, action: &str) -> Result<bool>
 		);
 	}
 
-	let prompt = if opts.no_rebuild {
-		"Write these changes?".into()
-	} else {
-		format!("Write these changes and {action}?")
-	};
 	eprint!("{prompt} [y/N] ");
 	std::io::stderr().flush()?;
 
@@ -267,6 +273,7 @@ fn retry_command(activation: Activation) -> &'static str {
 	match activation {
 		Activation::Packages => "apply",
 		Activation::Configuration => "apply --configuration",
+		Activation::Update => "update",
 	}
 }
 

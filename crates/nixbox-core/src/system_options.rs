@@ -16,6 +16,7 @@ pub const GROUP_LIMIT: usize = 48;
 pub enum Category {
 	#[default]
 	All,
+	Configured,
 	General,
 	Network,
 	Desktop,
@@ -30,8 +31,9 @@ pub enum Category {
 }
 
 impl Category {
-	pub const ALL: [Self; 12] = [
+	pub const ALL: [Self; 13] = [
 		Self::All,
+		Self::Configured,
 		Self::General,
 		Self::Network,
 		Self::Desktop,
@@ -49,6 +51,7 @@ impl Category {
 	pub const fn label(self) -> &'static str {
 		match self {
 			Self::All => "All options",
+			Self::Configured => "Configured options",
 			Self::General => "General and region",
 			Self::Network => "Network",
 			Self::Desktop => "Desktop and login",
@@ -80,7 +83,7 @@ impl Category {
 		Self::ALL[(self.index() as isize + delta).rem_euclid(len) as usize]
 	}
 
-	/// The canonical category of `option`. Every option has exactly one, and
+	/// The canonical topic category of `option`. Every option has exactly one, and
 	/// anything uncurated lands in [`Category::System`].
 	#[must_use]
 	pub fn for_option(option: &SystemOption) -> Self {
@@ -128,7 +131,8 @@ pub struct Filtered {
 	/// Indices into the schema, exact path matches first.
 	pub visible: Vec<usize>,
 	/// Matches per category, in [`Category::ALL`] order, ignoring the
-	/// selected category. `All` counts every match.
+	/// selected category. `Configured` includes configured diagnostic options;
+	/// the other counts respect `show_diagnostic`.
 	pub counts: [usize; Category::ALL.len()],
 }
 
@@ -140,7 +144,8 @@ impl Filtered {
 }
 
 /// Searches option paths and descriptions, case-insensitively. Diagnostic
-/// options stay hidden unless `show_diagnostic` is set.
+/// options stay hidden unless `show_diagnostic` is set or the Configured
+/// category is selected and the option has a concrete configured definition.
 #[must_use]
 pub fn filter_options(
 	options: &[SystemOption],
@@ -153,9 +158,6 @@ pub fn filter_options(
 	let mut counts = [0; Category::ALL.len()];
 	let mut matches: Vec<(usize, bool)> = Vec::new();
 	for (index, option) in options.iter().enumerate() {
-		if option.diagnostic && !show_diagnostic {
-			continue;
-		}
 		if !hardware.includes(option) {
 			continue;
 		}
@@ -170,9 +172,18 @@ pub fn filter_options(
 			continue;
 		}
 		let own = Category::for_option(option);
-		counts[Category::All.index()] += 1;
-		counts[own.index()] += 1;
-		if category == Category::All || category == own {
+		let configured = option.is_configured();
+		if configured {
+			counts[Category::Configured.index()] += 1;
+		}
+		let ordinary = !option.diagnostic || show_diagnostic;
+		if ordinary {
+			counts[Category::All.index()] += 1;
+			counts[own.index()] += 1;
+		}
+		if (category == Category::Configured && configured)
+			|| (ordinary && (category == Category::All || category == own))
+		{
 			matches.push((index, path == text));
 		}
 	}
@@ -312,6 +323,9 @@ pub fn partial_note(option: &SystemOption) -> Option<&'static str> {
 #[must_use]
 pub fn option_tags(option: &SystemOption) -> Vec<&'static str> {
 	let mut tags = Vec::new();
+	if option.is_configured() {
+		tags.push("configured");
+	}
 	if option.nested {
 		tags.push("schema");
 	}
@@ -423,8 +437,50 @@ mod tests {
 	}
 
 	#[test]
+	fn configured_view_uses_provenance_and_excludes_schema_templates() {
+		let mut options = vec![
+			option("hardware.nvidia.open", "Configured hardware", false),
+			option("custom.default", "An option default", false),
+			option("custom.unknown", "Unavailable provenance", false),
+			option("custom.internal", "Configured diagnostic", true),
+			option(
+				"users.users.<name>.enable",
+				"Inherited parent metadata",
+				false,
+			),
+		];
+		options[0].configured = Some(true);
+		options[2].configured = None;
+		options[3].configured = Some(true);
+		options[4].configured = Some(true);
+		options[4].nested = true;
+		options[4].template = true;
+		let hardware = HardwareFilter {
+			inventory: Some(nixbox_nix::hardware::HardwareInventory {
+				nvidia_gpu: nixbox_nix::hardware::Presence::Absent,
+				..Default::default()
+			}),
+			..Default::default()
+		};
+		let filtered = filter_options(&options, "", Category::Configured, false, &hardware);
+		assert_eq!(filtered.visible, [0, 3]);
+		assert_eq!(filtered.count(Category::Configured), 2);
+		assert_eq!(filtered.count(Category::All), 4);
+		assert_eq!(option_tags(&options[0]), ["configured"]);
+		assert!(!option_tags(&options[4]).contains(&"configured"));
+		let searched = filter_options(&options, "internal", Category::Configured, false, &hardware);
+		assert_eq!(searched.visible, [3]);
+		assert_eq!(searched.count(Category::Configured), 1);
+		assert_eq!(
+			filter_options(&options, "", Category::All, false, &hardware).visible,
+			[0, 1, 2, 4]
+		);
+	}
+
+	#[test]
 	fn categories_cycle_in_both_directions() {
-		assert_eq!(Category::All.cycle(1), Category::General);
+		assert_eq!(Category::All.cycle(1), Category::Configured);
+		assert_eq!(Category::Configured.cycle(1), Category::General);
 		assert_eq!(Category::All.cycle(-1), Category::System);
 		assert_eq!(Category::System.cycle(1), Category::All);
 	}
