@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -46,11 +47,23 @@ def main():
 		application = snapshot()
 		assert application["build"] != fixture["build"], "Application edit did not invalidate the binary"
 		assert application["dependencies"] == fixture["dependencies"], "Application edit invalidated compiled dependencies"
+		terminal = subprocess.check_output([
+			"nix", "eval", "--accept-flake-config", "--impure", "--raw",
+			".#packages.x86_64-linux.nixbox-tui-nightly", "--apply",
+			"p: (p.override { source = %s; }).cargoArtifacts.drvPath" % json.dumps(str(source)),
+		], cwd=root, text=True)
+		assert terminal == application["dependencies"], "Terminal interfaces did not share compiled dependencies"
 		manifest = source / "Cargo.toml"
+		version = re.search(r'(?m)^version = "(.+)"$', manifest.read_text())[1]
+		for path in [manifest, source / "Cargo.lock", *source.glob("crates/*/Cargo.toml")]:
+			path.write_text(path.read_text().replace(version, version + ".1"))
+		bumped = snapshot()
+		assert bumped["build"] != application["build"], "Version bump did not invalidate the binary"
+		assert bumped["dependencies"] == application["dependencies"], "Version bump invalidated compiled dependencies"
 		manifest.write_text(manifest.read_text().replace(
 			'features = ["derive"]', 'features = ["derive", "rc"]', 1,
 		))
-		assert snapshot()["dependencies"] != application["dependencies"], "Dependency feature change did not invalidate dependencies"
+		assert snapshot()["dependencies"] != bumped["dependencies"], "Dependency feature change did not invalidate dependencies"
 	print("Nix cache invalidation checks passed")
 
 

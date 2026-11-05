@@ -12,8 +12,9 @@ let
 	craneLib = crane.mkLib pkgs;
 	gui = package == "nixbox";
 	binary = if gui then "nixbox-gui" else package;
-	version =
-		(builtins.fromTOML (builtins.readFile (source + "/Cargo.toml"))).workspace.package.version;
+	workspace = (builtins.fromTOML (builtins.readFile (source + "/Cargo.toml"))).workspace;
+	inherit (workspace.package) version;
+	crates = map builtins.baseNameOf workspace.members;
 	limitBuildJobs =
 		lib.optionalString (buildJobs != null) ''
 					if (( NIX_BUILD_CORES > ${toString buildJobs} )); then
@@ -52,13 +53,73 @@ let
 			]
 		);
 	};
+	# Dependency artifacts must not depend on the workspace version, which CI
+	# changes on every nightly: that would miss the binary cache on every run.
+	# Crane reads manifests at evaluation time, so dropping the version fields
+	# and rewriting the lockfile here keeps the version out of the derivation.
+	# Cargo treats a package without a version as 0.0.0.
+	dependencyLockContents =
+		builtins.replaceStrings
+			(map (crate: "name = \"${crate}\"\nversion = \"${version}\"") crates)
+			(map (crate: "name = \"${crate}\"\nversion = \"0.0.0\"") crates)
+			(builtins.unsafeDiscardStringContext (builtins.readFile (source + "/Cargo.lock")));
+	dependencyLock = pkgs.writeText "Cargo.lock" dependencyLockContents;
+	isWorkspaceVersion =
+		path:
+		let
+			length = builtins.length path;
+		in
+		length >= 2
+		&& lib.last path == "version"
+		&& (
+			path == [
+				"package"
+				"version"
+			]
+			|| path == [
+				"workspace"
+				"package"
+				"version"
+			]
+			|| builtins.elem (builtins.elemAt path (length - 2)) crates
+		);
+	# The terminal interfaces share one derivation, so the source must not vary
+	# between them. Only the manifests and entry points matter here.
+	dependencySrc = lib.cleanSourceWith {
+		src =
+			if gui then
+				src
+			else
+				import ./source.nix {
+					inherit lib source;
+					package = "nixbox-tui";
+					tests = true;
+				};
+		filter = path: _: builtins.baseNameOf path != "Cargo.lock";
+	};
 	# No check/test builds in the dependency derivation used by installations.
 	cargoArtifacts = craneLib.buildDepsOnly (
 		commonArgs
 		// {
-			inherit src;
+			pname = if gui then package else "nixbox-terminal";
+			version = "0.0.0";
+			dummySrc = craneLib.mkDummySrc {
+				src = dependencySrc;
+				cargoLock = dependencyLock;
+				cleanCargoTomlFilter = path: craneLib.filters.cargoTomlDefault path && !isWorkspaceVersion path;
+			};
+			cargoVendorDir = craneLib.vendorCargoDeps { cargoLockContents = dependencyLockContents; };
 			doCheck = false;
 			cargoCheckCommand = "true";
+		}
+		// lib.optionalAttrs (!gui) {
+			# Separate builds, because features unify across packages built
+			# together: `--package nixbox-cli` alone would then miss the artifacts.
+			cargoExtraArgs = "--locked";
+			buildPhaseCargoCommand = ''
+				cargoWithProfile build --locked --package nixbox-tui
+				cargoWithProfile build --locked --package nixbox-cli
+			'';
 		}
 	);
 	unitTests = craneLib.cargoNextest (
