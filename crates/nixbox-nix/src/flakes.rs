@@ -13,6 +13,13 @@ use crate::wiring::attr_name;
 
 pub const MAX_FLAKE_RESULTS: usize = 20;
 const MAX_FLAKE_CANDIDATES: usize = 12;
+/// Evaluation slots kept for code-search matches. Their repository names often
+/// say nothing about the query, and only evaluating them reveals a matching
+/// output.
+const RESERVED_CODE_CANDIDATES: usize = 4;
+/// Lifts any output-name match above every candidate score, the highest of
+/// which is an upstream reference at about 1,500.
+const OUTPUT_MATCH_BONUS: u64 = 2_000;
 const FLAKE_EVALUATION_TIMEOUT: Duration = Duration::from_secs(15);
 const UPSTREAM_FLAKE_EVALUATION_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -204,6 +211,7 @@ struct Candidate {
 	repo_url: String,
 	match_fragment: Option<String>,
 	upstream_reference: bool,
+	code_match: bool,
 }
 
 #[derive(Clone)]
@@ -252,12 +260,14 @@ pub async fn search_flakes(query: &str) -> Result<Vec<FlakeHit>> {
 		tokio::try_join!(search_code(query), search_repositories(query))?;
 	let mut candidates: BTreeMap<String, Candidate> = BTreeMap::new();
 
-	for item in code_items {
+	for (position, item) in code_items.into_iter().enumerate() {
 		let name_score = repository_name_score(query, &item.repository.full_name);
+		// GitHub's relevance order decides among repositories with no name match.
+		let relevance = 20u64.saturating_sub(position as u64);
 		insert_candidate(
 			&mut candidates,
 			Candidate {
-				score: 100 + name_score,
+				score: 100 + name_score + relevance,
 				repo: item.repository.full_name.clone(),
 				repo_url: item.repository.html_url,
 				match_fragment: item
@@ -265,6 +275,7 @@ pub async fn search_flakes(query: &str) -> Result<Vec<FlakeHit>> {
 					.first()
 					.map(|matched| compact_fragment(&matched.fragment)),
 				upstream_reference: false,
+				code_match: true,
 			},
 		);
 		for reference in item
@@ -282,6 +293,7 @@ pub async fn search_flakes(query: &str) -> Result<Vec<FlakeHit>> {
 						repo: reference,
 						match_fragment: None,
 						upstream_reference: true,
+						code_match: false,
 					},
 				);
 			}
@@ -298,16 +310,13 @@ pub async fn search_flakes(query: &str) -> Result<Vec<FlakeHit>> {
 				repo: repository.full_name,
 				match_fragment: None,
 				upstream_reference: false,
+				code_match: false,
 			},
 		);
 	}
 
-	let mut candidates: Vec<Candidate> = candidates.into_values().collect();
-	candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.repo.cmp(&b.repo)));
-	candidates.truncate(MAX_FLAKE_CANDIDATES);
-
 	let mut tasks = tokio::task::JoinSet::new();
-	for candidate in candidates {
+	for candidate in select_candidates(candidates.into_values().collect()) {
 		let query = query.to_string();
 		tasks.spawn(async move { inspect_candidate(&query, candidate).await });
 	}
@@ -374,15 +383,40 @@ fn insert_candidate(candidates: &mut BTreeMap<String, Candidate>, candidate: Can
 	match candidates.get_mut(&candidate.repo) {
 		Some(existing) => {
 			let upstream_reference = existing.upstream_reference || candidate.upstream_reference;
+			let code_match = existing.code_match || candidate.code_match;
 			if candidate.score > existing.score {
 				*existing = candidate;
 			}
 			existing.upstream_reference = upstream_reference;
+			existing.code_match = code_match;
 		}
 		None => {
 			candidates.insert(candidate.repo.clone(), candidate);
 		}
 	}
+}
+
+/// Keeps the highest-scoring candidates for evaluation, holding back slots so
+/// that code-search matches are not all crowded out by repository names.
+fn select_candidates(mut candidates: Vec<Candidate>) -> Vec<Candidate> {
+	candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.repo.cmp(&b.repo)));
+	let mut code_left = candidates.iter().filter(|c| c.code_match).count();
+	let mut code_kept = 0;
+	let mut kept = 0;
+	candidates.retain(|candidate| {
+		let reserved = RESERVED_CODE_CANDIDATES
+			.saturating_sub(code_kept)
+			.min(code_left);
+		let keep = kept < MAX_FLAKE_CANDIDATES
+			&& (candidate.code_match || kept + reserved < MAX_FLAKE_CANDIDATES);
+		if candidate.code_match {
+			code_left -= 1;
+			code_kept += usize::from(keep);
+		}
+		kept += usize::from(keep);
+		keep
+	});
+	candidates
 }
 
 async fn inspect_candidate(query: &str, candidate: Candidate) -> Result<Option<RankedHit>> {
@@ -396,13 +430,10 @@ async fn inspect_candidate(query: &str, candidate: Candidate) -> Result<Option<R
 		return Ok(None);
 	}
 	sort_packages(query, &mut inspection.packages);
-	let package_score = inspection
-		.packages
-		.first()
-		.map_or(0, |package| flake_package_score(query, package));
+	let output_score = best_output_score(query, &inspection);
 
 	Ok(Some(RankedHit {
-		score: candidate.score + package_score,
+		score: candidate.score + output_score,
 		hit: FlakeHit::from_inspection(
 			candidate.repo,
 			candidate.repo_url,
@@ -426,6 +457,80 @@ fn repository_name_score(query: &str, repo: &str) -> u64 {
 	} else {
 		0
 	}
+}
+
+/// The bonus for the evaluated package or module whose name best matches the
+/// query, or 0 when none does. `default` names nothing, so it cannot match.
+fn best_output_score(query: &str, inspection: &FlakeInspection) -> u64 {
+	let packages = inspection
+		.packages
+		.iter()
+		.map(|package| package.attr.as_str());
+	let modules = inspection
+		.modules
+		.iter()
+		.filter_map(|path| path.split_once('.').map(|(_, name)| name));
+	packages
+		.chain(modules)
+		.filter(|name| *name != "default")
+		.map(|name| output_name_score(query, name))
+		.max()
+		.filter(|score| *score > 0)
+		.map_or(0, |score| OUTPUT_MATCH_BONUS + score)
+}
+
+fn output_name_score(query: &str, name: &str) -> u64 {
+	let query = normalize(query);
+	let name = normalize(name);
+	if query.is_empty() || name.is_empty() {
+		0
+	} else if name == query {
+		400
+	} else if name.starts_with(&query) {
+		300
+	} else if name.contains(&query) {
+		200
+	} else if names_are_similar(&query, &name) {
+		100
+	} else {
+		0
+	}
+}
+
+/// Catches a shortened name (`zen` for `zen-browser`) and a small typo
+/// (`ripgerp` for `ripgrep`) in two already normalized names.
+fn names_are_similar(query: &str, name: &str) -> bool {
+	let (query_len, name_len) = (query.len(), name.len());
+	if name_len >= 3 && (query.starts_with(name) || query.ends_with(name)) {
+		return true;
+	}
+	let allowed = match query_len {
+		0..=3 => return false,
+		4..=7 => 1,
+		_ => 2,
+	};
+	query_len.abs_diff(name_len) <= allowed && edit_distance(query, name) <= allowed
+}
+
+/// Edit distance counting an adjacent swap as one edit. Normalized names are
+/// ASCII, so this can work on bytes.
+fn edit_distance(a: &str, b: &str) -> usize {
+	let (a, b) = (a.as_bytes(), b.as_bytes());
+	let mut before_previous = vec![0; b.len() + 1];
+	let mut previous: Vec<usize> = (0..=b.len()).collect();
+	for (i, a_byte) in a.iter().enumerate() {
+		let mut current = vec![i + 1; b.len() + 1];
+		for (j, b_byte) in b.iter().enumerate() {
+			let substitution = previous[j] + usize::from(a_byte != b_byte);
+			current[j + 1] = substitution.min(previous[j + 1] + 1).min(current[j] + 1);
+			if i > 0 && j > 0 && a[i - 1] == *b_byte && *a_byte == b[j - 1] {
+				current[j + 1] = current[j + 1].min(before_previous[j - 1] + 1);
+			}
+		}
+		before_previous = previous;
+		previous = current;
+	}
+	previous[b.len()]
 }
 
 fn normalize(value: &str) -> String {
@@ -794,9 +899,11 @@ fn balanced_block(source: &str, open: usize) -> Option<&str> {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Candidate, EvaluatedOutputs, FlakeInspection, FlakePackage, classify_inputs,
+		Candidate, EvaluatedOutputs, FlakeInspection, FlakePackage, MAX_FLAKE_CANDIDATES,
+		OUTPUT_MATCH_BONUS, RESERVED_CODE_CANDIDATES, best_output_score, classify_inputs,
 		classify_output_names, compact_fragment, github_references, insert_candidate,
-		inspection_from_evaluation, output_entries, repository_name_score, repository_search_query,
+		inspection_from_evaluation, output_entries, output_name_score, repository_name_score,
+		repository_search_query, select_candidates,
 	};
 	use std::collections::BTreeMap;
 
@@ -900,6 +1007,7 @@ mod tests {
 				repo_url: "https://github.com/owner/bun".into(),
 				match_fragment: None,
 				upstream_reference: false,
+				code_match: true,
 			},
 		);
 		insert_candidate(
@@ -910,12 +1018,109 @@ mod tests {
 				repo_url: "https://github.com/owner/bun".into(),
 				match_fragment: None,
 				upstream_reference: true,
+				code_match: false,
 			},
 		);
 
 		let candidate = candidates.get("owner/bun").unwrap();
 		assert_eq!(candidate.score, 1_010);
 		assert!(candidate.upstream_reference);
+		assert!(candidate.code_match);
+	}
+
+	#[test]
+	fn grades_output_names_by_similarity() {
+		let scores = [
+			"zen-browser",
+			"zen-browser-beta",
+			"my-zen-browser",
+			"zen",
+			"zenbrowsr",
+		]
+		.map(|name| output_name_score("zen-browser", name));
+		assert_eq!(scores[0], output_name_score("zen-browser", "zen_browser"));
+		assert!(scores[0] > scores[1] && scores[1] > scores[2] && scores[2] > scores[3]);
+		assert_eq!(scores[3], scores[4]);
+
+		assert_eq!(output_name_score("ripgerp", "ripgrep"), 100);
+		assert_eq!(output_name_score("zen-browser", "firefox"), 0);
+		assert_eq!(output_name_score("bun", "bat"), 0);
+		assert_eq!(output_name_score("cargo", "go"), 0);
+	}
+
+	#[test]
+	fn output_matches_outrank_every_candidate_tier() {
+		let inspection = |packages: &[&str], modules: &[&str]| FlakeInspection {
+			output_names: Vec::new(),
+			packages: packages
+				.iter()
+				.map(|attr| FlakePackage {
+					attr: (*attr).into(),
+					name: (*attr).into(),
+					version: String::new(),
+				})
+				.collect(),
+			system: "x86_64-linux".into(),
+			modules: modules.iter().map(|path| (*path).into()).collect(),
+		};
+
+		// A match behind `default` counts, and so does a module.
+		assert_eq!(
+			best_output_score("bun", &inspection(&["default", "bun"], &[])),
+			OUTPUT_MATCH_BONUS + 400
+		);
+		assert_eq!(
+			best_output_score("bun", &inspection(&[], &["homeModules.bun"])),
+			OUTPUT_MATCH_BONUS + 400
+		);
+		assert_eq!(
+			best_output_score(
+				"default",
+				&inspection(&["default"], &["nixosModules.default"])
+			),
+			0
+		);
+
+		// The weakest match against a code hit beats the strongest repository
+		// name on an upstream reference with no matching output.
+		let upstream_exact_name = 1_000 + repository_name_score("bun", "owner/bun");
+		assert!(100 + best_output_score("bunn", &inspection(&["bun"], &[])) > upstream_exact_name);
+	}
+
+	#[test]
+	fn reserves_evaluation_slots_for_code_matches() {
+		let candidate = |index: u64, code_match: bool| Candidate {
+			score: if code_match { 100 + index } else { 500 + index },
+			repo: format!("owner/repo-{code_match}-{index}"),
+			repo_url: String::new(),
+			match_fragment: None,
+			upstream_reference: false,
+			code_match,
+		};
+		let code_kept = |candidates: Vec<Candidate>| {
+			let selected = select_candidates(candidates);
+			assert!(selected.len() <= MAX_FLAKE_CANDIDATES);
+			(
+				selected.len(),
+				selected.iter().filter(|c| c.code_match).count(),
+			)
+		};
+
+		let crowded = (0..20)
+			.map(|index| candidate(index, false))
+			.chain((0..20).map(|index| candidate(index, true)))
+			.collect();
+		assert_eq!(
+			code_kept(crowded),
+			(MAX_FLAKE_CANDIDATES, RESERVED_CODE_CANDIDATES)
+		);
+
+		// Unused reservations go back to the other candidates.
+		let few_code_matches = (0..20)
+			.map(|index| candidate(index, false))
+			.chain((0..2).map(|index| candidate(index, true)))
+			.collect();
+		assert_eq!(code_kept(few_code_matches), (MAX_FLAKE_CANDIDATES, 2));
 	}
 
 	#[test]

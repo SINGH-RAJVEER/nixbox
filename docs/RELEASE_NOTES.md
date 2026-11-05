@@ -4,6 +4,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## 0.4.7 nightly - 2026-10-26
 
+- Flake search now compares the query with each flake's package and module names, including close matches, and lists flakes with a matching output first. Code-search matches also keep a share of the evaluated candidates, so a flake can be found through its outputs when its repository name is unrelated.
 - Added a system update to the GUI Build page, the TUI Building tab (`u`), and the CLI (`nixbox update`). It updates flake inputs and rebuilds the selected configuration. Package profiles follow the configuration switch.
 - Added a Configured options filter to the NixOS settings browser in the GUI and TUI. It detects settings from the selected host and its imports, supports search and counts, and groups structured settings under their parent option. Values remain lazily inspected and credential fields stay withheld.
 - Centered the close button vertically at the far right of the header and added a guarded dendritic-detection switch in Settings.
