@@ -19,10 +19,19 @@ Neither interface is required. See [Three packages](#three-packages) for the bui
 | `--target`, `-t` | Act on `home-manager` or `nixos` instead of the saved target. Accepts `hm` and `system` as aliases. |
 | `--channel`, `-c` | Search a different nixpkgs channel for this invocation only. |
 | `--json` | Print JSON instead of a table. |
+| `--home-configuration <name>` | Select a standalone dendritic Home Manager output. Mutually exclusive with host/user flags. |
+| `--host <name>` | Select a discovered dendritic NixOS output. Required when several hosts exist. |
+| `--home-user <name>` | Select a directly attached Home Manager user on that host. Required for Home Manager writes when several users exist. |
 
 None of these are written back to the settings file. `nixbox config set` is the only command that persists a change.
 
 ## Reading state
+
+`nixbox config inspect` discovers hosts and users and reports the selected identity, managed-file paths, placement, and unsupported-layout diagnostics without writing configuration or loading migrations. Add `--json` for machine-readable output. Both interactive interfaces also offer Settings > Configuration. Save a selection with `nixbox config set nixos-host <name>` and `nixbox config set home-user <name>`; an empty value returns to automatic selection. Changing the saved host clears the saved user. Changing the saved root clears both. A standalone output can be saved with `nixbox config set home-configuration <name>`. Pending recovery work remains bound to its original root, host, and user; select those again or explicitly discard that work.
+
+For supported dendritic configurations, `status` and `doctor` report `flake.nix` as the integration entry point. `scan` includes packages in connected classed feature modules and marks those external entries read-only. Installs, managed removals, and profile operations use generated flake-parts modules. Unsupported layouts fail with a discovery diagnostic. See [Dendritic support](DENDRITIC_PLAN.md).
+
+`nixbox config set dendritic-detection false` disables native discovery and uses conventional file placement. Set it to `true` to restore automatic dendritic handling. Saved work must be completed or discarded before changing modes. Disabled detection refuses writes or rebuilds in a dendritic tree; it does not convert the tree to a conventional layout.
 
 | Command | Purpose |
 | --- | --- |
@@ -42,8 +51,9 @@ None of these are written back to the settings file. `nixbox config set` is the 
 | `nixbox apply` | Rewrite the managed file and rebuild without changing the package set. With a package profile, update the profile; `--configuration` rebuilds instead. |
 | `nixbox profile <setup\|teardown\|generations\|rollback>` | Move the target's packages into an independent profile and back, list its generations, or roll it back. See [Package profiles](#package-profiles). |
 | `nixbox resume` | Finish work a previous run left behind: an interrupted rebuild, or a queue the TUI saved. `--discard` throws it away instead. |
+| `nixbox update` | Update every flake input with `nix flake update`, rebuild NixOS, then switch a standalone Home Manager configuration if the flake has one. Rewrites nothing nixbox manages. Accepts `--dry-run` and `--yes`. See [Updating the system](#updating-the-system). |
 
-Each of these accepts:
+Each of these except `nixbox update`, which takes only `--dry-run` and `--yes`, accepts:
 
 | Flag | Effect |
 | --- | --- |
@@ -104,6 +114,10 @@ A rebuild is recorded in `state.json` before it starts and cleared when it reach
 
 The TUI queues operations and applies them in a batch, and saves that queue to the same file. `nixbox resume` drains it one target at a time, in the order the queue first mentions each target, with one rebuild per target. `--dry-run` prints the queue without applying it, and `--discard` clears the file.
 
+## Updating the system
+
+`nixbox update` runs three steps in order and stops at the first failure: `nix flake update --flake <config dir>` as your own user, `sudo nixos-rebuild switch`, and `home-manager switch` when the flake has a `homeConfigurations.<user>` output. Without one, Home Manager is a NixOS module and the NixOS switch already applied it. A package profile is set by each configuration switch, so profiles follow the update without a separate step. The update is recorded in `state.json` like any rebuild, so `nixbox resume` repeats a killed update, lock refresh included. The GUI Build page and the TUI Building tab start the same update. If a switch fails or the password prompt is cancelled, `flake.lock` keeps the new revisions; revert it from the version control tab, or run the update again once the failure is fixed. Resuming a killed update refreshes the inputs again, so it can pick up revisions newer than the interrupted run had.
+
 ## Flakes
 
 | Command | Purpose |
@@ -155,3 +169,5 @@ Help, generated completions, and recovery hints use the executable name you ran.
 | `3` | The configuration was written but the rebuild failed. |
 
 `3` is separate from `1` so a script can tell "NixBox could not do it" from "Nix said no". A `3` means the files are already correct and `nixbox apply` will retry the rebuild.
+
+For explicit managed-module conversion, preview with `nixbox config migrate-dendritic --dry-run --json`, then apply with `--yes`. Add `--relocate` to move existing root-level dendritic files into the tree. Host/user or standalone-output flags select the migration destination. This command changes files without activating them.

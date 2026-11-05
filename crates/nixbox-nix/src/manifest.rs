@@ -227,10 +227,8 @@ impl ManagedFile {
 	}
 
 	fn write(&self, content: String) -> Result<()> {
-		if let Some(parent) = self.path.parent() {
-			fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-		}
-		fs::write(&self.path, content).with_context(|| format!("writing {}", self.path.display()))
+		crate::dendritic::write(&self.path, content)
+			.with_context(|| format!("writing {}", self.path.display()))
 	}
 }
 
@@ -313,7 +311,7 @@ fn parse_flakes(raw: &str) -> FlakeManifest {
 	manifest
 }
 
-fn render_legacy_flakes(manifest: &FlakeManifest, package_option: &str) -> String {
+pub(crate) fn render_legacy_flakes(manifest: &FlakeManifest, package_option: &str) -> String {
 	let mut body = String::new();
 	if !manifest.modules.is_empty() {
 		body.push_str("\timports = [\n\t\t# nixbox:flakes:start\n");
@@ -499,6 +497,14 @@ fn render_nixos(manifest: &Manifest, flakes: &FlakeManifest) -> String {
 	}
 }
 
+pub(crate) fn rendered_module(manifest: &Manifest, flakes: &FlakeManifest, home: bool) -> String {
+	if home {
+		render_home_manager(manifest, flakes)
+	} else {
+		render_nixos(manifest, flakes)
+	}
+}
+
 /// A profile-mode package module. It declares `nixbox.packages` for both
 /// nixpkgs and flake packages, and `nixbox.profile`, the one
 /// environment both the profile build (`nix build --profile`) and the
@@ -589,6 +595,13 @@ fn render_profile_module(
 /// when Home Manager runs inside NixOS. `enabled: false` leaves an empty
 /// module, so a torn-down profile drops off PATH while the import stays valid.
 pub fn write_home_integration(path: &Path, enabled: bool) -> Result<()> {
+	if let Some(parent) = path.parent() {
+		fs::create_dir_all(parent)?;
+	}
+	crate::dendritic::write(path, rendered_home_integration(enabled))
+}
+
+pub(crate) fn rendered_home_integration(enabled: bool) -> String {
 	let body = if enabled {
 		"# Puts the nixbox Home Manager profile on every user's PATH through PAM,\n\
 		 # which shells that skip Home Manager's session variables still read.\n\
@@ -596,11 +609,7 @@ pub fn write_home_integration(path: &Path, enabled: bool) -> Result<()> {
 	} else {
 		"# The nixbox Home Manager profile is not set up.\n{ ... }:\n{\n}\n"
 	};
-	if let Some(parent) = path.parent() {
-		fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-	}
-	fs::write(path, format!("{MANIFEST_HEADER}\n{body}"))
-		.with_context(|| format!("writing {}", path.display()))
+	format!("{MANIFEST_HEADER}\n{body}")
 }
 
 /// Status of an `ensure_imported` call.
@@ -619,6 +628,9 @@ pub enum ImportStatus {
 /// Ensures `managed_file` is imported by `main_file`. Inserts the import
 /// idempotently. Returns a status describing what (if anything) was done.
 pub fn ensure_imported(main_file: &Path, managed_file: &Path) -> Result<ImportStatus> {
+	if let Some(layout) = crate::dendritic::Layout::for_file(managed_file)? {
+		return layout.ensure_loaded(managed_file);
+	}
 	if !main_file.exists() {
 		return Ok(ImportStatus::MainFileMissing);
 	}

@@ -76,6 +76,17 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
 						"Off"
 					}
 				),
+				format!(
+					"  {:<12} {}  >",
+					"Configuration",
+					app.session
+						.engine
+						.config
+						.nixos_host
+						.as_deref()
+						.or(app.session.engine.config.home_configuration.as_deref())
+						.unwrap_or("Select output")
+				),
 			],
 			selected,
 		),
@@ -87,6 +98,20 @@ fn settings_content(app: &App) -> (&'static str, Vec<String>, usize) {
 					option_label(mode.label(), *mode == app.session.engine.config.input_mode)
 				})
 				.collect(),
+			selected,
+		),
+		SettingsPage::Configurations => (
+			" Configuration ",
+			if app.configuration_choices.is_empty() {
+				vec!["No supported configuration outputs discovered".into()]
+			} else {
+				app.configuration_choices
+					.iter()
+					.map(|choice| {
+						option_label(&choice.label, choice.selected(&app.session.engine.config))
+					})
+					.collect()
+			},
 			selected,
 		),
 		SettingsPage::Theme => (

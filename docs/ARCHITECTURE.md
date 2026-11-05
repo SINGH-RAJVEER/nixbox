@@ -1,5 +1,7 @@
 # Architecture
 
+Hardware-aware settings use `nixbox-nix::hardware` for read-only local facts and `nixbox-core::hardware::HardwareFilter` for applicability rules and configured/staged exceptions. Front-ends explicitly bind the local inventory to the selected configuration root and host, refresh it with schema reloads, and clear that binding on target changes. Shared search counts and editor groups apply the same hardware rules. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
+
 ## System boundary
 
 NixBox is a local application with three front-ends: a terminal UI, a command line, and a desktop GUI. It does not run a daemon, expose an HTTP API, receive webhooks, or maintain a remote index. The process reads local configuration, calls the `nix`, `home-manager`, `nixos-rebuild`, `git`, and `gh` executables, writes local Nix and JSON files, and renders a Ratatui or gpui interface.
@@ -124,11 +126,14 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 
 ### `nixbox-nix`
 
+`dendritic.rs` owns read-only import-tree discovery, named host/user selection, classed module references, generated flake-parts rendering, native placement, legacy root import edits, connected-source scans, and migration plans. Package, settings, and integration writers share its generated-file write path. The engine resolves the selected identity before mutation and restores configuration files and manifests after a failed dendritic operation. Sessions and recovery state bind to that root/host/user. See [Dendritic support](DENDRITIC_PLAN.md) for restrictions and remaining work.
+
 - `search.rs` owns live search, the locked-revision catalog, cache serialization, bounded subprocess output, package-attribute normalization, and relevance ranking.
 - `manifest.rs` owns the combined package modules, nixpkgs and flake marker parsing, rendering, relative import paths, and insertion into a main module's `imports` list. Its `manifest/migration.rs` submodule upgrades separate flake-output files on engine startup, validates generated code with rnix, updates literal imports, and deletes obsolete files after successful writes.
 - `settings.rs` owns the generated settings modules: `SettingValue`, the `SettingsManifest` map from option path to value, rendering, and the strict line parser.
 - `options.rs` and `options.nix` evaluate a package's module options from the user's flake. The query goes to Nix as JSON in an environment variable, and the result is decoded into an `OptionSet` of `OptionEntry` values with an `OptionKind`, the evaluated value, and the files that define each option.
 - `system_options.rs` and `system_options.nix` discover NixOS output names, index host-wide schema metadata, and inspect one option on demand. `NixosConfiguration` binds each inspection to its root and output key, independently of the package-operation target. Schema traversal does not read option values or defaults; it includes nested templates and flags bounded or failed submodule expansion. Selected-value previews have bounded depth and size and withhold credential fields.
+- `SystemOption::is_configured` selects concrete options with surviving non-default definitions outside nixpkgs. Nested templates inherit metadata for hardware filtering but do not count as configured instances. The shared `filter_options` policy exposes this subset through the Configured options category, including configured diagnostic settings.
 - `scan.rs` detects simple package tokens in selected Nix lists and removes dedicated lines during migration.
 - `flakes.rs` calls GitHub through `gh api`, ranks repository candidates, evaluates locked revisions for package and module outputs, caches inspections in memory, reads root `flake.nix` files for input names, and edits a conventional root flake for output installation.
 - `build.rs` resolves executables in common Nix profiles, chooses Home Manager or NixOS commands, starts rebuild process groups, forwards output, and cancels a complete process group.
@@ -196,3 +201,5 @@ File mutation happens before the rebuild. A failed rebuild does not restore prev
 - Nothing stops two front-ends running at once. Both would write `state.json` and the managed files, so running the TUI and the GUI side by side is not supported.
 - Generated nixpkgs package sets use `BTreeSet`, and generated external-flake module and package mappings use `BTreeMap`, so output order is deterministic.
 - The build log is bounded to 1,000 lines, live-search stdout to 50 MiB, catalog stdout to 256 MiB, search stderr retention to 64 KiB, package results to 200, and flake results to 20.
+
+Dendritic source migration plans carry expected contents and proposed replacements. Managed-module conversion uses a separate previewable file transaction. Generated-flake input ownership lives in `wiring/generated.rs`, which edits a declarative module and regenerates the root through `write-flake`. `core/configurations.rs` is the shared target-selection interface for the CLI, GUI, and TUI.

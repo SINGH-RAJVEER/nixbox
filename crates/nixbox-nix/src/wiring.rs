@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+mod generated;
 
 /// Adds `github:<repo>` to the root flake's inputs, or finds the input that
 /// already points at it, and returns the attribute name to reference it by
@@ -33,6 +34,9 @@ pub fn ensure_flake_input(flake_file: &Path, repo: &str) -> Result<String> {
 
 	let name = inputs.unused_name(repo);
 	let follows = inputs.entries.iter().any(|entry| entry.name == "nixpkgs");
+	if generated::change(flake_file, &name, Some((repo, follows)))?.is_some() {
+		return Ok(name);
+	}
 	let updated = inputs.insert(&source, &name, repo, follows);
 	fs::write(flake_file, updated).with_context(|| format!("writing {}", flake_file.display()))?;
 	Ok(name)
@@ -43,6 +47,9 @@ pub fn ensure_flake_input(flake_file: &Path, repo: &str) -> Result<String> {
 pub fn remove_flake_input(flake_file: &Path, name: &str) -> Result<bool> {
 	if !flake_file.exists() {
 		return Ok(false);
+	}
+	if let Some(changed) = generated::change(flake_file, name, None)? {
+		return Ok(changed);
 	}
 	let source = fs::read_to_string(flake_file)
 		.with_context(|| format!("reading {}", flake_file.display()))?;
