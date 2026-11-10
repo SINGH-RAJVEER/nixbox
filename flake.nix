@@ -8,7 +8,7 @@
 	};
 	inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 	inputs.stable-source = {
-		url = "github:SINGH-RAJVEER/nixbox/v0.4.5";
+		url = "github:SINGH-RAJVEER/nixbox/source-v0.4.7";
 		flake = false;
 	};
 

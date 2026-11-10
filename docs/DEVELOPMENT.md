@@ -282,7 +282,7 @@ Do not describe a local commit as pushed. Compare `dev`, `master`, and their rem
 
 ## Release preparation
 
-The flake exposes `nixbox-stable`, `nixbox-tui-stable`, and `nixbox-cli-stable` from the locked `stable-source` input, currently the actual `v0.4.5` release. `nixbox-nightly`, `nixbox-tui-nightly`, and `nixbox-cli-nightly` build this checkout, currently versioned `0.4.6-nightly.20261025`. Matching app and overlay outputs use the same names. The unsuffixed names select stable, and the default package and app select the stable GUI on Linux. The GUI is unavailable on macOS, where the default remains the stable TUI. VM development and automated VM checks use nightly packages to exercise the checkout.
+The flake exposes `nixbox-stable`, `nixbox-tui-stable`, and `nixbox-cli-stable` from the locked `stable-source` input, currently the `source-v0.4.7` snapshot of the `0.4.7` release. `nixbox-nightly`, `nixbox-tui-nightly`, and `nixbox-cli-nightly` build this checkout, currently versioned `0.4.6-nightly.20261025`. Matching app and overlay outputs use the same names. The unsuffixed names select stable, and the default package and app select the stable GUI on Linux. The GUI is unavailable on macOS, where the default remains the stable TUI. VM development and automated VM checks use nightly packages to exercise the checkout.
 
 Run `nix run .#nixbox-stable` or `nix run .#nixbox-nightly` to choose the GUI channel. Use `nix profile install .#nixbox-cli-nightly` for the nightly CLI. Nightly Cargo GUI launchers select the `nixbox-nightly` output in their exact version tag, so the stable default cannot redirect them to an older GUI.
 
