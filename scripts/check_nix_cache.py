@@ -55,8 +55,10 @@ def main():
 		assert terminal == application["dependencies"], "Terminal interfaces did not share compiled dependencies"
 		manifest = source / "Cargo.toml"
 		version = re.search(r'(?m)^version = "(.+)"$', manifest.read_text())[1]
+		# Match whole quoted versions so a stable 0.4.7 bump leaves dependencies such as 0.4.79 alone.
+		workspace_version = re.compile(r'"(=?)%s"' % re.escape(version))
 		for path in [manifest, source / "Cargo.lock", *source.glob("crates/*/Cargo.toml")]:
-			path.write_text(path.read_text().replace(version, version + ".1"))
+			path.write_text(workspace_version.sub(lambda match: '"%s%s.1"' % (match[1], version), path.read_text()))
 		bumped = snapshot()
 		assert bumped["build"] != application["build"], "Version bump did not invalidate the binary"
 		assert bumped["dependencies"] == application["dependencies"], "Version bump invalidated compiled dependencies"
