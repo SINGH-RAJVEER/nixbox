@@ -17,7 +17,7 @@ pub use schema::*;
 
 /// Shared by every interface and install method. Changes require fresh consent.
 /// There is deliberately no runtime endpoint override in the application.
-pub const RECIPIENT: Option<&str> = Some("https://nixb.duckdns.org:58443/v1/telemetry");
+pub const RECIPIENT: Option<&str> = Some("https://telemetry.rajveer.tech/v1/telemetry");
 pub const DISCLOSURE: &str = "Optional counts of app starts and completed rebuild/profile outcomes, grouped by release, interface, OS and CPU architecture. Includes target, outcome and coarse duration. No IDs, search text, package names, paths, configuration values or logs. The receiver sees the connection IP but stores only daily totals for 90 days. No retries or offline history.";
 
 type ConsentSource = Arc<dyn Fn() -> Option<u64> + Send + Sync>;

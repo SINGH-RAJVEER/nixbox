@@ -188,7 +188,11 @@ fn flake_file(engine: &Engine) -> Check {
 			),
 		};
 	};
-	if source.contains("outputs = inputs@") {
+	if source.contains("outputs = inputs@")
+		|| matches!(
+			nixbox_nix::dendritic::Layout::discover(&engine.config.config_root()),
+			Ok(Some(_))
+		) {
 		Check {
 			name: "flake.nix",
 			level: Level::Ok,
@@ -208,8 +212,8 @@ fn flake_file(engine: &Engine) -> Check {
 }
 
 fn main_file(engine: &Engine, scope: Target) -> Check {
-	let path = engine.config.main_file_for(scope);
-	if path.exists() {
+	let path = engine.integration_file_for(scope);
+	if engine.has_main_file(scope) {
 		Check {
 			name: "main config",
 			level: Level::Ok,

@@ -892,6 +892,10 @@ pub(crate) fn operation_files(config: &Config) -> BTreeMap<PathBuf, Option<Vec<u
 		config.config_root().join("flake.lock"),
 		config.home_integration_file(),
 	];
+	if let Ok(Some(layout)) = crate::configurations::selected_layout(config) {
+		files.extend(layout.source_files().iter().cloned());
+		files.push(layout.tree.join("nixbox/inputs.nix"));
+	}
 	for scope in [Target::HomeManager, Target::NixosSystem] {
 		files.extend([
 			config.main_file_for(scope),

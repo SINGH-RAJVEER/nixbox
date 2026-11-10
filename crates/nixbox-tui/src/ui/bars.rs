@@ -211,7 +211,8 @@ fn context_keys(app: &App) -> &'static str {
 				Tab::Building if app.session.is_building() => {
 					"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 				}
-				Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
+				Tab::Building => "u update system  tab/shift-tab tabs  ctrl-s settings  esc quit",
+				Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
 				Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
 			}
 		}
@@ -271,7 +272,8 @@ fn context_keys(app: &App) -> &'static str {
 			Tab::Building if app.session.is_building() => {
 				"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 			}
-			Tab::Building | Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
+			Tab::Building => "u update system  tab/shift-tab tabs  ctrl-s settings  esc quit",
+			Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
 			Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
 		},
 	}

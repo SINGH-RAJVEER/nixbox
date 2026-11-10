@@ -114,6 +114,18 @@ impl Target {
 const MAX_RECENT_SEARCHES: usize = 20;
 pub const DEFAULT_CHANNEL: &str = "nixpkgs-26.05";
 
+/// Identity shared by every operation in one session and its recovery file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfigurationIdentity {
+	pub root: PathBuf,
+	#[serde(default = "default_dendritic_detection")]
+	pub dendritic_detection: bool,
+	pub host: Option<String>,
+	pub user: Option<String>,
+	#[serde(default)]
+	pub home_configuration: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
 	pub channel: String,
@@ -124,6 +136,12 @@ pub struct Config {
 	pub input_mode: InputMode,
 	#[serde(default)]
 	pub tab_labels: TabLabels,
+	/// Whether the desktop GUI draws a close button at the right of its tabs.
+	#[serde(default = "default_close_button")]
+	pub close_button: bool,
+	/// Discover native flake-parts modules instead of conventional entry files.
+	#[serde(default = "default_dendritic_detection")]
+	pub dendritic_detection: bool,
 	/// Desktop keyboard overrides. Missing actions use their defaults; empty lists disable them.
 	#[serde(default)]
 	pub gui_shortcuts: BTreeMap<String, Vec<String>>,
@@ -144,6 +162,20 @@ pub struct Config {
 	/// `configuration.nix` if present, else `/etc/nixos/configuration.nix`).
 	#[serde(default)]
 	pub nixos_main_file: Option<PathBuf>,
+	/// Selected flake output and attached Home Manager user.
+	#[serde(default)]
+	pub nixos_host: Option<String>,
+	#[serde(default)]
+	pub home_user: Option<String>,
+	#[serde(default)]
+	pub home_configuration: Option<String>,
+	/// Resolved import-tree directory; discovered afresh, never persisted.
+	#[serde(skip)]
+	pub native_modules_dir: Option<PathBuf>,
+	#[serde(skip)]
+	pub legacy_system_module: bool,
+	#[serde(skip)]
+	pub legacy_home_module: bool,
 }
 
 /// Every theme name `theme` accepts.
@@ -164,6 +196,14 @@ fn default_theme() -> String {
 	"default".to_string()
 }
 
+fn default_close_button() -> bool {
+	true
+}
+
+fn default_dendritic_detection() -> bool {
+	true
+}
+
 impl Default for Config {
 	fn default() -> Self {
 		Self {
@@ -172,17 +212,42 @@ impl Default for Config {
 			theme: default_theme(),
 			input_mode: InputMode::default(),
 			tab_labels: TabLabels::default(),
+			close_button: default_close_button(),
+			dendritic_detection: default_dendritic_detection(),
 			gui_shortcuts: BTreeMap::new(),
 			telemetry: TelemetrySettings::default(),
 			recent_searches: Vec::new(),
 			config_dir: None,
 			home_manager_main_file: None,
 			nixos_main_file: None,
+			nixos_host: None,
+			home_user: None,
+			home_configuration: None,
+			native_modules_dir: None,
+			legacy_system_module: false,
+			legacy_home_module: false,
 		}
 	}
 }
 
 impl Config {
+	pub fn identity(&self) -> ConfigurationIdentity {
+		let root = self.config_root();
+		ConfigurationIdentity {
+			dendritic_detection: self.dendritic_detection,
+			root: root.canonicalize().unwrap_or_else(|_| {
+				if root.is_absolute() {
+					root.clone()
+				} else {
+					std::env::current_dir().unwrap_or_default().join(&root)
+				}
+			}),
+			host: self.nixos_host.clone(),
+			user: self.home_user.clone(),
+			home_configuration: self.home_configuration.clone(),
+		}
+	}
+
 	/// Pushes a query to the front of recent_searches, dedups, caps the list.
 	pub fn push_recent(&mut self, query: String) {
 		let trimmed = query.trim().to_string();
@@ -214,9 +279,42 @@ impl Config {
 	/// Returns the managed packages file for an arbitrary target.
 	pub fn managed_file_for(&self, target: Target) -> PathBuf {
 		match target {
-			Target::HomeManager => self.config_root().join("nixbox-home-packages.nix"),
-			Target::NixosSystem => self.config_root().join("nixbox-system-packages.nix"),
+			Target::HomeManager => self
+				.generated_dir_for(target)
+				.join("nixbox-home-packages.nix"),
+			Target::NixosSystem => self
+				.generated_dir_for(target)
+				.join("nixbox-system-packages.nix"),
 		}
+	}
+
+	pub fn generated_dir_for(&self, target: Target) -> PathBuf {
+		let legacy = match target {
+			Target::NixosSystem => self.legacy_system_module,
+			Target::HomeManager => self.legacy_home_module,
+		};
+		let Some(tree) = self.native_modules_dir.as_ref().filter(|_| !legacy) else {
+			return self.config_root();
+		};
+		let encoded = |name: &str| {
+			name.as_bytes()
+				.iter()
+				.map(|byte| format!("{byte:02x}"))
+				.collect::<String>()
+		};
+		if let Some(output) = &self.home_configuration {
+			return tree.join("nixbox").join("homes").join(encoded(output));
+		}
+		let mut directory = tree
+			.join("nixbox")
+			.join("hosts")
+			.join(encoded(self.nixos_host.as_deref().unwrap_or("nixos")));
+		if target == Target::HomeManager {
+			directory = directory
+				.join("users")
+				.join(encoded(self.home_user.as_deref().unwrap_or("unselected")));
+		}
+		directory
 	}
 
 	/// Flake outputs share the target's package module.
@@ -236,15 +334,20 @@ impl Config {
 	/// Returns the generated module that sets package options for `target`.
 	pub fn settings_file_for(&self, target: Target) -> PathBuf {
 		match target {
-			Target::HomeManager => self.config_root().join("nixbox-home-settings.nix"),
-			Target::NixosSystem => self.config_root().join("nixbox-system-settings.nix"),
+			Target::HomeManager => self
+				.generated_dir_for(target)
+				.join("nixbox-home-settings.nix"),
+			Target::NixosSystem => self
+				.generated_dir_for(target)
+				.join("nixbox-system-settings.nix"),
 		}
 	}
 
 	/// Returns the NixOS module that puts the Home Manager package profile on
 	/// PATH when Home Manager runs inside NixOS.
 	pub fn home_integration_file(&self) -> PathBuf {
-		self.config_root().join("nixbox-home-integration.nix")
+		self.generated_dir_for(Target::HomeManager)
+			.join("nixbox-home-integration.nix")
 	}
 
 	/// Returns the root flake that owns the inputs used by nixbox modules.
@@ -303,6 +406,14 @@ impl Config {
 }
 
 pub fn settings_path() -> Result<PathBuf> {
+	// Respect an explicit isolated configuration directory on every platform,
+	// including macOS where BaseDirs otherwise uses Application Support.
+	if let Some(directory) = std::env::var_os("XDG_CONFIG_HOME")
+		.map(PathBuf::from)
+		.filter(|directory| directory.is_absolute())
+	{
+		return Ok(directory.join("nixbox").join("settings.json"));
+	}
 	let base = BaseDirs::new().context("locating user directories")?;
 	Ok(base.config_dir().join("nixbox").join("settings.json"))
 }
@@ -384,6 +495,8 @@ mod tests {
 		assert_eq!(cfg.theme, "default");
 		assert_eq!(cfg.input_mode, InputMode::Vim);
 		assert_eq!(cfg.tab_labels, TabLabels::IconsAndNames);
+		assert!(cfg.close_button);
+		assert!(cfg.dendritic_detection);
 		assert!(cfg.gui_shortcuts.is_empty());
 		assert_eq!(cfg.telemetry, TelemetrySettings::default());
 		assert!(cfg.recent_searches.is_empty());

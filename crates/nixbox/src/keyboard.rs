@@ -57,6 +57,7 @@ shortcuts! {
 	DiscardOptions, "discard-options", "Discard staged options", "Options", ["ctrl-z", "U"];
 	ReloadOptions, "reload-options", "Reload options", "Options", ["r"];
 	CancelBuild, "cancel-build", "Cancel build", "Build", ["c"];
+	UpdateSystem, "update-system", "Update flake inputs and rebuild the system", "Build", ["u"];
 	ApplyQueue, "apply-queue", "Apply queued operations", "Queue", ["ctrl-enter"];
 	DropQueued, "drop-queued", "Drop selected queued operation", "Queue", ["delete"];
 	Review, "review", "Refresh review", "Version control", ["r"];
@@ -519,7 +520,7 @@ impl NixboxApp {
 			ApplyOptions | UnsetOption | DiscardOptions | ReloadOptions => {
 				!other_input && normal && self.page == Page::Options
 			}
-			CancelBuild => self.page == Page::Build,
+			CancelBuild | UpdateSystem => self.page == Page::Build,
 			ApplyQueue | DropQueued => self.page == Page::Queue,
 			Review | EditMessage | Push | CreateRemote | InitGit | InitJj | ToggleBookmark
 			| ToggleStatus | PanLeft | PanRight => !other_input && self.page == Page::VersionControl,
@@ -618,6 +619,7 @@ impl NixboxApp {
 			DiscardOptions => self.discard_options(cx),
 			ReloadOptions => self.reload_options(cx),
 			CancelBuild => self.cancel_build(cx),
+			UpdateSystem => self.update_system(window, cx),
 			ApplyQueue => self.apply_queue(cx),
 			DropQueued => self.dequeue(self.keyboard.selected, cx),
 			Review => self.refresh_repository(window, cx),

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Version of the basic usage collection disclosure. New data or recipients require new consent.
-pub const TELEMETRY_CONSENT_VERSION: u32 = 3;
+pub const TELEMETRY_CONSENT_VERSION: u32 = 4;
 
 /// Saved consent only. This value does not create a collector or perform network work.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +111,7 @@ mod tests {
 			enabled.status_with(Overrides::default()),
 			TelemetryStatus::Enabled
 		);
-		for version in [0, 1, 2, TELEMETRY_CONSENT_VERSION + 1] {
+		for version in [0, 1, 2, 3, TELEMETRY_CONSENT_VERSION + 1] {
 			assert_eq!(
 				TelemetrySettings {
 					consent_version: version,

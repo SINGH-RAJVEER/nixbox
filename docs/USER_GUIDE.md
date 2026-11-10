@@ -44,7 +44,7 @@ Press `Enter` on a result to install it for the target selected in settings. If 
 
 ### Flakes
 
-The Flakes tab searches GitHub code and repository metadata after a 250 ms input delay, resolves the strongest candidates to their current GitHub revisions, and evaluates those locked revisions with Nix. It keeps repositories that expose derivation packages for the current system or named NixOS or Home Manager modules. Selecting a result loads repository metadata, reads input names from the flake source, and shows every evaluated package and module path plus other top-level output families. Use `PageUp` and `PageDown` to scroll the details.
+The Flakes tab searches GitHub code and repository metadata after a 250 ms input delay, resolves the strongest candidates to their current GitHub revisions, and evaluates those locked revisions with Nix. It keeps repositories that expose derivation packages for the current system or named NixOS or Home Manager modules, and lists flakes with an output named like the query first. Selecting a result loads repository metadata, reads input names from the flake source, and shows every evaluated package and module path plus other top-level output families. Use `PageUp` and `PageDown` to scroll the details.
 
 Press `Enter` to open a picker when the selected flake has multiple installable outputs. Move with the arrow keys or `j` and `k`, press `Enter` on a package or module path to install that exact output, or press `Esc` to close the picker. A flake with one compatible output installs directly. The picker includes every evaluated derivation package under `packages.<current-system>` and modules compatible with the active target. An input that already points at the repository is reused; otherwise a new one is added under a short name such as `zen-browser`, following your root `nixpkgs`. Multiple outputs from the same repository can be installed separately. The command line lists paths with `nixbox flake info <owner/repo>` and installs a specific one with `nixbox flake add <owner/repo> --output '<path>'`.
 
@@ -64,6 +64,10 @@ Press `Enter` on a managed or external package to open its options panel. The pa
 
 ### NixOS
 
+Choose **Configured options** with the category keys to list settings detected in the selected host's saved configuration and imported modules. Its count follows the search, and configured diagnostic options stay included. Structured settings appear under their parent option, rather than as concrete instances of nested schema templates. Reload after saving external configuration changes.
+
+Press `Alt-H` to link this machine's hardware to the selected host. Hardware filtering then hides settings known to require absent devices. Press `Alt-A` to show all hardware options, or `Alt-H` again to unlink. The association lasts for the session and clears when switching hosts or configuration directories. Configured options and uncertain hardware stay visible. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
+
 The NixOS tab browses the option schema of a host from the configuration flake's `nixosConfigurations` outputs. It reads the hosts the first time you open the tab, then picks `nixos` when it exists or the only host when there is one. A header line names the host and configuration directory. Below it are categories with their match counts, the matching options, and the selected option's details. Terminals narrower than 110 columns hide the category column and name the category in the list title.
 
 The search field matches option paths and descriptions, with exact paths first. Inspecting an option evaluates its effective value, default, example, and definition files, so it runs only when you press `Enter`. The tab is read-only and never changes the install target or queues work. A finished rebuild invalidates the schema, which reloads the next time the tab is open.
@@ -75,12 +79,14 @@ The search field matches option paths and descriptions, with exact paths first. 
 | `Alt-Left`, `Alt-Right`, or `[`, `]` in Vim Normal mode | Previous or next category. |
 | `Ctrl-T` | Next host. |
 | `Ctrl-D` | Show or hide diagnostic options. |
+| `Alt-H` | Use this machine's hardware for the selected host, or unlink it. |
+| `Alt-A` | Show all hardware options, or restore relevance filtering. |
 | `Ctrl-L`, or `r` in Vim Normal mode | Reload hosts and the schema. |
 | `PageUp`, `PageDown` | Scroll the details. |
 
 ### Building
 
-The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
+The Building tab shows stdout and stderr from the active rebuild. NixBox retains the latest 1,000 lines in memory. Press `u`, when no rebuild is running, to update every flake input and rebuild the system: NixOS, then a standalone Home Manager configuration if the flake has one. See [Updating the system](CLI.md#updating-the-system). Press `c` to cancel the active process group. Cancellation sends `SIGTERM`, waits up to three seconds, and then sends `SIGKILL` if the process has not exited.
 
 ### Queue
 
@@ -140,7 +146,7 @@ The settings UI changes these values:
 - `Theme` selects `default`, `dracula`, `gruvbox`, `nord`, `catppuccin`, or `monokai`.
 - `Target` selects Home Manager or NixOS for new installs.
 - `Channel` selects `nixpkgs-26.05` or `nixpkgs-unstable` for live-search fallback.
-- `Usage data` shows the optional collection disclosure, saved choice, effective status, recipient, and an offline example. It defaults to Off. On explicitly consents to sending the disclosed counts to `https://nixb.duckdns.org:58443/v1/telemetry`; development builds continue to suppress delivery. During a repository operation, Ctrl-S opens this privacy page directly so collection can still be disabled.
+- `Usage data` shows the optional collection disclosure, saved choice, effective status, recipient, and an offline example. It defaults to Off. On explicitly consents to sending the disclosed counts to `https://telemetry.rajveer.tech/v1/telemetry`; development builds continue to suppress delivery. During a repository operation, Ctrl-S opens this privacy page directly so collection can still be disabled.
 
 Path overrides are valid settings but are not editable in the TUI. Edit `settings.json` directly to set them.
 

@@ -7,11 +7,13 @@ use std::time::Duration;
 
 use gpui_kit::{Context, Task, Window};
 use nixbox_config::Target;
+use nixbox_core::hardware::HardwareFilter;
 use nixbox_core::options::parse_text;
 use nixbox_core::system_options::{
-	Category, default_host, edit_lock, filter_options, host_is_editable, sibling_group,
+	Category, default_host, edit_lock, filter_options, sibling_group,
 };
 use nixbox_core::{Op, OptionChange};
+use nixbox_nix::hardware::HardwareInventory;
 use nixbox_nix::settings::{OptionPath, SettingValue, option_path_display};
 use nixbox_nix::system_options::{
 	EditableOption, NixosConfiguration, SystemOption, discover_hosts, discover_options,
@@ -26,6 +28,7 @@ const EVALUATION_LIMIT: Duration = Duration::from_secs(120);
 
 #[derive(Default)]
 pub struct NixosView {
+	pub applied_host: Option<String>,
 	pub initialized: bool,
 	pub hosts: Vec<String>,
 	pub configuration: Option<NixosConfiguration>,
@@ -35,6 +38,9 @@ pub struct NixosView {
 	pub counts: [usize; Category::ALL.len()],
 	pub category: Category,
 	pub show_diagnostic: bool,
+	pub hardware: HardwareFilter,
+	pub local_hardware: HardwareInventory,
+	hardware_configuration: Option<NixosConfiguration>,
 	pub selected: Option<OptionPath>,
 	/// The selected option and its siblings, as evaluated, in schema order.
 	pub group: Vec<EditableOption>,
@@ -76,6 +82,8 @@ impl NixosView {
 		self.hosts.clear();
 		self.configuration = None;
 		self.staged.clear();
+		self.hardware.inventory = None;
+		self.hardware_configuration = None;
 	}
 
 	fn invalidate(&mut self) {
@@ -90,7 +98,14 @@ impl NixosView {
 	}
 
 	pub fn filter(&mut self, text: &str) {
-		let filtered = filter_options(&self.options, text, self.category, self.show_diagnostic);
+		self.hardware.retained = self.staged.keys().cloned().collect();
+		let filtered = filter_options(
+			&self.options,
+			text,
+			self.category,
+			self.show_diagnostic,
+			&self.hardware,
+		);
 		self.visible = filtered.visible;
 		self.counts = filtered.counts;
 	}
@@ -115,9 +130,13 @@ impl NixosView {
 
 	/// Whether the open host is the one nixbox's NixOS rebuild applies.
 	pub fn editable_host(&self) -> bool {
-		self.configuration
-			.as_ref()
-			.is_some_and(|configuration| host_is_editable(&configuration.host))
+		self.configuration.as_ref().is_some_and(|configuration| {
+			configuration.host
+				== self
+					.applied_host
+					.as_deref()
+					.unwrap_or(nixbox_core::options::NIXOS_HOST)
+		})
 	}
 
 	/// Why `option` cannot be changed here, or `None` when it can.
@@ -138,12 +157,14 @@ impl Drop for NixosView {
 
 impl NixboxApp {
 	pub fn reload_nixos(&mut self, cx: &mut Context<Self>) {
+		self.nixos.applied_host = self.session.engine.config.nixos_host.clone();
 		self.nixos.cancel();
 		let previous = self
 			.nixos
 			.configuration
 			.as_ref()
-			.map(|configuration| configuration.host.clone());
+			.map(|configuration| configuration.host.clone())
+			.or_else(|| self.nixos.applied_host.clone());
 		self.nixos.initialized = true;
 		self.nixos.loading = true;
 		self.nixos.error = None;
@@ -207,6 +228,10 @@ impl NixboxApp {
 			root: self.session.config_dir(),
 			host: host.into(),
 		};
+		if self.nixos.hardware_configuration.as_ref() != Some(&configuration) {
+			self.nixos.hardware.inventory = None;
+			self.nixos.hardware_configuration = None;
+		}
 		self.nixos.configuration = Some(configuration.clone());
 		self.nixos.loading = true;
 		self.nixos.error = None;
@@ -215,9 +240,13 @@ impl NixboxApp {
 		self.nixos.counts = Default::default();
 		self.nixos.selected = None;
 		let epoch = self.nixos.catalog_epoch;
-		let job = self
-			.runtime
-			.spawn(async move { discover_options(&configuration, EVALUATION_LIMIT).await });
+		let job = self.runtime.spawn(async move {
+			let (catalog, hardware) = tokio::join!(
+				discover_options(&configuration, EVALUATION_LIMIT),
+				tokio::task::spawn_blocking(HardwareInventory::detect)
+			);
+			catalog.map(|catalog| (catalog, hardware.unwrap_or_default()))
+		});
 		self.nixos.catalog_abort = Some(job.abort_handle());
 		self.nixos.catalog_task = Some(cx.spawn(async move |this, cx| {
 			let result = match job.await {
@@ -231,8 +260,12 @@ impl NixboxApp {
 				this.nixos.loading = false;
 				this.nixos.catalog_abort = None;
 				match result {
-					Ok(catalog) => {
+					Ok((catalog, hardware)) => {
 						this.nixos.options = catalog.options;
+						this.nixos.local_hardware = hardware.clone();
+						if this.nixos.hardware_configuration == this.nixos.configuration {
+							this.nixos.hardware.inventory = Some(hardware);
+						}
 						this.refresh_nixos_filter(cx);
 					}
 					Err(error) => this.nixos.error = Some(error),
@@ -265,7 +298,12 @@ impl NixboxApp {
 		}
 		self.nixos.cancel_inspection();
 		self.nixos.inspecting = true;
-		let paths = sibling_group(&self.nixos.options, &path, self.nixos.show_diagnostic);
+		let paths = sibling_group(
+			&self.nixos.options,
+			&path,
+			self.nixos.show_diagnostic,
+			&self.nixos.hardware,
+		);
 		let settings_file = self
 			.session
 			.engine
@@ -438,6 +476,36 @@ impl NixboxApp {
 		cx.notify();
 	}
 
+	pub fn use_local_nixos_hardware(
+		&mut self,
+		enabled: bool,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		self.nixos.hardware_configuration =
+			enabled.then(|| self.nixos.configuration.clone()).flatten();
+		self.nixos.hardware.inventory = self
+			.nixos
+			.hardware_configuration
+			.as_ref()
+			.map(|_| self.nixos.local_hardware.clone());
+		self.refresh_nixos_hardware(window, cx);
+	}
+
+	pub fn refresh_nixos_hardware(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		let selected = self.nixos.selected.take();
+		self.nixos.cancel_inspection();
+		self.refresh_nixos_filter(cx);
+		if let Some(path) = selected.filter(|path| {
+			self.nixos
+				.visible
+				.iter()
+				.any(|index| self.nixos.options[*index].path == *path)
+		}) {
+			self.select_nixos_option(path, window, cx);
+		}
+	}
+
 	pub(crate) fn nixos_after_build(&mut self, cx: &mut Context<Self>) {
 		if self.nixos.initialized {
 			self.nixos.invalidate();
@@ -452,7 +520,7 @@ impl NixboxApp {
 mod tests {
 	use super::*;
 	use gpui_kit::component::Root;
-	use gpui_kit::test::TestWindowExt as _;
+	use gpui_kit::test::{TestAppContextExt as _, TestWindowExt as _};
 	use gpui_kit::{AppContext as _, TestAppContext, px, size};
 	use nixbox_config::{Config, Target};
 	use nixbox_core::options::NIXOS_HOST;
@@ -490,6 +558,7 @@ mod tests {
 	fn option(path: &str, description: &str, diagnostic: bool) -> SystemOption {
 		SystemOption {
 			path: path.split('.').map(str::to_string).collect(),
+			configured: Some(false),
 			description: Some(description.into()),
 			type_description: "boolean".into(),
 			declarations: vec!["configuration.nix".into()],
@@ -544,6 +613,7 @@ mod tests {
 					option("services.pipewire.enable", "Sound server", false),
 					option("custom.welcome", "Welcome message", false),
 				];
+				app.nixos.options[0].configured = Some(true);
 				app.nixos.filter("");
 			});
 			window.render_frame(cx);
@@ -551,6 +621,34 @@ mod tests {
 			window.render_frame(cx);
 			assert!(window.find(("nixos-option", 0_usize)).visible());
 			assert!(window.find(("nixos-option", 1_usize)).visible());
+			window.click(("nixos-category", Category::Configured.index()), cx);
+			window.render_frame(cx);
+			app.update(cx, |app, _| {
+				assert_eq!(app.nixos.category, Category::Configured);
+				assert_eq!(app.nixos.visible, [0]);
+				assert_eq!(app.nixos.counts[Category::Configured.index()], 1);
+			});
+			assert!(window.find("nixos-configured-note").visible());
+			assert!(window.try_find(("nixos-option", 1_usize)).is_none());
+			window.click(("nixos-category", Category::All.index()), cx);
+			window.render_frame(cx);
+			app.update(cx, |app, cx| {
+				app.nixos
+					.options
+					.push(option("hardware.nvidia.open", "NVIDIA", false));
+				app.nixos.local_hardware.nvidia_gpu = nixbox_nix::hardware::Presence::Absent;
+				app.use_local_nixos_hardware(true, window, cx);
+				assert_eq!(app.nixos.visible.len(), 2);
+				app.nixos.hardware.show_all = true;
+				app.refresh_nixos_hardware(window, cx);
+				assert_eq!(app.nixos.visible.len(), 3);
+				app.nixos.hardware.show_all = false;
+				app.use_local_nixos_hardware(false, window, cx);
+				assert_eq!(app.nixos.visible.len(), 3);
+				app.nixos.options.pop();
+				app.refresh_nixos_filter(cx);
+			});
+			window.render_frame(cx);
 			let row = window.find(("nixos-option", 0_usize)).bounds();
 			assert!(
 				row.size.width > px(200.) && row.size.height > px(0.),
@@ -622,8 +720,171 @@ mod tests {
 			window.render_frame(cx);
 			assert!(window.find(("nixos-option", 0_usize)).visible());
 			assert!(window.try_find("nixos-details").is_none());
+			window.click(("nixos-category", Category::Configured.index()), cx);
+			window.render_frame(cx);
+			app.update(cx, |app, _| {
+				assert_eq!(app.nixos.category, Category::Configured);
+				assert_eq!(app.nixos.visible, [0]);
+				assert!(app.session.queue.is_empty());
+			});
+			assert!(window.find("nixos-configured-note").visible());
 		})
 		.expect("small window");
+	}
+
+	#[gpui_kit::test]
+	async fn nixos_switches_and_dropdowns_stage_values_from_clicks(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, build_rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut app = None;
+		let handle = cx.open_window(size(px(1180.), px(900.)), |window, cx| {
+			let view = cx
+				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
+			app = Some(view.clone());
+			Root::new(view, window, cx)
+		});
+		let app = app.expect("view");
+		cx.update_window(handle.into(), |_, window, cx| {
+			app.update(cx, |app, cx| {
+				app.nixos.initialized = true;
+				app.nixos.hosts = vec![NIXOS_HOST.into()];
+				app.nixos.configuration = Some(NixosConfiguration {
+					root: app.session.config_dir(),
+					host: NIXOS_HOST.into(),
+				});
+				app.nixos.options = vec![
+					option("custom.enable", "Enable the service", false),
+					option("custom.mode", "Service mode", false),
+					option("custom.optional", "Optional flag", false),
+				];
+				app.nixos.filter("");
+				app.nixos.group = vec![
+					editable("custom.enable", OptionKind::Bool, serde_json::json!(false)),
+					editable(
+						"custom.mode",
+						OptionKind::Enum(vec!["auto".into(), "manual".into()]),
+						serde_json::json!("auto"),
+					),
+					editable(
+						"custom.optional",
+						OptionKind::Nullable(Box::new(OptionKind::Bool)),
+						serde_json::Value::Null,
+					),
+				];
+				app.select_nixos_option(vec!["custom".into(), "enable".into()], window, cx);
+				app.set_page(Page::Nixos, window, cx);
+			});
+			window.render_frame(cx);
+			window.click(("nixos-bool", 0_usize), cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[0]),
+					Some(SettingValue::Bool(true))
+				);
+				assert!(
+					app.session.queue.is_empty(),
+					"A toggle only stages the edit"
+				);
+			});
+			window.click(("nixos-bool", 0_usize), cx);
+			app.read_with(cx, |app, _| assert!(app.nixos.staged.is_empty()));
+			window.click(("nixos-menu", 1_usize), cx);
+			assert_eq!(
+				window.within("popup-menu").find(0_usize).label(),
+				Some("auto")
+			);
+			assert_eq!(
+				window.within("popup-menu").find(1_usize).label(),
+				Some("manual")
+			);
+			window.within("popup-menu").click(1_usize, cx);
+			window.render_frame(cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[1]),
+					Some(SettingValue::Str("manual".into()))
+				);
+				assert!(
+					app.session.queue.is_empty(),
+					"A dropdown only stages the edit"
+				);
+			});
+		})
+		.expect("enum window");
+		cx.wait_for(
+			handle.into(),
+			std::time::Duration::from_secs(1),
+			|window, _| window.try_find("popup-menu").is_none(),
+		)
+		.await;
+		let mut unset = None;
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.click(("nixos-menu", 2_usize), cx);
+			let labels: Vec<_> = (0_usize..3)
+				.map(|index| {
+					window
+						.within("popup-menu")
+						.find(index)
+						.label()
+						.map(str::to_owned)
+				})
+				.collect();
+			assert!(
+				labels.contains(&Some("null".into())),
+				"Nullable flags retain an explicit null choice"
+			);
+			let enabled = labels
+				.iter()
+				.position(|label| label.as_deref() == Some("true"))
+				.expect("true choice");
+			unset = Some(
+				labels
+					.iter()
+					.position(|label| label.as_deref() == Some("null"))
+					.expect("null choice"),
+			);
+			window.within("popup-menu").click(enabled, cx);
+			window.render_frame(cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[2]),
+					Some(SettingValue::Bool(true))
+				);
+			});
+		})
+		.expect("nullable window");
+		cx.wait_for(
+			handle.into(),
+			std::time::Duration::from_secs(1),
+			|window, _| window.try_find("popup-menu").is_none(),
+		)
+		.await;
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.click(("nixos-menu", 2_usize), cx);
+			window
+				.within("popup-menu")
+				.click(unset.expect("null choice"), cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos_current(&app.nixos.group[2]),
+					Some(SettingValue::Null)
+				);
+				assert_eq!(app.nixos.staged.len(), 1, "Restoring null drops that edit");
+			});
+		})
+		.expect("window");
 	}
 
 	#[gpui_kit::test]

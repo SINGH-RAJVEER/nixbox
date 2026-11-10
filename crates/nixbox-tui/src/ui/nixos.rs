@@ -98,6 +98,13 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
 		dim,
 	));
 	let mut state = vec!["read-only"];
+	state.push(if panel.hardware.show_all {
+		"all hardware · alt-a filter"
+	} else if panel.hardware.inventory.is_some() {
+		"local hardware · alt-h unlink · alt-a all"
+	} else {
+		"hardware unlinked · alt-h use this machine"
+	});
 	if panel.show_diagnostic {
 		state.push("diagnostic shown");
 	}
@@ -290,6 +297,12 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App, panel: &Panel) {
 	}
 	lines.push(Line::raw(""));
 	lines.push(Line::from(Span::styled(access_note(option), dim)));
+	if let Some(reason) = panel.hardware.exclusion_reason(&option.path) {
+		lines.push(Line::from(Span::styled(
+			format!("{reason}. Retained by configuration or Show all."),
+			dim,
+		)));
+	}
 	if let Some(note) = partial_note(option) {
 		lines.push(Line::from(Span::styled(note, dim)));
 	}

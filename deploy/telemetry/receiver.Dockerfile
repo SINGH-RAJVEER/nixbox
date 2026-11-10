@@ -6,8 +6,7 @@ RUN apt-get update \
 WORKDIR /source
 COPY Cargo.toml Cargo.lock README.md LICENSE ./
 COPY crates ./crates
-ARG CARGO_BUILD_JOBS=2
-ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} CARGO_PROFILE_RELEASE_STRIP=symbols
+ENV CARGO_PROFILE_RELEASE_STRIP=symbols
 RUN cargo build --locked --release -p nixbox-core --features telemetry-receiver --example telemetry-receiver
 
 FROM docker.io/library/debian:bookworm-slim

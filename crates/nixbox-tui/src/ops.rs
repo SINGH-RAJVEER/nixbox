@@ -22,6 +22,14 @@ pub(crate) fn cancel_build(app: &mut App) {
 	}
 }
 
+/// Updates every flake input and rebuilds the system onto them.
+pub(crate) fn update_system(app: &mut App) {
+	match app.session.start_update() {
+		Some(label) => app.status = format!("{label}..."),
+		None => app.status = "Wait for the running rebuild before updating.".into(),
+	}
+}
+
 /// Hands `op` to the session and reports what became of it: started, queued
 /// behind the running rebuild, or already waiting.
 fn enqueue(app: &mut App, op: QueuedOp, queued: String, duplicate: String) {

@@ -1,4 +1,5 @@
 /target
+__pycache__/
 /result
 *.qcow2
 AGENTS.md
@@ -11,3 +12,5 @@ CLAUDE.md
 /nixbox-telemetry.sqlite3*
 /deploy/telemetry/.env
 /deploy/telemetry/secrets/
+/deploy/cloudflare/node_modules/
+/deploy/cloudflare/.wrangler/

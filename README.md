@@ -49,6 +49,10 @@ cargo install nixbox-tui
 cargo install nixbox-cli
 ```
 
+Stable releases use plain versions such as `0.4.5`. Nightly builds from `dev` use prerelease versions such as `0.4.6-nightly.20261025.123`. Install a published nightly explicitly with `cargo install nixbox --version '=0.4.6-nightly.20261025.123'`, or pin its Nix tag with `nix profile install github:SINGH-RAJVEER/nixbox/v0.4.6-nightly.20261025.123#nixbox-nightly`. Replace the example identifier with an existing published version. Both channels support the separate `nixbox-tui` and `nixbox-cli` packages. See [release preparation](docs/DEVELOPMENT.md#release-preparation) for the `--stable` and `--nightly` versioning flags.
+
+The flake defaults to the stable GUI on Linux. Select the GUI explicitly with `#nixbox-stable` or `#nixbox-nightly`; terminal outputs are `#nixbox-tui-stable`, `#nixbox-tui-nightly`, `#nixbox-cli-stable`, and `#nixbox-cli-nightly`. For example, `nix run .#nixbox-nightly` runs this checkout's GUI, while `nix run .` runs the pinned stable `0.4.5` GUI. The unsuffixed interface outputs select stable. On macOS, the default is the stable TUI because the GUI is not packaged there. Nightly version tags require `#nixbox-nightly` to select the nightly GUI.
+
 Run NixBox directly from its flake:
 
 ```sh
@@ -95,7 +99,9 @@ environment.systemPackages = [ pkgs.nixbox ];
 
 Supported flake package systems are `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The desktop GUI is built for the Linux systems only.
 
-NixBox's flake packages default to at most two compiler jobs per package, including test compilation. A lower Nix `cores` allowance is preserved. Change the package limit for your build machine with `(nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default.override { buildJobs = 8; })`, or `pkgs.nixbox.override { buildJobs = 8; }` when using the overlay. The Cargo launcher inherits your Nix settings. For direct native Cargo installs, use `cargo install nixbox --features native --locked --jobs 2`; the same `--jobs` option applies to `nixbox-tui` and `nixbox-cli`. See [build resource limits](docs/TROUBLESHOOTING.md#builds-use-too-much-memory) for tuning and the distinction between package and system-wide limits.
+Nix builds reuse compiled dependency artifacts after application source edits. Installation packages build separately from their test checks. The public [NixBox binary cache](docs/TROUBLESHOOTING.md#using-the-binary-cache) can supply matching builds without local compilation; downstream NixOS configurations must enable its cache and verification key explicitly.
+
+NixBox's flake packages build with every core Nix allows, including test compilation. On a machine with little RAM, cap the package with `(nixbox.packages.${pkgs.stdenv.hostPlatform.system}.default.override { buildJobs = 2; })`, or `pkgs.nixbox.override { buildJobs = 2; }` when using the overlay. The Cargo launcher inherits your Nix settings. To cap direct native Cargo installs, use `cargo install nixbox --features native --locked --jobs 2`; the same `--jobs` option applies to `nixbox-tui` and `nixbox-cli`. See [build resource limits](docs/TROUBLESHOOTING.md#builds-use-too-much-memory) for tuning and the distinction between package and system-wide limits.
 
 ## Run
 

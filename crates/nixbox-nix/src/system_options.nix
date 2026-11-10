@@ -12,13 +12,22 @@ let
 
 	# Namespace depth does not consume this budget. Only expanding a submodule
 	# does, so recursive container schemas cannot grow the index indefinitely.
-	walk = depth: diagnostic: nested: prefix: tree:
+	walk = depth: diagnostic: nested: inheritedConfigured: prefix: tree:
 		lib.concatMap (name:
 			let
 				node = tree.${name};
 				path = if lib.isOption node then node.loc or (prefix ++ [ name ]) else prefix ++ [ name ];
 				visibility = node.visible or true;
 				isDiagnostic = diagnostic || (node.internal or false);
+				# Inspect definition provenance, never the definition values. A
+				# parent contribution also retains its nested schema fields.
+				configured = if inheritedConfigured != false then inheritedConfigured
+					else if nested then false else attempt (
+						(node.highestPrio or 1500) < 1500 && builtins.any (definition:
+							let file = toString definition.file;
+							in !(lib.hasPrefix (toString (host.pkgs.path or "/nixbox-no-nixpkgs-path") + "/") file)
+						) (node.definitionsWithLocations or [ ])
+					);
 				children = if depth == 0 then null else
 					let
 						sub = node.type.getSubOptions path;
@@ -29,7 +38,7 @@ let
 				# their declaration without copying all of NixOS into each branch.
 				embeddedSystem = children != null && children ? boot && children ? system && children ? networking;
 				row = {
-					inherit path nested;
+					inherit path nested configured;
 					description = attempt (node.description or null);
 					typeDescription = let text = attempt (node.type.description or "unknown"); in if text == null then "unknown" else text;
 					declarations = let files = attempt (map toString (node.declarations or [ ])); in if files == null then [ ] else files;
@@ -43,13 +52,13 @@ let
 				if lib.isOption node then
 					[ { metadata = row; option = node; } ]
 					++ lib.optionals (children != null && children != { } && !embeddedSystem) (
-						walk (depth - 1) (isDiagnostic || visibility == false || visibility == "shallow") true path children
+						walk (depth - 1) (isDiagnostic || visibility == false || visibility == "shallow") true configured path children
 					)
-				else if builtins.isAttrs node then walk depth diagnostic nested path node
+				else if builtins.isAttrs node then walk depth diagnostic nested inheritedConfigured path node
 				else [ ]
 		) (builtins.attrNames tree);
 
-	entries = walk 4 false false [ ] host.options;
+	entries = walk 4 false false false [ ] host.options;
 	sensitiveSegment = segment:
 		builtins.match ".*(password|secret|token|privatekey|private-key).*" (lib.toLower segment) != null;
 

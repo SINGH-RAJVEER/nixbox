@@ -4,6 +4,10 @@ The README is the short entry point. These documents describe the behavior that 
 
 ## User documentation
 
+- [Dendritic configurations](DENDRITIC_PLAN.md) describes generated flake-parts modules, supported detection, target attachment, remaining limitations, and the disposable VM workflow.
+
+- [Hardware-aware NixOS settings](HARDWARE_FILTERING.md) explains local hardware detection, host association, filtering rules, and visibility exceptions.
+
 - [User guide](USER_GUIDE.md) covers installation, startup, tabs, controls, settings, package operations, rebuild behavior, and shutdown.
 - [Desktop GUI](GUI.md) covers the default `nixbox` package, its pages, how system rebuilds ask for your password, and its limits.
 - [Terminal applications](TERMINAL_APPS.md) explains separate flake installation of the GUI, TUI, and CLI.

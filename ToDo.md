@@ -11,4 +11,5 @@
 	- [ ] The flake sercher should search for both the repo names and repo output names
     - [ ] Make the textbox expand with the commit message in the vcs tab
     - [ ] Make the application autodetect the entire setup of configuration.nix and other related files
+    - [ ] As soon as a download is finished, it should display a green checkmark like the rest in the build tab of the gui, instead of the loader it shows currently until the build is complete
 
