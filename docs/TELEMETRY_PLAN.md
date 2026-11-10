@@ -1,6 +1,6 @@
 # Optional telemetry implementation plan
 
-Status: consent persistence, the typed report schema, bounded collector, GUI/TUI/CLI controls, activation instrumentation, and Docker/Nginx hosting are implemented. The receiver is deployed and verified at `https://nixb.duckdns.org:58443/v1/telemetry`. All new GUI/TUI/CLI builds share that recipient. Collection remains off by default and requires explicit consent. Automated tests inject controlled receivers; production verification uses synthetic reports sent explicitly by the maintainer.
+Status: consent persistence, the typed report schema, bounded collector, GUI/TUI/CLI controls, activation instrumentation, and hosting are implemented. The receiver runs as a Cloudflare Worker at `https://telemetry.rajveer.tech/v1/telemetry`, and all new GUI/TUI/CLI builds share that recipient. Releases published before 2026-11-10 used `https://nixb.duckdns.org:58443/v1/telemetry` on a VM, which is retired; their reports are no longer received. Collection remains off by default and requires explicit consent. Automated tests inject controlled receivers; production verification uses synthetic reports sent explicitly by the maintainer.
 
 The shared telemetry module covers release adoption, interface usage, supported platforms, and aggregate activation outcomes. Collection remains off until explicit consent and a configured recipient both permit it. These measurements should help choose supported builds and spot changes in reported rebuild reliability.
 
@@ -46,7 +46,7 @@ The serde-defaulted `TelemetrySettings` value in `nixbox-config::Config` now sto
 }
 ```
 
-`consent_version` records the disclosed collection contract. Version 3 discloses the deployed recipient `https://nixb.duckdns.org:58443/v1/telemetry`, including its forwarded HTTPS port. Consent from versions 1 and 2 is insufficient. Enabling through a supported control sets the current version. New categories or a new recipient require fresh consent; ordinary releases using the same contract retain the existing choice. `revision` is a local counter changed by explicit consent updates. It never leaves the machine. Pending observations from a different revision must be discarded, including after a rapid disable/enable cycle.
+`consent_version` records the disclosed collection contract. Version 4 discloses the Cloudflare recipient `https://telemetry.rajveer.tech/v1/telemetry`. Consent from versions 1 to 3 is insufficient; version 3 disclosed the retired DuckDNS recipient. Enabling through a supported control sets the current version. New categories or a new recipient require fresh consent; ordinary releases using the same contract retain the existing choice. `revision` is a local counter changed by explicit consent updates. It never leaves the machine. Pending observations from a different revision must be discarded, including after a rapid disable/enable cycle.
 
 Effective collection requires saved enablement, the current consent version, and no disabling override. Support `NIXBOX_NO_TELEMETRY=1` and `DO_NOT_TRACK=1`. Environment variables may disable collection but may never enable it. Suppress production delivery in debug builds, automated tests, CI, and the existing `NIXBOX_VM_BUILD` workflow. Tests use an explicitly injected local receiver.
 
@@ -88,9 +88,9 @@ nixbox config get telemetry-enabled
 
 ## Delivery and receiver
 
-Use a small endpoint controlled by the project. The selected hostname is `nixb.duckdns.org`, resolving to `148.113.1.66`. The provider forwards public TCP port 58443 to port 18443 inside the VM. Keep the production recipient fixed and disclosed; do not add an environment variable that redirects reports to arbitrary production destinations.
+Use a small endpoint controlled by the project. The selected hostname is `telemetry.rajveer.tech`, a Workers custom domain on the `rajveer.tech` Cloudflare zone. Cloudflare issues its certificate and manages its addresses. Keep the production recipient fixed and disclosed; do not add an environment variable that redirects reports to arbitrary production destinations.
 
-The recipient constant is `nixbox_core::telemetry::RECIPIENT`, set to `Some("https://nixb.duckdns.org:58443/v1/telemetry")`. GUI, TUI, CLI, Cargo installs, and Nix packages use the same shared core code. Existing published binaries need an upgrade containing this change; server configuration cannot modify an installed binary's recipient or consent. The hostname is resolved normally at delivery time, so moving the VPS only requires updating its DNS record. Changing the recipient itself requires a source change, a consent version bump, and a new application release. Editing settings cannot bypass production disabling overrides.
+The recipient constant is `nixbox_core::telemetry::RECIPIENT`, set to `Some("https://telemetry.rajveer.tech/v1/telemetry")`. GUI, TUI, CLI, Cargo installs, and Nix packages use the same shared core code. Existing published binaries need an upgrade containing this change; server configuration cannot modify an installed binary's recipient or consent. The hostname is resolved normally at delivery time, so moving the receiver only requires reattaching that hostname. Changing the recipient itself requires a source change, a consent version bump, and a new application release. Editing settings cannot bypass production disabling overrides.
 
 The current wire format is NixBox's custom JSON schema, not OpenTelemetry or OTLP. The Axum endpoint accepts that schema only. An OpenTelemetry Collector cannot ingest these reports directly.
 
@@ -120,7 +120,9 @@ By default it binds `127.0.0.1:8787` and creates a private `nixbox-telemetry.sql
 
 For production, run the receiver behind an HTTPS proxy with access logs and body capture disabled, and apply the same retention to backups and infrastructure logs. The receiver does not provide TLS termination or authenticate public ingestion with a client secret. The deployed Nginx container terminates HTTPS and forwards to the private Axum container.
 
-## VPS deployment with Docker and Nginx
+## Legacy VPS deployment with Docker and Nginx
+
+This section and the next describe the retired DuckDNS deployment used by releases published before 2026-11-10. Current builds use the [Cloudflare Worker receiver](#cloudflare-worker-receiver).
 
 The files in [`deploy/telemetry`](../deploy/telemetry) build the receiver and Nginx as separate images. Docker Compose is stored as JSON so its indentation uses tabs; invoke it with `-f compose.json`. The receiver runs as UID 10001, with a read-only root filesystem, no Linux capabilities, and no published host port. Its `/data` directory uses the persistent `counts` volume. The standalone stack publishes Nginx on ports 80 and 58443. Both containers restart unless explicitly stopped; enable the Docker daemon at boot on the VPS. The current shared VM uses the separate NAT setup below.
 
@@ -165,7 +167,7 @@ The supplied Nginx config disables access logs and directs its error log to `/de
 
 `TELEMETRY_DOMAIN` configures Nginx and certificate issuance, not installed applications. Keep it at `nixb.duckdns.org` for this release. `HTTP_PORT` and `HTTPS_PORT` select host bindings; the standalone defaults are 80 and 58443. `TELEMETRY_PUBLIC_HTTPS_PORT` sets the port in HTTP redirects and defaults to 58443. Neither server environment variables nor Docker configuration can enable telemetry in an installation.
 
-## Current shared VM and NAT deployment
+## Legacy shared VM and NAT deployment
 
 The collection server runs in the `nixbox-telemetry` Compose project at `/opt/nixbox-telemetry`. The VM has private IPv4 `10.10.10.140`; the provider's shared IPv4 is `148.113.1.66`. The provider forwards public TCP 58443 to VM port 18443. Public ports 80 and 443 reach the provider's Caddy service, while SlideSage owns those ports inside the VM. Telemetry uses neither existing proxy. Its Nginx publishes only port 18443, and its receiver has no published port. Each telemetry container has a half-CPU quota; receiver and Nginx memory limits are 128 MiB and 64 MiB.
 
@@ -187,6 +189,27 @@ sudo systemctl enable --now nixbox-telemetry-nat-renew.timer
 On 2026-10-22, public HTTPS verification succeeded with normal certificate verification. The certificate names `nixb.duckdns.org`, was issued by Let's Encrypt, and expires on 2027-01-20. Health returned 204. Two synthetic reports with release `0.0.0` returned 204 and produced exactly two SQLite counter groups, each with count two. Malformed input returned 400, an 8,193-byte body returned 413, and an unknown path returned 404. Receiver and Nginx request tests produced no log output. The synthetic rows were removed after verification, leaving no test aggregates in the live store. The renewal service completed successfully and its timer is active.
 
 The same verification compared all six SlideSage container IDs, start times, and restart counts with the baseline; all matched. Checksums of its Compose file, Nginx template, and Cloudflare configuration also matched. Its public site returned HTTP 200 before and after deployment. No existing application container was restarted or reconfigured. Provider-level flow logs and backup retention remain outside application verification; the telemetry application and its Nginx retain no request bodies or client addresses.
+
+## Cloudflare Worker receiver
+
+[`deploy/cloudflare`](../deploy/cloudflare) replaces the VM stack with a Cloudflare Worker and one SQLite-backed Durable Object, `TelemetryStore`. It needs no container, VPS, Nginx, or certificate renewal, and it never cold-starts past the client's two-second deadline. `src/schema.ts` mirrors `telemetry/schema.rs` and must change with it. `src/index.ts` mirrors the Axum receiver: the same `daily_counts` table and observation keys, 8 KiB bodies, 4,096 groups per UTC day, totals saturating at one trillion, 90-day retention, 600 ingestion requests per minute held only in memory, and the same 204, 400, 403, 404, 413, 429, and 503 responses. Plain HTTP redirects to HTTPS with 308. A Durable Object alarm prunes expired days shortly after each UTC midnight, and every ingestion also prunes.
+
+Workers observability and Logpush are disabled in `wrangler.jsonc`, and the code never logs or reads `CF-Connecting-IP`. Data lives only in the Durable Object, so there is no separate database volume or backup to expire.
+
+```bash
+cd deploy/cloudflare
+bun install
+bun test
+bunx tsc --noEmit
+node node_modules/wrangler/bin/wrangler.js dev --local-protocol https   # wrangler dev cannot forward requests under Bun
+node node_modules/wrangler/bin/wrangler.js deploy                       # needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+```
+
+The Worker is deployed only at the custom domain `telemetry.rajveer.tech`; `workers.dev` and preview URLs are disabled so no other public address receives reports. Cloudflare does not proxy port 58443, and DuckDNS cannot publish the CNAME a Workers custom domain needs, which is why the recipient moved from `nixb.duckdns.org:58443` and consent advanced to version 4.
+
+On 2026-11-10, the custom domain returned 204 for health, 400 for malformed JSON, 413 for an 8,193-byte body, 403 for GET on the ingestion path, 404 for an unknown path, and 308 from HTTP to HTTPS, with a Google Trust Services certificate. Ingestion and aggregation were verified against `wrangler dev`; no synthetic counts were sent to production.
+
+To query the counts, use the Durable Object's data studio in the Cloudflare dashboard, or add a temporary authenticated route; there is no public query endpoint.
 
 ## Implementation order and verification
 

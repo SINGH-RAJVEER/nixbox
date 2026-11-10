@@ -112,7 +112,7 @@ Bindings persist as `gui_shortcuts` overrides in `settings.json` and take effect
 
 ## Optional usage data
 
-Settings includes **Share basic usage data**, defaulting to Off. It shows the disclosure, effective status, recipient, and **Copy example report**, which copies a synthetic JSON payload without collecting or sending anything. The shared recipient is `https://nixb.duckdns.org:58443/v1/telemetry`; On explicitly saves consent, while debug, CI, and VM builds continue to suppress delivery. The Off control remains available during rebuilds and repository operations. Data is limited to release/interface/platform counters and completed activation outcomes; no IDs, searches, package names, configuration contents, or logs are sent. See [Optional telemetry](TELEMETRY_PLAN.md).
+Settings includes **Share basic usage data**, defaulting to Off. It shows the disclosure, effective status, recipient, and **Copy example report**, which copies a synthetic JSON payload without collecting or sending anything. The shared recipient is `https://telemetry.rajveer.tech/v1/telemetry`; On explicitly saves consent, while debug, CI, and VM builds continue to suppress delivery. The Off control remains available during rebuilds and repository operations. Data is limited to release/interface/platform counters and completed activation outcomes; no IDs, searches, package names, configuration contents, or logs are sent. See [Optional telemetry](TELEMETRY_PLAN.md).
 
 ## Configuration location
 

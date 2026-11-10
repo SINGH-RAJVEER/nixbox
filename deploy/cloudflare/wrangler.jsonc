@@ -1,0 +1,17 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "nixbox-telemetry",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-26",
+	// No request logs, traces or Logpush: the receiver must not retain client addresses.
+	"observability": { "enabled": false },
+	"logpush": false,
+	// The custom domain is the only public address, matching the disclosed recipient.
+	"routes": [{ "pattern": "telemetry.rajveer.tech", "custom_domain": true }],
+	"workers_dev": false,
+	"preview_urls": false,
+	"durable_objects": {
+		"bindings": [{ "name": "TELEMETRY", "class_name": "TelemetryStore" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["TelemetryStore"] }]
+}

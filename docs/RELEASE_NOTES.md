@@ -2,6 +2,10 @@
 
 This file tracks the user-facing changes in each NixBox version published to crates.io.
 
+## Unreleased
+
+- Moved the optional usage-data recipient to `https://telemetry.rajveer.tech/v1/telemetry`, a Cloudflare Worker that keeps the same fields, limits and 90-day aggregate retention. Consent advances to version 4, so installations that enabled sharing must enable it again after reviewing the new recipient. The previous `nixb.duckdns.org:58443` recipient is retired.
+
 ## 0.4.7 nightly - 2026-10-26
 
 - Flake search now compares the query with each flake's package and module names, including close matches, and lists flakes with a matching output first. Code-search matches also keep a share of the evaluated candidates, so a flake can be found through its outputs when its repository name is unrelated.
