@@ -4,6 +4,8 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- Reworked the TUI VCS tab to match the GUI's version control page. Opening it detects the repository and reviews in one step, and `r` refreshes both. The tab lists changed files with change letters and line counts, narrows the diff to the selected file, and colors added, removed, and hunk lines. The commit, push, and GitHub remote controls sit beside the diff, and each one shows its key or why it cannot run. Initialization appears only when no repository exists. The message follows the generated suggestion until edited, and an edited message is reviewed again before commit. Push and remote forms submit with `Enter`, and confirmations describe the action in plain words.
+
 ## 0.4.7 - 2026-11-10
 
 - Moved the optional usage-data recipient to `https://telemetry.rajveer.tech/v1/telemetry`, a Cloudflare Worker that keeps the same fields, limits and 90-day aggregate retention. Consent advances to version 4, so installations that enabled sharing must enable it again after reviewing the new recipient. The previous `nixb.duckdns.org:58443` recipient is retired.
