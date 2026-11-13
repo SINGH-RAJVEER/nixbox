@@ -12,9 +12,9 @@ categories.workspace = true
 description = "Command tree for the separately installed nixbox CLI"
 
 [dependencies]
-nixbox-nix = { path = "../nixbox-nix", version = "0.4.8" }
-nixbox-core = { path = "../nixbox-core", version = "0.4.8" }
-nixbox-config = { path = "../nixbox-config", version = "0.4.8" }
+nixbox-nix = { path = "../nixbox-nix", version = "=0.4.9-nightly.20261113.88" }
+nixbox-core = { path = "../nixbox-core", version = "=0.4.9-nightly.20261113.88" }
+nixbox-config = { path = "../nixbox-config", version = "=0.4.9-nightly.20261113.88" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
