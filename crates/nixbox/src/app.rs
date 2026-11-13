@@ -1606,6 +1606,12 @@ mod tests {
 				});
 				window.render_frame(cx);
 				if page == Page::Settings {
+					app.update(cx, |app, _| {
+						app.keyboard
+							.settings_scroll
+							.scroll_to_item(crate::ui::settings::TERMINAL_SECTION)
+					});
+					window.render_frame(cx);
 					for (id, command) in [
 						(
 							"copy-terminal-tui",
@@ -1626,7 +1632,11 @@ mod tests {
 							Some(command.to_owned())
 						);
 					}
-					app.update(cx, |app, _| app.keyboard.settings_scroll.scroll_to_item(2));
+					app.update(cx, |app, _| {
+						app.keyboard
+							.settings_scroll
+							.scroll_to_item(crate::ui::settings::PRIVACY_SECTION)
+					});
 					window.render_frame(cx);
 					for id in ["telemetry-off", "telemetry-on", "telemetry-preview"] {
 						assert!(
@@ -1812,7 +1822,8 @@ mod tests {
 			assert!(
 				(close.right() - px(1172.)).abs() < px(1.)
 					&& ((close.top() + close.bottom()) / 2. - (first.top() + first.bottom()) / 2.)
-						.abs() < px(1.),
+						.abs()
+						< px(1.),
 				"The close button sits at the right, vertically centered with the tabs: {close:?}"
 			);
 			app.update(cx, |app, cx| {

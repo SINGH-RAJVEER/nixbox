@@ -66,7 +66,8 @@ impl HardwareFilter {
 				"ppdSettings",
 				"main",
 				"battery_detection",
-			]) || under(&["services", "undervolt", "tempBat"])
+			])
+			|| under(&["services", "undervolt", "tempBat"])
 		{
 			(facts.battery, "No battery detected")
 		} else {

@@ -656,10 +656,7 @@ mod tests {
 	async fn ctrl_r_clears_pending_delete_before_opening_vcs_across_search_tabs() {
 		for tab in [Tab::Search, Tab::Flakes, Tab::Installed] {
 			let mut app = test_app();
-			crate::repository::on_result(
-				&mut app,
-				Ok(crate::repository::Outcome::Detected(None, None)),
-			);
+			crate::repository::on_result(&mut app, Ok(crate::repository::Outcome::nothing()));
 			app.tab = tab;
 			*active_input(&mut app).unwrap() = VimInput::new("ripgrep".into());
 			press(&mut app, KeyCode::Char('d')).await;
@@ -682,10 +679,7 @@ mod tests {
 	async fn tab_and_backtab_switch_tabs_and_wrap_through_vcs() {
 		let mut app = test_app();
 		app.input = VimInput::new("abc".into());
-		crate::repository::on_result(
-			&mut app,
-			Ok(crate::repository::Outcome::Detected(None, None)),
-		);
+		crate::repository::on_result(&mut app, Ok(crate::repository::Outcome::nothing()));
 		// Keeps the NixOS tab from evaluating a real configuration.
 		app.nixos.loaded = true;
 
@@ -804,10 +798,7 @@ mod tests {
 				KeyCode::PageDown,
 			] {
 				let mut app = test_app();
-				crate::repository::on_result(
-					&mut app,
-					Ok(crate::repository::Outcome::Detected(None, None)),
-				);
+				crate::repository::on_result(&mut app, Ok(crate::repository::Outcome::nothing()));
 				app.tab = tab;
 				*active_input(&mut app).unwrap() = VimInput::new("ripgrep".into());
 				press(&mut app, KeyCode::Char('d')).await;

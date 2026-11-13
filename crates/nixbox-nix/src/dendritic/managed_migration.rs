@@ -296,8 +296,8 @@ impl Layout {
 					sources
 						.iter()
 						.any(|(name, offset, body)| self.root.join(name) == *file
-							&& line >= *offset && line
-							< offset + body.lines().count()
+							&& line >= *offset
+							&& line < offset + body.lines().count()
 							&& !shared.contains(&(name.clone(), *offset))),
 					"{} imports the managed file for an unselected or shared target; split that import before converting",
 					file.display()

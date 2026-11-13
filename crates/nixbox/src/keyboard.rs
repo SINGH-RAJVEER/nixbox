@@ -509,10 +509,15 @@ impl NixboxApp {
 			Back => true,
 			NextResult | PreviousResult | Activate => {
 				normal
-					&& !other_input && matches!(
-					self.page,
-					Page::Packages | Page::Flakes | Page::Installed | Page::Options | Page::Queue
-				)
+					&& !other_input
+					&& matches!(
+						self.page,
+						Page::Packages
+							| Page::Flakes
+							| Page::Installed
+							| Page::Options
+							| Page::Queue
+					)
 			}
 			Remove | Migrate | MigrateAcross | MigrateAll => {
 				!other_input && self.page == Page::Installed && self.keyboard.mode != Mode::Visual
@@ -1088,7 +1093,12 @@ mod tests {
 		cx.simulate_keystrokes(window, "shift-tab");
 		app.read_with(cx, |app, _| assert_eq!(app.page, Page::Packages));
 		cx.simulate_keystrokes(window, "ctrl-s");
-		app.read_with(cx, |app, _| assert_eq!(app.page, Page::Settings));
+		app.update(cx, |app, _| {
+			assert_eq!(app.page, Page::Settings);
+			app.keyboard
+				.settings_scroll
+				.scroll_to_item(crate::ui::settings::INTERFACE_SECTION);
+		});
 		cx.update_window(window, |_, window, cx| {
 			window.render_frame(cx);
 			assert!(window.within("input-mode").find("Normal mode").visible());

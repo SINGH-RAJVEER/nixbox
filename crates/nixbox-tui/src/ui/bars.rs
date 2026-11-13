@@ -213,7 +213,7 @@ fn context_keys(app: &App) -> &'static str {
 				}
 				Tab::Building => "u update system  tab/shift-tab tabs  ctrl-s settings  esc quit",
 				Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
-				Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
+				Tab::Vcs => crate::repository::hints(app),
 			}
 		}
 		Mode::Browsing => match app.tab {
@@ -274,7 +274,7 @@ fn context_keys(app: &App) -> &'static str {
 			}
 			Tab::Building => "u update system  tab/shift-tab tabs  ctrl-s settings  esc quit",
 			Tab::Queue => "tab/shift-tab tabs  ctrl-s settings  esc quit",
-			Tab::Vcs => "tab/shift-tab tabs  PgUp/PgDn review  alt-←→ pan  esc back/quit",
+			Tab::Vcs => crate::repository::hints(app),
 		},
 	}
 }

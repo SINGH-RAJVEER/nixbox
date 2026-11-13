@@ -6,30 +6,58 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use super::{SPINNER, titled_panel};
 use crate::app::App;
-use nixbox_core::flake_choices;
+use nixbox_core::{FlakeOutputGroup, flake_output_groups};
+use nixbox_nix::flakes::FlakeOutputKind;
 
 pub(super) fn draw_output_picker(f: &mut Frame, app: &App) {
 	let (Some(index), Some(details)) = (app.flake_picker, app.flake_details.as_ref()) else {
 		return;
 	};
-	let choices = flake_choices(details, app.session.engine.config.target);
+	let groups = flake_output_groups(details, app.session.engine.config.target);
+	// Listed in choice order, so the picker index is the `flake_choices` index.
+	let mut rows: Vec<_> = groups
+		.iter()
+		.flat_map(|group| {
+			group
+				.items
+				.iter()
+				.filter_map(move |item| item.choice.map(|choice| (choice, item, group)))
+		})
+		.collect();
+	rows.sort_by_key(|(choice, _, _)| *choice);
+	let width = rows
+		.iter()
+		.map(|(_, item, _)| item.name.chars().count())
+		.max()
+		.unwrap_or(0);
+
 	let screen = f.area();
-	let width = screen.width.min(76);
+	let popup_width = screen.width.min(76);
 	let height = screen
 		.height
 		.saturating_sub(2)
-		.min(choices.len().saturating_add(2) as u16);
+		.min(rows.len().saturating_add(2) as u16);
 	let area = Rect::new(
-		screen.x + screen.width.saturating_sub(width) / 2,
+		screen.x + screen.width.saturating_sub(popup_width) / 2,
 		screen.y + screen.height.saturating_sub(height) / 2,
-		width,
+		popup_width,
 		height,
 	);
 	f.render_widget(Clear, area);
 	let theme = app.theme();
-	let items: Vec<ListItem> = choices
+	let dim = Style::default().add_modifier(Modifier::DIM);
+	let items: Vec<ListItem> = rows
 		.into_iter()
-		.map(|choice| ListItem::new(choice.path))
+		.map(|(_, item, group)| {
+			let mut spans = vec![
+				Span::styled(format!("{:<width$}", item.name), theme.name_style()),
+				Span::styled(format!("  {}", group.title), dim),
+			];
+			if let Some(detail) = &item.detail {
+				spans.push(Span::styled(format!("  {detail}"), dim));
+			}
+			ListItem::new(Line::from(spans))
+		})
 		.collect();
 	let list = List::new(items)
 		.block(titled_panel(
@@ -45,7 +73,6 @@ pub(super) fn draw_output_picker(f: &mut Frame, app: &App) {
 	state.select(Some(index));
 	f.render_stateful_widget(list, area, &mut state);
 }
-
 pub(super) fn draw_flakes_body(f: &mut Frame, area: Rect, app: &App) {
 	let split = Layout::default()
 		.direction(Direction::Horizontal)
@@ -137,8 +164,8 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
 	};
 
 	let description = details.description.as_deref().unwrap_or("(no description)");
+	let target = app.session.engine.config.target;
 	let inputs = list_or_none(&details.inputs);
-	let outputs = list_or_none(&details.outputs);
 	let topics = list_or_none(&details.topics);
 	let pushed = details.pushed_at.as_deref().unwrap_or("unknown");
 	let homepage = details.homepage.as_deref().unwrap_or("none");
@@ -157,37 +184,44 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
 			t.version_style(),
 		)),
 		Line::raw(""),
-		Line::from(vec![
-			Span::styled("ABOUT", t.title_style()),
-			Span::styled("  ", dim),
-			Span::styled(description.to_string(), Style::default()),
-		]),
+		Line::from(Span::raw(description.to_string())),
 		Line::raw(""),
-		Line::from(Span::styled("CAPABILITIES", t.title_style())),
-		Line::from(vec![
-			Span::styled("outputs  ", dim),
-			Span::styled(outputs, t.name_style()),
-		]),
-		Line::from(Span::styled("AVAILABLE OUTPUTS", t.title_style())),
 	];
-	for output in &details.output_entries {
-		lines.push(Line::from(vec![
-			Span::styled(format!("{}  ", output.category()), dim),
-			Span::styled(output.path.clone(), t.name_style()),
-		]));
+
+	let groups = flake_output_groups(details, target);
+	let installable = groups
+		.iter()
+		.flat_map(|group| &group.items)
+		.filter(|item| item.choice.is_some())
+		.count();
+	let summary = match installable {
+		0 => format!("nothing installs into {}", target.title()),
+		1 => format!("1 installs into {}", target.title()),
+		n => format!("{n} install into {}", target.title()),
+	};
+	lines.push(Line::from(vec![
+		Span::styled("OUTPUTS", t.title_style()),
+		Span::styled(format!("  {summary}"), dim),
+	]));
+	for group in &groups {
+		output_group_lines(&mut lines, group, app);
 	}
+
 	lines.extend([
-		Line::from(vec![Span::styled("inputs   ", dim), Span::raw(inputs)]),
-		Line::from(vec![Span::styled("topics   ", dim), Span::raw(topics)]),
 		Line::raw(""),
-		Line::from(Span::styled("SOURCE", t.title_style())),
+		Line::from(Span::styled("REPOSITORY", t.title_style())),
+		Line::from(vec![Span::styled("inputs    ", dim), Span::raw(inputs)]),
+		Line::from(vec![Span::styled("topics    ", dim), Span::raw(topics)]),
 		Line::from(vec![
-			Span::styled("flake    ", dim),
+			Span::styled("flake     ", dim),
 			Span::raw(details.path.clone()),
 		]),
-		Line::from(details.repo_url.clone()),
-		Line::from(Span::styled(format!("updated  {pushed}"), dim)),
-		Line::from(Span::styled(format!("homepage  {homepage}"), dim)),
+		Line::from(vec![
+			Span::styled("url       ", dim),
+			Span::raw(details.repo_url.clone()),
+		]),
+		Line::from(vec![Span::styled("updated   ", dim), Span::raw(pushed)]),
+		Line::from(vec![Span::styled("homepage  ", dim), Span::raw(homepage)]),
 	]);
 	f.render_widget(
 		Paragraph::new(lines)
@@ -196,6 +230,53 @@ fn draw_details(f: &mut Frame, area: Rect, app: &App) {
 			.wrap(Wrap { trim: false }),
 		area,
 	);
+}
+
+/// A group header, then one aligned row per output. Families that cannot be
+/// installed into the active target are dimmed, and the leftover top-level
+/// outputs share a single line.
+fn output_group_lines(lines: &mut Vec<Line<'_>>, group: &FlakeOutputGroup, app: &App) {
+	let t = app.theme();
+	let dim = Style::default().add_modifier(Modifier::DIM);
+	let mut header = vec![
+		Span::styled(format!(" {}", group.title), t.version_style()),
+		Span::styled(format!("  {}", group.items.len()), dim),
+	];
+	if let Some(note) = &group.unavailable {
+		header.push(Span::styled(format!("  ·  {note}"), dim));
+	}
+	lines.push(Line::from(header));
+
+	if group.kind == FlakeOutputKind::Other {
+		let names: Vec<_> = group.items.iter().map(|item| item.name.as_str()).collect();
+		lines.push(Line::from(Span::styled(
+			format!("   {}", names.join("  ·  ")),
+			dim,
+		)));
+		return;
+	}
+
+	let width = group
+		.items
+		.iter()
+		.map(|item| item.name.chars().count())
+		.max()
+		.unwrap_or(0);
+	for item in &group.items {
+		let name_style = if item.choice.is_some() {
+			t.name_style()
+		} else {
+			dim
+		};
+		let mut row = vec![Span::styled(
+			format!("   {:<width$}", item.name),
+			name_style,
+		)];
+		if let Some(detail) = &item.detail {
+			row.push(Span::styled(format!("  {detail}"), dim));
+		}
+		lines.push(Line::from(row));
+	}
 }
 
 fn list_or_none(values: &[String]) -> String {

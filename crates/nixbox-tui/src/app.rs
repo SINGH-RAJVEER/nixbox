@@ -513,7 +513,7 @@ async fn event_loop(
 			Some(build_ev) = build_rx.recv() => {
 				handle_app_event(&mut app, &tx, AppEvent::Build(build_ev));
 			}
-			_ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.nixos.loading || app.nixos.inspecting || app.options_loading() || app.session.is_building() => {
+			_ = spinner_tick.tick(), if app.searching || app.catalog_loading || app.flake_searching || app.flake_detail_loading || app.nixos.loading || app.nixos.inspecting || app.options_loading() || app.session.is_building() || app.repository.busy => {
 				app.spinner_frame = app.spinner_frame.wrapping_add(1);
 			}
 		}
