@@ -7,7 +7,7 @@ let
 			stable = packages."${package}-stable";
 			nightly = packages."${package}-nightly";
 		in
-		stable.version == "0.4.7"
+		stable.version == "0.4.8"
 		&& nightly.version == nightlyVersion
 		&& stable.src != nightly.src
 		&& packages.${package}.drvPath == stable.drvPath
