@@ -11,7 +11,7 @@ mod options;
 mod packages;
 mod queue;
 mod repository;
-mod settings;
+pub(crate) mod settings;
 mod terminal_apps;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};

@@ -49,7 +49,7 @@ The GUI uses [GPUI Kit](https://gpui-kit.com/) components for tabs, buttons, inp
 | Queue | The running rebuild and every op waiting behind it. An op can be dropped before it runs, and Apply now restarts a queue left paused by a cancelled rebuild. |
 | Build | The output of the current or most recent rebuild, with a Cancel button while one runs and an Update system button otherwise. The Build tab shows a spinner while a rebuild runs, and a notification appears when it ends. |
 | Version control | Changed files and their full diff beside an editable commit message, local commits, explicit pushes, and optional GitHub repository creation. |
-| Settings | Input mode, editable keyboard shortcuts, install target, channel, theme, tab labels, the close button, and the configuration directory, saved to `~/.config/nixbox/settings.json`. |
+| Settings | Grouped into sections separated by rules, each noting whether it is shared with the terminal UI and CLI or desktop-only. Nix configuration holds the configuration directory, host or output, install target, channel, and dendritic detection; Interface holds input mode and theme; Desktop window holds tab labels and the close button; then Privacy, Terminal applications, and Keyboard shortcuts. Lock notes appear only while a control is locked. Saved to `~/.config/nixbox/settings.json`. |
 
 Zoom scales text and layout together, carries across theme changes, and resets when the GUI restarts.
 
