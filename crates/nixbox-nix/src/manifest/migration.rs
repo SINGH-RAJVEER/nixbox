@@ -55,7 +55,8 @@ pub fn migrate_flake_file(
 		[option, "nixbox.packages"].into_iter().any(|option| {
 			signature(&render_legacy_flakes(&incoming, option))
 				.ok()
-				.as_ref() == Some(&old_signature)
+				.as_ref()
+				== Some(&old_signature)
 		}),
 		"cannot automatically merge {}: it contains unrecognised edits or incomplete markers; originals were left in place",
 		legacy.display()

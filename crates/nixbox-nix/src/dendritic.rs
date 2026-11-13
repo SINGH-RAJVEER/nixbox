@@ -742,7 +742,8 @@ impl Layout {
 					.homes
 					.iter()
 					.filter(|entry| entry.module == selected.module)
-					.count() == 1,
+					.count()
+					== 1,
 				"shared standalone Home Manager modules require a distinct output module before editing"
 			);
 			return Ok(Some(Self {
@@ -775,7 +776,8 @@ impl Layout {
 				.hosts
 				.iter()
 				.filter(|host| host.module == selected.module)
-				.count() == 1,
+				.count()
+				== 1,
 			"the selected host module is shared by multiple outputs; host-specific attachment is not proven"
 		);
 		let home_user = match user {
@@ -936,7 +938,8 @@ impl Layout {
 							"home-manager",
 							"users",
 							self.require_home()?,
-						] && let Some(reference) = select(value.clone())
+						]
+					&& let Some(reference) = select(value.clone())
 					&& reference.len() == 5
 					&& matches_path(
 						&reference[..4],

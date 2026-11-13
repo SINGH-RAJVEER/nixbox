@@ -227,7 +227,8 @@ mod tests {
 			fs::metadata(&destination)
 				.expect("metadata")
 				.permissions()
-				.mode() & 0o777,
+				.mode()
+				& 0o777,
 			0o600
 		);
 	}

@@ -509,10 +509,15 @@ impl NixboxApp {
 			Back => true,
 			NextResult | PreviousResult | Activate => {
 				normal
-					&& !other_input && matches!(
-					self.page,
-					Page::Packages | Page::Flakes | Page::Installed | Page::Options | Page::Queue
-				)
+					&& !other_input
+					&& matches!(
+						self.page,
+						Page::Packages
+							| Page::Flakes
+							| Page::Installed
+							| Page::Options
+							| Page::Queue
+					)
 			}
 			Remove | Migrate | MigrateAcross | MigrateAll => {
 				!other_input && self.page == Page::Installed && self.keyboard.mode != Mode::Visual

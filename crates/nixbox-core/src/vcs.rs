@@ -664,8 +664,8 @@ impl Vcs {
 							.try_fold(true, |inside, path| {
 								Ok::<_, anyhow::Error>(
 									inside
-										&& path.is_absolute() && resolved_path(path)?
-										.starts_with(&self.root),
+										&& path.is_absolute()
+										&& resolved_path(path)?.starts_with(&self.root),
 								)
 							})?;
 						if diff.trim().is_empty() && contained {
