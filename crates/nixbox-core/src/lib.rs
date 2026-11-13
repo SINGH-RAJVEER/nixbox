@@ -29,7 +29,9 @@ pub mod vcs;
 pub use dendritic_ops::apply_managed_migration;
 pub use engine::{Engine, ImportState, ManagedPackage, scan_externals, scan_target, scope_matches};
 pub use flakes::InstalledFlake;
-pub use op::{FlakeChoice, Op, flake_choices};
+pub use op::{
+	FlakeChoice, FlakeOutputGroup, FlakeOutputItem, Op, flake_choices, flake_output_groups,
+};
 pub use options::{OptionChange, load_options};
 pub use profile::Activation;
 pub use rebuild::{Escalation, HOME_FALLBACK_NOTE, RebuildCommand};

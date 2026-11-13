@@ -1,7 +1,7 @@
 //! The unit of work both front-ends schedule and the engine applies.
 
 use nixbox_config::Target;
-use nixbox_nix::flakes::FlakeDetails;
+use nixbox_nix::flakes::{FlakeDetails, FlakeOutputKind};
 use nixbox_nix::manifest::FlakeOutput;
 use nixbox_nix::search::SearchHit;
 use nixbox_nix::wiring::attr_name;
@@ -61,6 +61,143 @@ pub fn flake_choices(details: &FlakeDetails, scope: Target) -> Vec<FlakeChoice> 
 			}),
 	);
 	choices
+}
+
+/// One family of a flake's outputs, as the detail panes list them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlakeOutputGroup {
+	pub kind: FlakeOutputKind,
+	pub title: String,
+	pub items: Vec<FlakeOutputItem>,
+	/// Why this family cannot be installed into the active target, if it
+	/// cannot.
+	pub unavailable: Option<String>,
+}
+
+/// One output inside a [`FlakeOutputGroup`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlakeOutputItem {
+	/// The attribute name without its family prefix.
+	pub name: String,
+	/// Package name and version, when they add anything to `name`.
+	pub detail: Option<String>,
+	/// The full output path, as [`FlakeChoice::path`] spells it.
+	pub path: String,
+	/// Index into [`flake_choices`] for the same target, when installable.
+	pub choice: Option<usize>,
+}
+
+/// Groups every evaluated output by family: packages first, then modules for
+/// `scope`, then modules for the other target, then everything else. Each
+/// installable item carries its index into [`flake_choices`] so a front-end's
+/// selection and the list it draws cannot drift apart.
+#[must_use]
+pub fn flake_output_groups(details: &FlakeDetails, scope: Target) -> Vec<FlakeOutputGroup> {
+	let choices = flake_choices(details, scope);
+	let choice = |path: &str| choices.iter().position(|choice| choice.path == path);
+	let mut groups = Vec::new();
+
+	if !details.packages.is_empty() {
+		let items = details
+			.packages
+			.iter()
+			.map(|package| {
+				let name = attr_name(&package.attr);
+				let path = format!("packages.{}.{name}", details.system);
+				let detail = match (package.name.as_str(), package.version.as_str()) {
+					("", "") => None,
+					(label, "") if label == name => None,
+					(label, "") => Some(label.to_string()),
+					("", version) => Some(version.to_string()),
+					(label, version) => Some(format!("{label} {version}")),
+				};
+				FlakeOutputItem {
+					choice: choice(&path),
+					name,
+					detail,
+					path,
+				}
+			})
+			.collect();
+		groups.push(FlakeOutputGroup {
+			kind: FlakeOutputKind::Package,
+			title: format!("Packages for {}", details.system),
+			items,
+			unavailable: None,
+		});
+	}
+
+	let module_group = |target: Target| {
+		let prefixes: &[&str] = match target {
+			Target::NixosSystem => &["nixosModules."],
+			Target::HomeManager => &["homeManagerModules.", "homeModules."],
+		};
+		let paths: Vec<(&String, &str)> = details
+			.modules
+			.iter()
+			.filter_map(|path| {
+				prefixes
+					.iter()
+					.find_map(|prefix| path.strip_prefix(prefix))
+					.map(|name| (path, name))
+			})
+			.collect();
+		let items: Vec<FlakeOutputItem> = paths
+			.iter()
+			.map(|(path, name)| {
+				// `homeModules.x` and `homeManagerModules.x` often alias each
+				// other; the bare name alone would not tell them apart.
+				let ambiguous = paths.iter().filter(|(_, other)| other == name).count() > 1;
+				FlakeOutputItem {
+					name: if ambiguous {
+						(*path).clone()
+					} else {
+						(*name).to_string()
+					},
+					detail: None,
+					path: (*path).clone(),
+					choice: choice(path),
+				}
+			})
+			.collect();
+		(!items.is_empty()).then(|| FlakeOutputGroup {
+			kind: match target {
+				Target::NixosSystem => FlakeOutputKind::NixosModule,
+				Target::HomeManager => FlakeOutputKind::HomeManagerModule,
+			},
+			title: format!("{} modules", target.title()),
+			items,
+			unavailable: (target != scope)
+				.then(|| format!("Switch the target to {} to install", target.title())),
+		})
+	};
+	let other = match scope {
+		Target::NixosSystem => Target::HomeManager,
+		Target::HomeManager => Target::NixosSystem,
+	};
+	groups.extend(module_group(scope));
+	groups.extend(module_group(other));
+
+	let rest: Vec<FlakeOutputItem> = details
+		.output_entries
+		.iter()
+		.filter(|entry| entry.kind == FlakeOutputKind::Other)
+		.map(|entry| FlakeOutputItem {
+			name: entry.path.clone(),
+			detail: None,
+			path: entry.path.clone(),
+			choice: None,
+		})
+		.collect();
+	if !rest.is_empty() {
+		groups.push(FlakeOutputGroup {
+			kind: FlakeOutputKind::Other,
+			title: "Other outputs".into(),
+			items: rest,
+			unavailable: Some("Not installable from here".into()),
+		});
+	}
+	groups
 }
 
 /// A single pending change to the user's configuration.
@@ -318,9 +455,9 @@ impl Op {
 
 #[cfg(test)]
 mod tests {
-	use super::{Op, flake_choices};
+	use super::{Op, flake_choices, flake_output_groups};
 	use nixbox_config::Target;
-	use nixbox_nix::flakes::{FlakeDetails, FlakePackage};
+	use nixbox_nix::flakes::{FlakeDetails, FlakeOutputEntry, FlakeOutputKind, FlakePackage};
 	use nixbox_nix::search::SearchHit;
 
 	fn hit(attr: &str) -> SearchHit {
@@ -515,6 +652,44 @@ mod tests {
 				.iter()
 				.any(|choice| choice.path.starts_with("nixosModules."))
 		);
+	}
+
+	#[test]
+	fn output_groups_point_installable_rows_at_their_choice() {
+		let mut flake = details(&["default"], Some("nixosModules.default"));
+		flake.modules.push("homeModules.default".into());
+		flake.modules.push("homeManagerModules.default".into());
+		flake.output_entries.push(FlakeOutputEntry {
+			path: "devShells".into(),
+			kind: FlakeOutputKind::Other,
+		});
+
+		let groups = flake_output_groups(&flake, Target::HomeManager);
+		let titles: Vec<_> = groups.iter().map(|group| group.title.as_str()).collect();
+		assert_eq!(
+			titles,
+			[
+				"Packages for x86_64-linux",
+				"Home Manager modules",
+				"NixOS modules",
+				"Other outputs",
+			]
+		);
+		assert_eq!(groups[0].items[0].detail.as_deref(), Some("bun 1.4.2"));
+
+		let choices = flake_choices(&flake, Target::HomeManager);
+		for item in groups.iter().flat_map(|group| &group.items) {
+			match item.choice {
+				Some(index) => assert_eq!(choices[index].path, item.path),
+				None => assert!(!choices.iter().any(|choice| choice.path == item.path)),
+			}
+		}
+		// Aliased Home Manager module families keep their full paths.
+		assert_eq!(groups[1].items[0].name, "homeModules.default");
+		assert!(groups[1].unavailable.is_none());
+		assert_eq!(groups[2].items[0].name, "default");
+		assert!(groups[2].unavailable.is_some());
+		assert_eq!(groups[3].items[0].choice, None);
 	}
 
 	#[test]

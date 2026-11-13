@@ -9,8 +9,8 @@ use gpui_kit::{
 	StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 use nixbox_config::Target;
-use nixbox_core::flake_choices;
-use nixbox_nix::flakes::FlakeDetails;
+use nixbox_core::{FlakeOutputGroup, flake_output_groups};
+use nixbox_nix::flakes::{FlakeDetails, FlakeOutputKind};
 
 use super::{empty, muted, page_header, section};
 use crate::app::NixboxApp;
@@ -76,11 +76,11 @@ pub fn render(app: &mut NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 						h_flex()
 							.gap_1()
 							.when(packages > 0, |tags| {
-								tags.child(
-									Tag::secondary()
-										.xsmall()
-										.child(format!("{packages} package(s)")),
-								)
+								tags.child(Tag::secondary().xsmall().child(if packages == 1 {
+									"1 package".to_string()
+								} else {
+									format!("{packages} packages")
+								}))
 							})
 							.when(
 								hit.modules
@@ -152,8 +152,24 @@ fn render_details(
 	keyboard: &crate::keyboard::Keyboard,
 	cx: &mut Context<NixboxApp>,
 ) -> impl IntoElement {
-	let choices = flake_choices(details, target);
-	let choice_count = choices.len();
+	let groups = flake_output_groups(details, target);
+	let installable = groups
+		.iter()
+		.flat_map(|group| &group.items)
+		.filter(|item| item.choice.is_some())
+		.count();
+	let action = match installable {
+		0 => muted(format!("Nothing here installs into {}", target.title()), cx).into_any_element(),
+		1 => Button::new("install-flake")
+			.primary()
+			.icon(IconName::Plus)
+			.label(format!("Install into {}", target.label()))
+			.on_click(cx.listener(|this, _, window, cx| this.install_flake(window, cx)))
+			.into_any_element(),
+		n => muted(format!("{n} outputs install into {}", target.title()), cx).into_any_element(),
+	};
+	let highlighted = picker_open.then_some(keyboard.choice);
+
 	v_flex()
 		.id("flake-details")
 		.track_scroll(&keyboard.details_scroll)
@@ -183,45 +199,14 @@ fn render_details(
 							cx,
 						)),
 				)
-				.child(
-					Button::new("install-flake")
-						.primary()
-						.icon(IconName::Plus)
-						.label(if choice_count > 1 {
-							"Choose output".to_string()
-						} else {
-							format!("Install into {}", target.label())
-						})
-						.on_click(
-							cx.listener(|this, _, window, cx| this.install_flake(window, cx)),
-						),
-				),
+				.child(action),
 		)
-		.when(picker_open && choice_count > 0, |panel| {
-			panel
-				.child(section("Installable outputs", choice_count, cx))
-				.children(choices.into_iter().enumerate().map(|(index, choice)| {
-					let path = choice.path;
-					h_flex()
-						.px_6()
-						.py_1()
-						.when(keyboard.choice == index, |row| {
-							row.bg(cx.theme().list_active)
-						})
-						.child(
-							Button::new(format!("install-flake-output-{index}"))
-								.label(path.clone())
-								.on_click(cx.listener(move |this, _, window, cx| {
-									this.install_flake_choice(&path, window, cx);
-								})),
-						)
-				}))
-		})
 		.child(
 			h_flex()
 				.px_6()
 				.pt_2()
 				.gap_2()
+				.flex_wrap()
 				.child(
 					Tag::secondary()
 						.xsmall()
@@ -238,28 +223,99 @@ fn render_details(
 						.map(|topic| Tag::secondary().outline().xsmall().child(topic.clone())),
 				),
 		)
-		.child(section(
-			"Available outputs",
-			details.output_entries.len(),
-			cx,
-		))
-		.children(details.output_entries.iter().map(|output| {
+		.children(
+			groups
+				.iter()
+				.map(|group| render_group(group, highlighted, cx)),
+		)
+		.when(!details.inputs.is_empty(), |panel| {
+			panel
+				.child(section("Inputs", details.inputs.len(), cx))
+				.child(
+					h_flex().px_6().gap_1().flex_wrap().children(
+						details
+							.inputs
+							.iter()
+							.map(|input| Tag::secondary().outline().xsmall().child(input.clone())),
+					),
+				)
+		})
+}
+
+/// One output family: a header, then a row per output with an Install
+/// button when it fits the active target. Leftover top-level outputs, which
+/// nothing can install, collapse into a line of tags.
+fn render_group(
+	group: &FlakeOutputGroup,
+	highlighted: Option<usize>,
+	cx: &mut Context<NixboxApp>,
+) -> AnyElement {
+	let header = section(group.title.clone(), group.items.len(), cx).when_some(
+		group.unavailable.clone(),
+		|header, note| {
+			header.child(
+				div()
+					.font_weight(FontWeight::NORMAL)
+					.child(format!("· {note}")),
+			)
+		},
+	);
+	if group.kind == FlakeOutputKind::Other {
+		return v_flex()
+			.child(header)
+			.child(
+				h_flex().px_6().gap_1().flex_wrap().children(
+					group
+						.items
+						.iter()
+						.map(|item| Tag::secondary().outline().xsmall().child(item.name.clone())),
+				),
+			)
+			.into_any_element();
+	}
+
+	let (active, muted_color) = (cx.theme().list_active, cx.theme().muted_foreground);
+	v_flex()
+		.child(header)
+		.children(group.items.iter().map(|item| {
+			let choice = item.choice;
 			h_flex()
 				.px_6()
 				.py_1()
-				.gap_2()
+				.gap_3()
+				.items_center()
+				.when(choice.is_some() && choice == highlighted, |row| {
+					row.bg(active)
+				})
 				.child(
-					div()
-						.font_weight(FontWeight::MEDIUM)
-						.child(output.path.clone()),
+					h_flex()
+						.flex_1()
+						.min_w_0()
+						.gap_2()
+						.child(
+							div()
+								.font_weight(FontWeight::MEDIUM)
+								.when(choice.is_none(), |name| name.text_color(muted_color))
+								.child(item.name.clone()),
+						)
+						.when_some(item.detail.clone(), |row, detail| {
+							row.child(muted(detail, cx))
+						}),
 				)
-				.child(muted(output.category(), cx))
+				.when_some(choice, |row, index| {
+					let path = item.path.clone();
+					row.child(
+						Button::new(("install-flake-output", index))
+							.small()
+							.ghost()
+							.icon(IconName::Plus)
+							.label("Install")
+							.tooltip(path.clone())
+							.on_click(cx.listener(move |this, _, window, cx| {
+								this.install_flake_choice(&path, window, cx);
+							})),
+					)
+				})
 		}))
-		.child(section("Inputs", details.inputs.len(), cx))
-		.children(
-			details
-				.inputs
-				.iter()
-				.map(|input| h_flex().px_6().py_1().child(muted(input.clone(), cx))),
-		)
+		.into_any_element()
 }
