@@ -86,7 +86,7 @@ impl Tab {
 
 #[derive(Debug, Clone)]
 pub(crate) enum AppEvent {
-	Repository(std::result::Result<crate::repository::Outcome, String>),
+	Repository(Box<std::result::Result<crate::repository::Outcome, String>>),
 	Nixos(crate::nixos::Event),
 	SearchDone {
 		epoch: u64,

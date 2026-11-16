@@ -23,7 +23,7 @@ pub(super) fn draw_search_bar(f: &mut Frame, area: Rect, app: &App) {
 		Tab::Installed => (&app.installed_input, "search installed applications"),
 		Tab::Nixos => (
 			&app.nixos_input,
-			"search NixOS options by path or description",
+			"/ searches NixOS settings and option paths",
 		),
 		_ => (&app.input, "search nixpkgs"),
 	};
@@ -205,9 +205,7 @@ fn context_keys(app: &App) -> &'static str {
 				Tab::Installed => {
 					"type to filter  ↑↓ results  ↵ options  tab/shift-tab tabs  ctrl-s settings"
 				}
-				Tab::Nixos => {
-					"type to search  ↑↓ move  ↵ inspect  alt-←→ category  ctrl-t host  ctrl-d diagnostic"
-				}
+				Tab::Nixos => crate::nixos::hints(app),
 				Tab::Building if app.session.is_building() => {
 					"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 				}
@@ -258,17 +256,7 @@ fn context_keys(app: &App) -> &'static str {
 					"h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
 				}
 			},
-			Tab::Nixos => match app.nixos_input.mode() {
-				VimMode::Insert => {
-					"type to search  ↑↓ move  ↵ inspect  alt-←→ category  esc normal"
-				}
-				VimMode::Normal => {
-					"j/k move  ↵ inspect  [ ] category  ctrl-t host  ctrl-d diagnostic  r reload  i search"
-				}
-				VimMode::Visual => {
-					"h/l/w/b select  d/x delete  c change  esc normal  ctrl-s settings"
-				}
-			},
+			Tab::Nixos => crate::nixos::hints(app),
 			Tab::Building if app.session.is_building() => {
 				"c cancel build  tab/shift-tab tabs  ctrl-s settings  esc quit"
 			}

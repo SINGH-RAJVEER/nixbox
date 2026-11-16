@@ -14,7 +14,7 @@ NixOS changes run through `sudo nixos-rebuild switch`, so the active terminal mu
 
 This guide covers the separately installed terminal UI, opened with `nixbox-tui`. It does not include CLI subcommands or install `nixbox` or `nb`. The desktop front-end, opened with `nixbox-gui` or the application menu, is described in [Desktop GUI](GUI.md). See [Terminal applications](TERMINAL_APPS.md) to install the TUI or CLI from the flake.
 
-Both front-ends have a NixOS settings browser for host-wide declarations, category search, nested option templates, and current values. The desktop page also edits simple settings of the `nixos` host, such as booleans, choices, strings, numbers, and string lists, and applies them as one NixOS rebuild; the terminal tab is read-only. The host selector never changes the install target. Package-specific options remain editable through the existing Options page. See [NixOS](#nixos) for the terminal tab and [NixOS settings browser](GUI.md#nixos-settings-browser) for the desktop page.
+Both front-ends have NixOS settings pages that name common host-wide options in plain words, a namespace tree over the whole schema, and one search across both. They edit simple settings of the `nixos` host, such as booleans, choices, strings, numbers, and string lists, and apply them as one NixOS rebuild. The host selector never changes the install target. Package-specific options remain editable through the existing Options page. See [NixOS](#nixos) for the terminal tab and [NixOS settings browser](GUI.md#nixos-settings-browser) for the desktop page.
 
 ## Starting NixBox
 
@@ -64,24 +64,37 @@ Press `Enter` on a managed or external package to open its options panel. The pa
 
 ### NixOS
 
-Choose **Configured options** with the category keys to list settings detected in the selected host's saved configuration and imported modules. Its count follows the search, and configured diagnostic options stay included. Structured settings appear under their parent option, rather than as concrete instances of nested schema templates. Reload after saving external configuration changes.
+The NixOS tab configures a host from the configuration flake's `nixosConfigurations` outputs. It reads the hosts the first time you open the tab, then picks `nixos` when it exists or the only host when there is one. A header line names the host and configuration directory, and on the right the staged edits. Below it are the pages pane and the open view. Terminals narrower than 100 columns show one pane at a time.
+
+The pages pane lists **Overview**, the System and Software settings pages, **Changed**, and **All options**. A settings page names common options in plain words, grouped into sections, with each value inline: `[x] on` or `[ ] off` for booleans, the text or number otherwise, and `old → new` for a staged edit. Opening a page reads its values in one evaluation. A strip below the list describes the highlighted setting; `d` expands it with the default, example, and source files. Settings your own files define, or that the editor cannot write, are marked locked with the reason.
+
+`Space` toggles a boolean. `Enter` opens an editor: a list of choices for enumerations and nullable booleans, or a text field for strings, numbers, and comma-separated string lists. Editing only stages the value. `R` opens a review of every staged change with the settings it generates, and `Enter` or `a` there applies them; `a` also applies directly. Staged edits are queued as one NixOS settings operation, written to `nixbox-system-settings.nix` and applied by the next NixOS rebuild. Editing is available only for the `nixos` host; other hosts are read-only and the header says so.
+
+**Changed** lists settings with staged or queued edits. **All options** is a namespace tree over the whole schema with each namespace's option count, beside the highlighted option's details. `Right` opens a namespace; `Left` closes it or returns to its parent. `Enter` on an option reads its value, then edits it. `c` limits the tree to settings detected in the selected host's saved configuration and imported modules.
+
+`/` focuses the search bar. Results replace the view: settings by label and description first, then option paths and descriptions, with exact paths first. `Enter` opens a setting on its page, or an option in All options with the tree expanded to it.
 
 Press `Alt-H` to link this machine's hardware to the selected host. Hardware filtering then hides settings known to require absent devices. Press `Alt-A` to show all hardware options, or `Alt-H` again to unlink. The association lasts for the session and clears when switching hosts or configuration directories. Configured options and uncertain hardware stay visible. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
 
-The NixOS tab browses the option schema of a host from the configuration flake's `nixosConfigurations` outputs. It reads the hosts the first time you open the tab, then picks `nixos` when it exists or the only host when there is one. A header line names the host and configuration directory. Below it are categories with their match counts, the matching options, and the selected option's details. Terminals narrower than 110 columns hide the category column and name the category in the list title.
-
-The search field matches option paths and descriptions, with exact paths first. Inspecting an option evaluates its effective value, default, example, and definition files, so it runs only when you press `Enter`. The tab is read-only and never changes the install target or queues work. A finished rebuild invalidates the schema, which reloads the next time the tab is open.
+The tab never changes the install target. A finished rebuild invalidates the schema, which reloads the next time the tab is open.
 
 | Key | Action |
 | --- | --- |
-| `Up`, `Down`, or `j`, `k` in Vim Normal mode | Move through options. |
-| `Enter` | Inspect the selected option. |
-| `Alt-Left`, `Alt-Right`, or `[`, `]` in Vim Normal mode | Previous or next category. |
+| `Up`, `Down`, or `j`, `k` | Move through pages, settings, or results. |
+| `Enter`, `Right`, or `l` in the pages pane | Open the highlighted page. |
+| `Esc`, `Left`, or `h` | Return to the pages pane. `Esc` there quits as on other tabs. |
+| `Space` | Toggle a boolean. |
+| `Enter` | Edit the highlighted setting, or open a namespace. |
+| `u` | Drop a staged edit, or stage removing nixbox's own value. |
+| `R`, `a`, `x` | Review, apply, or discard the staged edits. |
+| `/` or `Ctrl-K` | Search settings and options. |
+| `d` | Expand or collapse the details. |
+| `c` | Configured options only, in All options. |
 | `Ctrl-T` | Next host. |
 | `Ctrl-D` | Show or hide diagnostic options. |
 | `Alt-H` | Use this machine's hardware for the selected host, or unlink it. |
 | `Alt-A` | Show all hardware options, or restore relevance filtering. |
-| `Ctrl-L`, or `r` in Vim Normal mode | Reload hosts and the schema. |
+| `Ctrl-L` or `r` | Reload hosts and the schema. |
 | `PageUp`, `PageDown` | Scroll the details. |
 
 ### Building

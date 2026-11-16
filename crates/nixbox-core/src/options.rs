@@ -91,6 +91,19 @@ pub fn locked_reason(entry: &OptionEntry) -> Option<String> {
 	}
 }
 
+/// A value as a text editor shows it, the inverse of [`parse_text`]. Values
+/// a text editor cannot hold read as empty.
+#[must_use]
+pub fn edit_text(value: Option<&SettingValue>) -> String {
+	match value {
+		Some(SettingValue::Str(text)) => text.clone(),
+		Some(SettingValue::Int(number)) => number.to_string(),
+		Some(SettingValue::Float(number)) => number.to_string(),
+		Some(SettingValue::StrList(items)) => items.join(", "),
+		_ => String::new(),
+	}
+}
+
 /// The values a choice editor offers for `kind`, `null` first when the
 /// option accepts it.
 pub fn choices(kind: &OptionKind) -> Vec<SettingValue> {
