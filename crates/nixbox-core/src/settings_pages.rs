@@ -1287,6 +1287,19 @@ pub struct Shown {
 	pub description: &'static str,
 }
 
+/// The documentation a setting shows: the description its NixOS module
+/// declares, as plain text, or `curated` when the module has none.
+#[must_use]
+pub fn documentation(option: &SystemOption, curated: Option<&str>) -> Option<String> {
+	option
+		.description
+		.as_deref()
+		.map(str::trim)
+		.filter(|text| !text.is_empty())
+		.map(crate::options::plain_markdown)
+		.or_else(|| curated.map(str::to_string))
+}
+
 /// A section with the entries this host declares.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShownSection {

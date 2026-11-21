@@ -186,9 +186,72 @@ pub fn format_value(value: Option<&Value>) -> String {
 	}
 }
 
-/// Drops the module system's role markers, such as `{option}` and
-/// `{manpage}`, that prefix a backticked name in descriptions.
+/// Turns an option description's Markdown into plain text: drops the
+/// module system's role markers, such as `{option}` and `{manpage}`, that
+/// prefix a backticked name, replaces links with their text, and turns
+/// admonition fences such as `::: {.note}` into a "Note:" line.
 pub fn plain_markdown(text: &str) -> String {
+	text.lines()
+		.filter_map(|line| match line.trim().strip_prefix(":::") {
+			Some(kind) => admonition(kind),
+			None => Some(unwrap_links(&drop_roles(line))),
+		})
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
+/// `::: {.warning}` opens a "Warning:" block; a bare `:::` closes one.
+fn admonition(kind: &str) -> Option<String> {
+	let kind = kind
+		.trim()
+		.trim_start_matches('{')
+		.trim_end_matches('}')
+		.trim_start_matches('.')
+		.trim();
+	let mut chars = kind.chars();
+	let first = chars.next()?;
+	Some(format!("{}{}:", first.to_uppercase(), chars.as_str()))
+}
+
+/// `[text](url)` becomes its text, with a web address kept in parentheses.
+/// An empty link names the option it points at, as the manual renders it.
+fn unwrap_links(text: &str) -> String {
+	let mut out = String::with_capacity(text.len());
+	let mut rest = text;
+	while let Some(open) = rest.find('[') {
+		out.push_str(&rest[..open]);
+		let after = &rest[open + 1..];
+		let link = after.find("](").and_then(|middle| {
+			let label = &after[..middle];
+			let target = &after[middle + 2..];
+			let close = target.find(')')?;
+			(!label.contains('[')).then_some((label, &target[..close], middle + 2 + close + 1))
+		});
+		match link {
+			Some((label, url, end)) => {
+				if label.is_empty() {
+					out.push_str(url.strip_prefix("#opt-").unwrap_or(url));
+				} else {
+					out.push_str(label);
+					if url.starts_with("http") && url != label {
+						out.push_str(" (");
+						out.push_str(url);
+						out.push(')');
+					}
+				}
+				rest = &after[end..];
+			}
+			None => {
+				out.push('[');
+				rest = after;
+			}
+		}
+	}
+	out.push_str(rest);
+	out
+}
+
+fn drop_roles(text: &str) -> String {
 	let mut out = String::with_capacity(text.len());
 	let mut rest = text;
 	while let Some(open) = rest.find('{') {
@@ -375,6 +438,16 @@ mod tests {
 		assert_eq!(
 			plain_markdown("See {manpage}`gitattributes(5)`, not { x } or {a}b."),
 			"See `gitattributes(5)`, not { x } or {a}b."
+		);
+	}
+
+	#[test]
+	fn descriptions_lose_links_and_admonition_fences() {
+		assert_eq!(
+			plain_markdown(
+				"Uses [](#opt-services.xserver.enable) and [the wiki](https://wiki.nixos.org).\n::: {.note}\nSee [a] b.\n:::"
+			),
+			"Uses services.xserver.enable and the wiki (https://wiki.nixos.org).\nNote:\nSee [a] b."
 		);
 	}
 }
