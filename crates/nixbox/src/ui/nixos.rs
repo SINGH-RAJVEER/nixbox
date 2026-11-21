@@ -25,9 +25,9 @@ use gpui_kit::{
 	uniform_list,
 };
 use nixbox_config::Target;
-use nixbox_core::options::{NIXOS_HOST, choices, plain_markdown};
+use nixbox_core::options::{NIXOS_HOST, choices};
 use nixbox_core::settings_pages::{
-	PageGroup, SettingsPage, TreeRow, View, curated, label_for, tree_label,
+	PageGroup, SettingsPage, TreeRow, View, curated, documentation, label_for, tree_label,
 };
 use nixbox_core::system_options::{Category, lock_note, option_tags, partial_note, value_text};
 use nixbox_nix::options::OptionKind;
@@ -632,9 +632,7 @@ fn setting(
 		(None, None)
 	};
 	let lock = editing.and_then(|editing| app.nixos.lock(editing));
-	let description = label
-		.map(|(_, description)| description.to_string())
-		.or_else(|| option.description.as_deref().map(plain_markdown));
+	let description = documentation(option, label.map(|(_, description)| description));
 	let mut text = v_flex()
 		.flex_1()
 		.min_w_0()
@@ -876,7 +874,14 @@ fn search_results(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 							.flex_1()
 							.min_w_0()
 							.child(div().font_weight(FontWeight::MEDIUM).child(shown.label))
-							.child(muted(shown.description, cx)),
+							.children(
+								app.nixos
+									.option(&shown.path)
+									.and_then(|option| {
+										documentation(option, Some(shown.description))
+									})
+									.map(|text| muted(text, cx).line_clamp(2)),
+							),
 					)
 					.child(Tag::secondary().xsmall().child(page.label()))
 					.test_support(),
@@ -1187,12 +1192,7 @@ fn details(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				.py_3()
 				.gap_1()
 				.child(name_line(option, None, None, cx))
-				.children(
-					option
-						.description
-						.as_ref()
-						.map(|text| div().text_sm().child(plain_markdown(text))),
-				),
+				.children(documentation(option, None).map(|text| div().text_sm().child(text))),
 		);
 	} else {
 		for (index, path) in app.nixos.group.iter().enumerate() {

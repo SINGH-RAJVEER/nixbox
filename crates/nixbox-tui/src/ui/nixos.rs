@@ -4,8 +4,9 @@
 //! the highlighted option's details. Narrow terminals show one pane at a
 //! time.
 
-use nixbox_core::options::plain_markdown;
-use nixbox_core::settings_pages::{PageGroup, SettingsPage, TreeRow, View, label_for, tree_label};
+use nixbox_core::settings_pages::{
+	PageGroup, SettingsPage, TreeRow, View, curated, documentation, label_for, tree_label,
+};
 use nixbox_core::system_options::{lock_note, option_tags, partial_note, value_text};
 use nixbox_nix::options::OptionKind;
 use nixbox_nix::settings::{SettingValue, option_path_display};
@@ -438,7 +439,7 @@ fn draw_settings(f: &mut Frame, area: Rect, app: &App) {
 			"Staged edits, and edits queued for the next NixOS rebuild.",
 		),
 	};
-	let strip = if panel.details_open { 18 } else { 6 };
+	let strip = if panel.details_open { 22 } else { 7 };
 	let block = content_block(app, title.into());
 	let inner = block.inner(area);
 	f.render_widget(block, area);
@@ -503,8 +504,28 @@ fn draw_settings(f: &mut Frame, area: Rect, app: &App) {
 	draw_strip(f, parts[1], app);
 }
 
-/// The highlighted setting's path, type, description, and its keys; with
-/// `d` it grows to show the default, example, and sources.
+/// A paragraph's lines joined into one, up to the first blank line.
+fn first_paragraph(text: &str) -> String {
+	text.lines()
+		.map(str::trim)
+		.take_while(|line| !line.is_empty())
+		.collect::<Vec<_>>()
+		.join(" ")
+}
+
+/// `text` cut to `limit` characters, ending in an ellipsis when cut.
+fn clip(text: &str, limit: usize) -> String {
+	if text.chars().count() <= limit {
+		return text.to_string();
+	}
+	let mut out: String = text.chars().take(limit.saturating_sub(1)).collect();
+	out.push('…');
+	out
+}
+
+/// The highlighted setting's path, type, documentation, and its keys; with
+/// `d` it grows to show the full documentation, default, example, and
+/// sources.
 fn draw_strip(f: &mut Frame, area: Rect, app: &App) {
 	let t = app.theme();
 	let dim = Style::default().add_modifier(Modifier::DIM);
@@ -526,8 +547,18 @@ fn draw_strip(f: &mut Frame, area: Rect, app: &App) {
 		Span::styled(format!("   {}", option_path_display(&path)), t.name_style()),
 		Span::styled(format!("   {}", option.type_description), dim),
 	]));
-	if let Some(description) = &option.description {
-		lines.push(Line::raw(format!(" {}", plain_markdown(description))));
+	let curated = curated(&path).map(|(_, _, entry)| entry.description);
+	if let Some(text) = documentation(option, curated) {
+		if panel.details_open {
+			lines.extend(text.lines().map(|line| Line::raw(format!(" {line}"))));
+		} else {
+			// The first paragraph, with slack for word wrapping to fit two rows; `d` shows the rest.
+			let width = (area.width as usize).saturating_sub(12) * 2;
+			lines.push(Line::raw(format!(
+				" {}",
+				clip(&first_paragraph(&text), width)
+			)));
+		}
 	}
 	let editing = panel.editing(&path);
 	if let Some(editing) = editing
@@ -685,11 +716,10 @@ fn draw_option(f: &mut Frame, area: Rect, app: &App) {
 			Span::styled(format!("  {}", tags.join(" · ")), dim),
 		]),
 	];
-	if let Some(description) = &option.description {
+	let curated = curated(&option.path).map(|(_, _, entry)| entry.description);
+	if let Some(text) = documentation(option, curated) {
 		lines.push(Line::raw(""));
-		for line in description.lines() {
-			lines.push(Line::raw(plain_markdown(line)));
-		}
+		lines.extend(text.lines().map(|line| Line::raw(line.to_string())));
 	}
 	if let Some(note) = partial_note(option) {
 		lines.push(Line::from(Span::styled(note, dim)));
