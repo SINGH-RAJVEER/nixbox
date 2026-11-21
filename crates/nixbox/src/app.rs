@@ -131,6 +131,9 @@ pub struct NixboxApp {
 	pub nixos_filter: Entity<InputState>,
 	/// The value field for the selected NixOS option's text editor.
 	pub nixos_input: Entity<InputState>,
+	/// Set when the selected NixOS value arrives, so the next frame puts it
+	/// in the text field.
+	pub nixos_input_dirty: bool,
 	/// The configuration directory field on the Settings page.
 	pub config_dir_input: Entity<InputState>,
 
@@ -159,9 +162,8 @@ impl NixboxApp {
 		let options_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter options"));
 		let option_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
 		let nixos_input = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
-		let nixos_filter = cx.new(|cx| {
-			InputState::new(window, cx).placeholder("Search NixOS option paths and descriptions")
-		});
+		let nixos_filter =
+			cx.new(|cx| InputState::new(window, cx).placeholder("Search settings and options"));
 		let config_dir_input = cx.new(|cx| {
 			let mut input =
 				InputState::new(window, cx).placeholder("Path to your configuration flake");
@@ -345,6 +347,7 @@ impl NixboxApp {
 			nixos: crate::nixos::NixosView::default(),
 			nixos_filter,
 			nixos_input,
+			nixos_input_dirty: false,
 			config_dir_input,
 			_build_events: build_events,
 			_build_clock: build_clock,

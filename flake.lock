@@ -41,16 +41,16 @@
     "stable-source": {
       "flake": false,
       "locked": {
-        "lastModified": 1794588411,
-        "narHash": "sha256-ikM9nhLIpZ27SNGfyQ/Bt82jSP2CSkeAjNO6Xpf4aFM=",
+        "lastModified": 1794857976,
+        "narHash": "sha256-rr1BnxQexDOajpEvpyyApkYKeJSrWbM/nENHr6uAzdQ=",
         "owner": "SINGH-RAJVEER",
         "repo": "nixbox",
-        "rev": "d37da1bbb32ab0b0c60fa28a0379a6c89a29703b",
+        "rev": "c779fe6f9310f0f18e309814bfdde9055cfc0bc5",
         "type": "github"
       },
       "original": {
         "owner": "SINGH-RAJVEER",
-        "ref": "source-v0.4.8",
+        "ref": "source-v0.5.0",
         "repo": "nixbox",
         "type": "github"
       }

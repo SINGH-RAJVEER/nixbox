@@ -8,11 +8,11 @@ Status: implementation started on 2026-10-10. Prepared on 2026-10-05 in the `nix
 
 The first milestone adds a read-only NixOS tab with independent host selection, category and description search, diagnostic-option visibility, virtualized rows, and lazy value/default/example/provenance inspection. Package Options and the operation queue retain their existing behavior. Inspection state stays available across tab switches and is invalidated after rebuilds or a configuration-directory change. Reload refreshes the host list and schema. Inspection alone never writes settings; only queued edits, described below, do.
 
-Both front-ends share the browser's policy through `nixbox-core::system_options`: the category taxonomy, search ranking with per-category counts, default host choice, and the wording of inspection results. The desktop page shows the NixOS logo with a header, a category sidebar, the option list, and details grouped into Value and Source. The terminal has a matching NixOS tab with the same columns, which loads on first visit and inspects only on `Enter`.
+Both front-ends share the browser's policy through `nixbox-core::system_options` and `nixbox-core::settings_pages`: curated settings pages, the namespace tree, search across curated settings and the schema, default host choice, staging, and the wording of inspection results and locks. Curated entries list candidate paths newest first and resolve to the first ordinary option the host declares; hidden aliases, templates, and fields nested in a submodule are left to search and the tree. The desktop page has a sidebar with the host menu, search, and the views (Overview, eleven settings pages, Changed, All options), and a status bar with Update, Discard, Review, and Apply. The terminal has a matching pages pane and views, with inline values, edit and review popups, `/` search, and `U` for Update. Each setting shows the description its NixOS module declares, from the host's evaluated option tree; the curated entry's summary is only a fallback for an option without one.
 
-Discovery includes ordinary option declarations and nested schema templates. Expansion stops after four nested submodules and at branches that embed a complete NixOS system, such as container configurations. Those branches remain visible with a partial marker and declaration locations. Concrete named/list instances, complete recursive discovery, source watching, structured-value editing, shared writable host identity, candidate validation, and host-bound queue/recovery records remain to be implemented. Phases 1 and 2 are started, not complete.
+Discovery includes ordinary option declarations and nested schema templates. Expansion stops after four nested submodules and at branches that embed a complete NixOS system, such as container configurations. Those branches remain visible with a partial marker and declaration locations. Concrete named/list instances, reading fields of a single submodule such as `nix.settings.*` or `services.openssh.settings.*` (so curated pages can list them), one-of selectors that write several `enable` paths, complete recursive discovery, source watching, structured-value editing, shared writable host identity, candidate validation, and host-bound queue/recovery records remain to be implemented. Phases 1 and 2 are started, not complete.
 
-The desktop page edits simple types. Selecting an option evaluates its listed siblings in one batched `group` request, which returns each value with its type, highest definition priority, and definition files. `nixbox-core::system_options` decides the group (`sibling_group`, at most `GROUP_LIMIT` paths around the selection) and why an option is locked (`edit_lock`), reusing package options' ownership rules. Editing is limited to the `nixos` host, which the NixOS rebuild applies. Staged edits are queued as one `Op::SetOptions` for the NixOS target, so they share the package options' settings module, queue, review, and recovery. The terminal tab remains read-only.
+Both front-ends edit simple types. Opening a settings page evaluates its paths, at most `GROUP_LIMIT`, in one batched `group` request, and every value read is cached by path until the schema reloads. In All options, selecting an option evaluates its listed siblings in one batched `group` request, which returns each value with its type, highest definition priority, and definition files. `nixbox-core::system_options` decides the group (`sibling_group`, at most `GROUP_LIMIT` paths around the selection) and why an option is locked (`edit_lock`), reusing package options' ownership rules. Editing is limited to the `nixos` host, which the NixOS rebuild applies. Staged edits are queued as one `Op::SetOptions` for the NixOS target, so they share the package options' settings module, queue, review, and recovery.
 
 The live schema fixture runs with `NIXBOX_TEST_NIXPKGS` pointing to a local nixpkgs store source. Run `cargo test -p nixbox-nix live_schema_and_inspection -- --ignored` inside the development shell. It checks disabled services, custom declarations, nested templates, failing metadata/values, null, bounded previews, quoted output names, and credential fields that must not evaluate. The default CI gates also cover the browser's filtering and rendered list visibility.
 
@@ -47,21 +47,23 @@ Use GPUI Kit's native controls, which already implement the application's shadcn
 ```text
 NixBox   nixpkgs | Flakes | Installed | NixOS | Queue | Build | Version control | Settings
 
-NixOS     Host: workstation     Configuration: ~/.config/nixos     Reload
-Search settings...             All | Editable | Changed | Managed | Advanced
+NixOS  Filters  Reload    Desktop and login
+Host nixos             Choose a desktop, how you sign in, and input and printing defaults.
+Search settings
+                       Desktops
+Overview                 GNOME                             The GNOME desktop.          [on ]
+System                   Hyprland                          Install Hyprland.           [off]
+  General and region   Login
+  Network                Automatic login        locked: set in hosts/desktop.nix  Open source
+  Desktop and login 2  Input and printing
+  ...                    Printing     staged    Run CUPS so this machine can print. [on ]
+Software
+  ...
+Advanced
+  Changed            3
+  All options    53112
 
-Categories           Settings                           Selected option
-General              Automatic time zone        Off     services.automatic-timezoned.enable
-Network              Time zone                  ...     Type, description, default, example
-Desktop              Bluetooth                  On      Effective / managed / staged values
-Hardware             ...                                Definition files and editability
-Users                                                   Editor / source action
-Boot and storage
-Services
-Nix
-All options
-
-3 staged changes                                  Discard all | Review changes
+nixos  ~/.config/nixos  53112 options         3 staged changes   Discard  Review  Apply 3
 ```
 
 Preserve selection, filter, category, and staged values when switching tabs. Ctrl-F focuses this tab's search field. Boolean rows may have inline switches; selecting any row opens the full details and explanation of its status. A switch stages a value and visibly marks the row. It never activates a system change on click.

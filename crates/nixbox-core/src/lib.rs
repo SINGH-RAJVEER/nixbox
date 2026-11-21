@@ -20,6 +20,7 @@ pub mod rebuild;
 pub mod report;
 pub mod search;
 pub mod session;
+pub mod settings_pages;
 pub mod state;
 pub mod system_options;
 pub mod telemetry;

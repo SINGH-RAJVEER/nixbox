@@ -176,7 +176,7 @@ just vm-preview                  # build and boot the edited configuration
 
 These recipes seed `.vm/nixos` once from `vm/seed` and `vm/guest.nix`, using the repository's locked nixpkgs revision and the host's Linux architecture. They run the current checkout's binaries with the NixOS target. GUI, TUI, and CLI share that configuration, with separate preferences, recovery state, VCS journals, and caches under `.vm`. Later launches preserve your edits and settings. `.vm` is ignored by version control.
 
-Apply writes the managed files and runs `nix build <configuration>#nixosConfigurations.nixos.config.system.build.vm`, producing `.vm/result`. It needs no sudo. Boot with `just vm-preview`; stop and restart the guest after another Apply to load the rebuilt system. The preview keeps its disk at `.vm/nixos.qcow2`. The NixOS settings browser remains read-only; package installs, package options, and flake modules use the usual apply workflow. This seeded configuration has no Home Manager module.
+Apply writes the managed files and runs `nix build <configuration>#nixosConfigurations.nixos.config.system.build.vm`, producing `.vm/result`. It needs no sudo. Boot with `just vm-preview`; stop and restart the guest after another Apply to load the rebuilt system. The preview keeps its disk at `.vm/nixos.qcow2`. NixOS settings edits, package installs, package options, and flake modules use the usual apply workflow. This seeded configuration has no Home Manager module.
 
 The launchers set `NIXBOX_CONFIG_DIR` and the XDG configuration, cache, data, and state directories. They also set `NIXBOX_VM_BUILD` to the absolute output-link path, so every shared rebuild path, including Home Manager fallback and recovery, builds this VM. See [Configuration](CONFIGURATION.md) for the environment variable.
 
@@ -282,7 +282,7 @@ Do not describe a local commit as pushed. Compare `dev`, `master`, and their rem
 
 ## Release preparation
 
-The flake exposes `nixbox-stable`, `nixbox-tui-stable`, and `nixbox-cli-stable` from the locked `stable-source` input, currently the `source-v0.4.8` snapshot of the `0.4.8` release. `nixbox-nightly`, `nixbox-tui-nightly`, and `nixbox-cli-nightly` build this checkout, currently versioned `0.4.6-nightly.20261025`. Matching app and overlay outputs use the same names. The unsuffixed names select stable, and the default package and app select the stable GUI on Linux. The GUI is unavailable on macOS, where the default remains the stable TUI. VM development and automated VM checks use nightly packages to exercise the checkout.
+The flake exposes `nixbox-stable`, `nixbox-tui-stable`, and `nixbox-cli-stable` from the locked `stable-source` input, currently the `source-v0.5.0` snapshot of the `0.5.0` release. `nixbox-nightly`, `nixbox-tui-nightly`, and `nixbox-cli-nightly` build this checkout, currently versioned `0.4.6-nightly.20261025`. Matching app and overlay outputs use the same names. The unsuffixed names select stable, and the default package and app select the stable GUI on Linux. The GUI is unavailable on macOS, where the default remains the stable TUI. VM development and automated VM checks use nightly packages to exercise the checkout.
 
 Run `nix run .#nixbox-stable` or `nix run .#nixbox-nightly` to choose the GUI channel. Use `nix profile install .#nixbox-cli-nightly` for the nightly CLI. Nightly Cargo GUI launchers select the `nixbox-nightly` output in their exact version tag, so the stable default cannot redirect them to an older GUI.
 

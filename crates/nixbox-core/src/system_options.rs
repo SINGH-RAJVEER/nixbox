@@ -75,14 +75,6 @@ impl Category {
 			.unwrap_or_default()
 	}
 
-	/// The category after this one, wrapping, or before it when `delta` is
-	/// negative.
-	#[must_use]
-	pub fn cycle(self, delta: isize) -> Self {
-		let len = Self::ALL.len() as isize;
-		Self::ALL[(self.index() as isize + delta).rem_euclid(len) as usize]
-	}
-
 	/// The canonical topic category of `option`. Every option has exactly one, and
 	/// anything uncurated lands in [`Category::System`].
 	#[must_use]
@@ -228,17 +220,6 @@ pub fn value_text(value: &InspectedValue) -> String {
 	}
 }
 
-/// Why an option cannot be changed from the terminal browser, which only
-/// inspects.
-#[must_use]
-pub fn access_note(option: &SystemOption) -> &'static str {
-	if option.read_only {
-		"Declared read-only. This setting cannot be changed here."
-	} else {
-		"Inspection only. Edit system settings in the desktop app."
-	}
-}
-
 /// The options the editor shows with `selected`: the siblings under its
 /// parent that the browser lists, in schema order, keeping the nearest
 /// [`GROUP_LIMIT`] when there are more. `selected` is always included.
@@ -300,6 +281,18 @@ pub fn edit_lock(option: &EditableOption) -> Option<String> {
 				.is_none()
 				.then(|| "value too large to edit here".into())
 		}),
+	}
+}
+
+/// A sentence explaining `reason`, the lock [`edit_lock`] reported: values
+/// another file sets are left to that file, anything else is a limit of
+/// this editor.
+#[must_use]
+pub fn lock_note(option: &EditableOption, reason: &str) -> String {
+	if !option.entry.defined_in.is_empty() || option.entry.set_by_module {
+		format!("Locked: {reason}. NixBox will not override it; change it in its source.")
+	} else {
+		format!("Not editable here: {reason}.")
 	}
 }
 
@@ -475,14 +468,6 @@ mod tests {
 			filter_options(&options, "", Category::All, false, &hardware).visible,
 			[0, 1, 2, 4]
 		);
-	}
-
-	#[test]
-	fn categories_cycle_in_both_directions() {
-		assert_eq!(Category::All.cycle(1), Category::Configured);
-		assert_eq!(Category::Configured.cycle(1), Category::General);
-		assert_eq!(Category::All.cycle(-1), Category::System);
-		assert_eq!(Category::System.cycle(1), Category::All);
 	}
 
 	#[test]
