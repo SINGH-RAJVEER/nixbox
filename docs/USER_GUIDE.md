@@ -76,6 +76,8 @@ The pages pane lists **Overview**, the System and Software settings pages, **Cha
 
 Press `Alt-H` to link this machine's hardware to the selected host. Hardware filtering then hides settings known to require absent devices. Press `Alt-A` to show all hardware options, or `Alt-H` again to unlink. The association lasts for the session and clears when switching hosts or configuration directories. Configured options and uncertain hardware stay visible. See [Hardware-aware NixOS settings](HARDWARE_FILTERING.md).
 
+`U` updates every input of the configuration flake and then rebuilds the system, the same update the Building tab runs with `u`. It opens the Building tab while it runs. Staged edits are not part of it and stay staged.
+
 The tab never changes the install target. A finished rebuild invalidates the schema, which reloads the next time the tab is open.
 
 | Key | Action |
@@ -87,6 +89,7 @@ The tab never changes the install target. A finished rebuild invalidates the sch
 | `Enter` | Edit the highlighted setting, or open a namespace. |
 | `u` | Drop a staged edit, or stage removing nixbox's own value. |
 | `R`, `a`, `x` | Review, apply, or discard the staged edits. |
+| `U` | Update: run `nix flake update` on the system flake, then rebuild the system. Staged edits stay staged. |
 | `/` or `Ctrl-K` | Search settings and options. |
 | `d` | Expand or collapse the details. |
 | `c` | Configured options only, in All options. |

@@ -901,6 +901,12 @@ pub(crate) fn handle_key(app: &mut App, tx: &mpsc::Sender<AppEvent>, key: KeyEve
 				apply(app);
 			}
 		}
+		KeyCode::Char('U') => {
+			crate::ops::update_system(app);
+			if app.session.is_building() {
+				app.tab = Tab::Building;
+			}
+		}
 		KeyCode::Char('x') => {
 			let count = app.nixos.staged.len();
 			app.nixos.staged.clear();
@@ -997,14 +1003,14 @@ pub(crate) fn hints(app: &App) -> &'static str {
 		(Some(Popup::Edit(_)), _, _) => "↵ stage  esc cancel",
 		(None, Focus::Search, _) => "type to search  ↑↓ results  ↵ open  esc close",
 		(None, Focus::Pages, _) => {
-			"↑↓/j/k pages  ↵/→ open  / search  R review  a apply  ctrl-t host  tab tabs"
+			"↑↓/j/k pages  ↵/→ open  / search  R review  a apply  U update  ctrl-t host  tab tabs"
 		}
 		(None, Focus::Content, View::AllOptions) => {
 			"←→ fold  ↵ edit  space toggle  c configured  alt-h hardware  ctrl-d diagnostic  esc pages"
 		}
 		(None, Focus::Content, View::Overview) => "↑↓ pages  ↵ open  / search  esc pages",
 		(None, Focus::Content, _) => {
-			"↵ edit  space toggle  u unset  d details  / search  R review  a apply  x discard  esc pages"
+			"↵ edit  space toggle  u unset  d details  / search  R review  a apply  U update  x discard  esc pages"
 		}
 	}
 }

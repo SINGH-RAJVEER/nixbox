@@ -1324,7 +1324,7 @@ fn code(text: String, cx: &App) -> impl IntoElement {
 		.child(text)
 }
 
-/// The host, the staged count, and Discard, Review, and Apply.
+/// The host, the staged count, Update, and Discard, Review, and Apply.
 fn status_bar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement {
 	let staged = app.nixos.staged.len();
 	let host = app
@@ -1333,14 +1333,29 @@ fn status_bar(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> impl IntoElement 
 		.as_ref()
 		.map(|configuration| configuration.host.clone())
 		.unwrap_or_default();
-	let mut right = h_flex().gap_2().items_center().child(muted(
-		match staged {
-			0 => "No staged changes".to_string(),
-			1 => "1 staged change".to_string(),
-			count => format!("{count} staged changes"),
-		},
-		cx,
-	));
+	let mut right = h_flex()
+		.gap_2()
+		.items_center()
+		.child(muted(
+			match staged {
+				0 => "No staged changes".to_string(),
+				1 => "1 staged change".to_string(),
+				count => format!("{count} staged changes"),
+			},
+			cx,
+		))
+		.child(
+			Button::new("nixos-update")
+				.outline()
+				.small()
+				.icon(IconName::RotateCw)
+				.label("Update")
+				.disabled(app.session.is_building())
+				.tooltip(
+					"Update the system flake's inputs, then rebuild the system. Staged changes stay staged.",
+				)
+				.on_click(cx.listener(|this, _, window, cx| this.update_system(window, cx))),
+		);
 	if app.nixos.editable_host() {
 		right = right
 			.child(
