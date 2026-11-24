@@ -16,9 +16,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
 	AnyElement, App, Context, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement,
-	ListHorizontalSizingBehavior, ParentElement as _, SharedString,
-	StatefulInteractiveElement as _, Styled as _, StyledText, div, prelude::FluentBuilder as _,
-	rems, uniform_list,
+	LineFragment, ListHorizontalSizingBehavior, ParentElement as _, Pixels, SharedString,
+	StatefulInteractiveElement as _, Styled as _, StyledText, div, font,
+	prelude::FluentBuilder as _, px, rems, uniform_list,
 };
 use nixbox_core::vcs::Backend;
 
@@ -26,6 +26,9 @@ use super::logo::{backend_name, vcs_logo};
 use super::{empty, muted, section};
 use crate::app::NixboxApp;
 use crate::repository::{Change, DiffLine, Line, RepositoryAction};
+
+/// Width of the controls panel, in rems.
+const PANEL_WIDTH: f32 = 23.75;
 
 pub fn render(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	let controls = &app.repository;
@@ -518,23 +521,18 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 		.disabled(disabled || commit_blocker.is_some())
 		.on_click(cx.listener(|this, _, window, cx| this.commit_repository(window, cx)));
 
-	let mut panel = v_flex()
-		.id("repository-scroll")
-		.w(rems(23.75))
+	// Grows with the message, then shrinks to the space the controls leave and
+	// scrolls inside itself.
+	let editor = v_flex().flex_1().min_h(rems(5.)).px_6().child(
+		Textarea::new(&controls.message)
+			.h(message_height(&message, cx))
+			.min_h_0()
+			.flex_shrink(1.)
+			.disabled(controls.busy),
+	);
+	let mut footer = v_flex()
 		.flex_shrink_0()
-		.h_full()
-		.pb_6()
-		.border_l_1()
-		.border_color(cx.theme().border)
-		.overflow_y_scroll()
-		.child(heading("Commit", cx))
-		.child(
-			v_flex()
-				.px_6()
-				.gap_2()
-				.child(Textarea::new(&controls.message).disabled(controls.busy))
-				.child(commit),
-		);
+		.child(div().px_6().pt_2().child(commit));
 
 	let branch = controls.branch.read(cx).value();
 	let push_blocker = if controls.busy {
@@ -556,7 +554,7 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	} else {
 		None
 	};
-	panel = panel.child(heading("Push", cx)).child(
+	footer = footer.child(heading("Push", cx)).child(
 		v_flex()
 			.px_6()
 			.gap_2()
@@ -613,7 +611,7 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 	if controls.origin.is_none() && !parent {
 		let named = !controls.owner.read(cx).value().trim().is_empty()
 			&& !controls.name.read(cx).value().trim().is_empty();
-		panel = panel.child(heading("GitHub remote", cx)).child(
+		footer = footer.child(heading("GitHub remote", cx)).child(
 			v_flex()
 				.px_6()
 				.gap_2()
@@ -678,7 +676,43 @@ fn actions(app: &NixboxApp, cx: &mut Context<NixboxApp>) -> AnyElement {
 				),
 		);
 	}
-	panel.into_any_element()
+	v_flex()
+		.id("repository-scroll")
+		.w(rems(PANEL_WIDTH))
+		.flex_shrink_0()
+		.h_full()
+		.pb_6()
+		.border_l_1()
+		.border_color(cx.theme().border)
+		.overflow_y_scroll()
+		.child(heading("Commit", cx).flex_shrink_0())
+		.child(editor)
+		.child(footer)
+		.into_any_element()
+}
+
+/// The height that shows every wrapped row of the commit message, and at
+/// least five. The textarea's own auto-grow takes a fixed row limit instead of
+/// the available space, so the rows are counted here with the same wrapper.
+fn message_height(message: &str, cx: &App) -> Pixels {
+	let theme = cx.theme();
+	let rem = theme.font_size;
+	// The panel less its border and gutters, then the textarea's border,
+	// padding, and the margin it keeps for the cursor.
+	let width = rem * (PANEL_WIDTH - 3.) - px(1. + 2. + 20. + 10.);
+	let mut wrapper = cx
+		.text_system()
+		.line_wrapper(font(theme.font_family.clone()), rem * 0.875);
+	let rows: usize = message
+		.split('\n')
+		.map(|line| {
+			1 + wrapper
+				.wrap_line(&[LineFragment::text(line)], width)
+				.count()
+		})
+		.sum();
+	// 1.25rem lines, with the textarea's vertical padding and border.
+	rem * (rows.max(5) as f32 * 1.25) + px(16. + 2.)
 }
 
 /// A section label without a count.
@@ -691,4 +725,92 @@ fn heading(title: &'static str, cx: &App) -> gpui_kit::Div {
 		.font_weight(FontWeight::SEMIBOLD)
 		.text_color(cx.theme().muted_foreground)
 		.child(title.to_uppercase())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::app::Page;
+	use gpui_kit::component::Root;
+	use gpui_kit::test::TestWindowExt as _;
+	use gpui_kit::{AnyWindowHandle, AppContext as _, TestAppContext, size};
+	use nixbox_config::Config;
+	use nixbox_core::{Engine, Session};
+	use nixbox_nix::manifest::Manifest;
+
+	#[gpui_kit::test]
+	async fn message_grows_with_its_text_until_it_reaches_the_controls(cx: &mut TestAppContext) {
+		cx.update(gpui_kit::init);
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("runtime");
+		let (session, rx) = Session::new(Engine::from_parts(
+			Config::default(),
+			Manifest::default(),
+			Manifest::default(),
+			Vec::new(),
+		));
+		let session = session
+			.without_persistence()
+			.with_runtime(runtime.handle().clone());
+		let mut entity = None;
+		let window: AnyWindowHandle = cx
+			.open_window(size(px(1180.), px(760.)), |window, cx| {
+				let app =
+					cx.new(|cx| NixboxApp::new(session, rx, runtime.handle().clone(), window, cx));
+				entity = Some(app.clone());
+				Root::new(app, window, cx)
+			})
+			.into();
+		let app = entity.expect("app");
+		let root = std::path::PathBuf::from("/tmp/nixbox-layout");
+		app.update(cx, |app, _| {
+			app.page = Page::VersionControl;
+			app.repository.loaded = true;
+			app.repository.origin = Some("origin".into());
+			app.repository.detected = Some(nixbox_core::vcs::Repository {
+				backend: Backend::Git,
+				root: root.clone(),
+				config_root: root,
+			});
+		});
+		let mut measure = |text: String| {
+			cx.update_window(window, |_, window, cx| {
+				let message = app.read(cx).repository.message.clone();
+				message.update(cx, |message, cx| message.set_value(text, window, cx));
+				window.render_frame(cx);
+				window.render_frame(cx);
+				let push = window.find("repository-push").bounds();
+				let commit = window.find("repository-commit").bounds();
+				let bounds = message.read(cx).input_bounds();
+				message.update(cx, |message, cx| {
+					let bottom = gpui_kit::point(px(0.), px(-10000.));
+					message.set_scroll_offset(bottom, cx)
+				});
+				window.render_frame(cx);
+				window.render_frame(cx);
+				let scrolled = message.read(cx).scroll_offset().y;
+				(bounds, commit, push, scrolled)
+			})
+			.expect("layout")
+		};
+
+		let (short, commit, push, short_scroll) = measure("one".into());
+		let (grown, grown_commit, _, grown_scroll) = measure(["line"; 10].join("\n"));
+		let (wrapped, _, _, wrapped_scroll) = measure("word ".repeat(70));
+		let (full, full_commit, full_push, full_scroll) = measure(["line"; 200].join("\n"));
+		assert!(grown.size.height > short.size.height);
+		assert!(wrapped.size.height > short.size.height);
+		assert!(wrapped.size.height < full.size.height);
+		assert!(full.size.height > grown.size.height);
+		// Scrolls only once the space runs out.
+		assert_eq!([short_scroll, grown_scroll, wrapped_scroll], [px(0.); 3]);
+		assert!(full_scroll < px(0.));
+		assert!(full.bottom() <= full_commit.top());
+		// The controls stay put at the bottom whatever the message holds.
+		assert_eq!(commit, grown_commit);
+		assert_eq!((commit, push), (full_commit, full_push));
+		assert!(push.bottom() > px(600.) && push.bottom() < px(760.));
+	}
 }
