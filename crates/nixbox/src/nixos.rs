@@ -1,16 +1,20 @@
-//! The NixOS page's state: the host's option schema, the group of options
-//! around the selected one with their values and owners, and the edits
-//! staged for one queued rebuild.
+//! The NixOS page's state: the host's option schema, the view on screen
+//! (a curated page, the changed settings, or the whole schema), the values
+//! evaluated so far, and the edits staged for one queued rebuild.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
 use gpui_kit::{Context, Task, Window};
 use nixbox_config::Target;
 use nixbox_core::hardware::HardwareFilter;
 use nixbox_core::options::parse_text;
+use nixbox_core::settings_pages::{
+	SchemaIndex, SearchResults, SettingsPage, ShownSection, TreeRow, View, ancestors,
+	changed_paths, namespace_rows, page_sections, search, section_paths, stage_edit,
+};
 use nixbox_core::system_options::{
-	Category, default_host, edit_lock, filter_options, sibling_group,
+	Category, GROUP_LIMIT, default_host, edit_lock, filter_options, sibling_group,
 };
 use nixbox_core::{Op, OptionChange};
 use nixbox_nix::hardware::HardwareInventory;
@@ -33,17 +37,28 @@ pub struct NixosView {
 	pub hosts: Vec<String>,
 	pub configuration: Option<NixosConfiguration>,
 	pub options: Vec<SystemOption>,
-	pub visible: Vec<usize>,
-	/// Matches per category for the current search, in [`Category::ALL`] order.
-	pub counts: [usize; Category::ALL.len()],
+	pub index: SchemaIndex,
+	pub view: View,
+	/// The open page's sections, resolved against the schema.
+	pub sections: Vec<ShownSection>,
+	/// The search typed into the sidebar; results replace the view.
+	pub query: String,
+	pub search: SearchResults,
+	/// Options the tree lists: every option for All, configured ones for
+	/// Configured.
 	pub category: Category,
+	pub visible: Vec<usize>,
+	pub expanded: BTreeSet<OptionPath>,
+	pub rows: Vec<TreeRow>,
 	pub show_diagnostic: bool,
 	pub hardware: HardwareFilter,
 	pub local_hardware: HardwareInventory,
 	hardware_configuration: Option<NixosConfiguration>,
 	pub selected: Option<OptionPath>,
-	/// The selected option and its siblings, as evaluated, in schema order.
-	pub group: Vec<EditableOption>,
+	/// The selected option's siblings, which All options edits together.
+	pub group: Vec<OptionPath>,
+	/// Every option evaluated since the schema loaded, by path.
+	pub evaluated: HashMap<OptionPath, EditableOption>,
 	/// Edits not yet queued; `None` unsets the option.
 	pub staged: BTreeMap<OptionPath, Option<SettingValue>>,
 	pub loading: bool,
@@ -73,7 +88,6 @@ impl NixosView {
 			job.abort();
 		}
 		self.inspecting = false;
-		self.group.clear();
 		self.detail_error = None;
 	}
 
@@ -90,24 +104,90 @@ impl NixosView {
 		self.cancel();
 		self.initialized = false;
 		self.loading = false;
+		self.clear_schema();
+	}
+
+	fn clear_schema(&mut self) {
 		self.options.clear();
+		self.index = SchemaIndex::default();
+		self.sections.clear();
+		self.search = SearchResults::default();
 		self.visible.clear();
-		self.counts = Default::default();
+		self.rows.clear();
 		self.selected = None;
+		self.group.clear();
+		self.evaluated.clear();
 		self.error = None;
 	}
 
+	/// Installs a freshly read schema and resolves the open page against it.
+	pub fn set_options(&mut self, options: Vec<SystemOption>) {
+		self.index = SchemaIndex::new(&options);
+		self.options = options;
+		self.evaluated.clear();
+		self.resolve_view();
+	}
+
+	/// Resolves the open page's sections against the schema.
+	pub fn resolve_view(&mut self) {
+		self.sections = match self.view {
+			View::Page(page) => page_sections(page, &self.options, &self.index),
+			_ => Vec::new(),
+		};
+	}
+
+	/// Recomputes the tree and the search results.
 	pub fn filter(&mut self, text: &str) {
 		self.hardware.retained = self.staged.keys().cloned().collect();
-		let filtered = filter_options(
+		self.query = text.trim().to_string();
+		self.visible = filter_options(
 			&self.options,
-			text,
+			"",
 			self.category,
 			self.show_diagnostic,
 			&self.hardware,
+		)
+		.visible;
+		self.rows = namespace_rows(&self.options, &self.visible, &self.expanded);
+		self.search = search(
+			&self.options,
+			&self.index,
+			&self.query,
+			self.show_diagnostic,
+			&self.hardware,
 		);
-		self.visible = filtered.visible;
-		self.counts = filtered.counts;
+	}
+
+	/// Opens or closes a namespace in the tree.
+	pub fn toggle_namespace(&mut self, prefix: &[String]) {
+		if !self.expanded.remove(prefix) {
+			self.expanded.insert(prefix.to_vec());
+		}
+		self.rows = namespace_rows(&self.options, &self.visible, &self.expanded);
+	}
+
+	/// Expands the tree down to `path`.
+	pub fn reveal(&mut self, path: &[String]) {
+		self.expanded.extend(ancestors(path));
+		self.rows = namespace_rows(&self.options, &self.visible, &self.expanded);
+	}
+
+	/// The options the open view edits, in display order.
+	pub fn view_paths(&self, session: &nixbox_core::Session) -> Vec<OptionPath> {
+		match self.view {
+			View::Page(_) => section_paths(&self.sections),
+			View::Changed => self.changed(session),
+			View::Overview | View::AllOptions => self.group.clone(),
+		}
+	}
+
+	/// Staged and queued paths this schema declares.
+	pub fn changed(&self, session: &nixbox_core::Session) -> Vec<OptionPath> {
+		changed_paths(&self.staged, session)
+			.into_iter()
+			.filter(|path| self.index.get(path).is_some())
+			.take(GROUP_LIMIT)
+			.collect()
 	}
 
 	pub fn selected_option(&self) -> Option<&SystemOption> {
@@ -116,12 +196,12 @@ impl NixosView {
 	}
 
 	pub fn option(&self, path: &[String]) -> Option<&SystemOption> {
-		self.options.iter().find(|option| option.path == path)
+		self.options.get(self.index.get(path)?)
 	}
 
-	/// The evaluated option at `path`, once its group has been read.
+	/// The evaluated option at `path`, once it has been read.
 	pub fn editing(&self, path: &[String]) -> Option<&EditableOption> {
-		self.group.iter().find(|option| option.details.path == path)
+		self.evaluated.get(path)
 	}
 
 	pub fn selected_editing(&self) -> Option<&EditableOption> {
@@ -147,6 +227,14 @@ impl NixosView {
 			Some("host not rebuilt by nixbox".into())
 		}
 	}
+
+	/// How many of `page`'s settings this host declares.
+	pub fn page_size(&self, page: SettingsPage) -> usize {
+		page_sections(page, &self.options, &self.index)
+			.iter()
+			.map(|section| section.entries.len())
+			.sum()
+	}
 }
 
 impl Drop for NixosView {
@@ -167,11 +255,7 @@ impl NixboxApp {
 			.or_else(|| self.nixos.applied_host.clone());
 		self.nixos.initialized = true;
 		self.nixos.loading = true;
-		self.nixos.error = None;
-		self.nixos.options.clear();
-		self.nixos.visible.clear();
-		self.nixos.counts = Default::default();
-		self.nixos.selected = None;
+		self.nixos.clear_schema();
 		self.nixos.hosts.clear();
 		self.nixos.configuration = None;
 		let epoch = self.nixos.catalog_epoch;
@@ -234,11 +318,7 @@ impl NixboxApp {
 		}
 		self.nixos.configuration = Some(configuration.clone());
 		self.nixos.loading = true;
-		self.nixos.error = None;
-		self.nixos.options.clear();
-		self.nixos.visible.clear();
-		self.nixos.counts = Default::default();
-		self.nixos.selected = None;
+		self.nixos.clear_schema();
 		let epoch = self.nixos.catalog_epoch;
 		let job = self.runtime.spawn(async move {
 			let (catalog, hardware) = tokio::join!(
@@ -261,12 +341,13 @@ impl NixboxApp {
 				this.nixos.catalog_abort = None;
 				match result {
 					Ok((catalog, hardware)) => {
-						this.nixos.options = catalog.options;
+						this.nixos.set_options(catalog.options);
 						this.nixos.local_hardware = hardware.clone();
 						if this.nixos.hardware_configuration == this.nixos.configuration {
 							this.nixos.hardware.inventory = Some(hardware);
 						}
 						this.refresh_nixos_filter(cx);
+						this.evaluate_nixos_view(cx);
 					}
 					Err(error) => this.nixos.error = Some(error),
 				}
@@ -276,34 +357,44 @@ impl NixboxApp {
 		cx.notify();
 	}
 
-	/// Selects `path`. An option outside the group on screen reads its
-	/// siblings' values and owners in one evaluation.
-	pub fn select_nixos_option(
-		&mut self,
-		path: OptionPath,
-		window: &mut Window,
-		cx: &mut Context<Self>,
-	) {
+	/// Shows `view`, reading the values of the settings it lists.
+	pub fn open_nixos_view(&mut self, view: View, window: &mut Window, cx: &mut Context<Self>) {
+		self.nixos.view = view;
+		self.nixos.resolve_view();
+		if view != View::AllOptions {
+			self.nixos.selected = None;
+		}
+		if !self.nixos.query.is_empty() {
+			self.nixos_filter
+				.update(cx, |input, cx| input.set_value("", window, cx));
+			self.refresh_nixos_filter(cx);
+		}
+		self.evaluate_nixos_view(cx);
+		self.sync_nixos_input(window, cx);
+		cx.notify();
+	}
+
+	/// Reads the values of the open view's settings that are not read yet.
+	pub fn evaluate_nixos_view(&mut self, cx: &mut Context<Self>) {
+		let paths = self.nixos.view_paths(&self.session);
+		self.evaluate_nixos(paths, cx);
+	}
+
+	/// Evaluates every path in `paths` not evaluated yet, in one request.
+	fn evaluate_nixos(&mut self, paths: Vec<OptionPath>, cx: &mut Context<Self>) {
 		let Some(configuration) = self.nixos.configuration.clone() else {
 			return;
 		};
-		if self.nixos.option(&path).is_none() {
-			return;
-		}
-		self.nixos.selected = Some(path.clone());
-		if self.nixos.editing(&path).is_some() {
-			self.sync_nixos_input(window, cx);
-			cx.notify();
+		let missing: Vec<OptionPath> = paths
+			.into_iter()
+			.filter(|path| !self.nixos.evaluated.contains_key(path))
+			.filter(|path| self.nixos.index.get(path).is_some())
+			.collect();
+		if missing.is_empty() {
 			return;
 		}
 		self.nixos.cancel_inspection();
 		self.nixos.inspecting = true;
-		let paths = sibling_group(
-			&self.nixos.options,
-			&path,
-			self.nixos.show_diagnostic,
-			&self.nixos.hardware,
-		);
 		let settings_file = self
 			.session
 			.engine
@@ -314,15 +405,15 @@ impl NixboxApp {
 			.unwrap_or_default();
 		let epoch = self.nixos.detail_epoch;
 		let job = self.runtime.spawn(async move {
-			inspect_group(&configuration, &paths, &settings_file, EVALUATION_LIMIT).await
+			inspect_group(&configuration, &missing, &settings_file, EVALUATION_LIMIT).await
 		});
 		self.nixos.detail_abort = Some(job.abort_handle());
-		self.nixos.detail_task = Some(cx.spawn_in(window, async move |this, cx| {
+		self.nixos.detail_task = Some(cx.spawn(async move |this, cx| {
 			let result = match job.await {
 				Ok(result) => result.map_err(|error| format!("{error:#}")),
 				Err(error) => Err(error.to_string()),
 			};
-			let _ = this.update_in(cx, |this, window, cx| {
+			let _ = this.update(cx, |this, cx| {
 				if epoch != this.nixos.detail_epoch {
 					return;
 				}
@@ -330,8 +421,16 @@ impl NixboxApp {
 				this.nixos.detail_abort = None;
 				match result {
 					Ok(group) => {
-						this.nixos.group = group;
-						this.sync_nixos_input(window, cx);
+						// The text field shows the selected value once it arrives.
+						let selected = this.nixos.selected.as_ref();
+						this.nixos_input_dirty |= group
+							.iter()
+							.any(|option| Some(&option.entry.path) == selected);
+						this.nixos.evaluated.extend(
+							group
+								.into_iter()
+								.map(|option| (option.entry.path.clone(), option)),
+						);
 					}
 					Err(error) => this.nixos.detail_error = Some(error),
 				}
@@ -339,6 +438,53 @@ impl NixboxApp {
 			});
 		}));
 		cx.notify();
+	}
+
+	/// Selects `path`. In All options this reads its siblings too, which the
+	/// details pane edits together.
+	pub fn select_nixos_option(
+		&mut self,
+		path: OptionPath,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		if self.nixos.option(&path).is_none() {
+			return;
+		}
+		self.nixos.selected = Some(path.clone());
+		let paths = if self.nixos.view == View::AllOptions {
+			self.nixos.group = sibling_group(
+				&self.nixos.options,
+				&path,
+				self.nixos.show_diagnostic,
+				&self.nixos.hardware,
+			);
+			self.nixos.group.clone()
+		} else {
+			vec![path]
+		};
+		self.evaluate_nixos(paths, cx);
+		self.sync_nixos_input(window, cx);
+		cx.notify();
+	}
+
+	/// Opens a search result: a curated setting on its page, anything else
+	/// in All options with the tree expanded to it.
+	pub fn open_nixos_result(
+		&mut self,
+		path: OptionPath,
+		page: Option<SettingsPage>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
+		match page {
+			Some(page) => self.open_nixos_view(View::Page(page), window, cx),
+			None => {
+				self.open_nixos_view(View::AllOptions, window, cx);
+				self.nixos.reveal(&path);
+			}
+		}
+		self.select_nixos_option(path, window, cx);
 	}
 
 	/// What `option` is set to once queued work applies: a queued value,
@@ -367,6 +513,7 @@ impl NixboxApp {
 
 	/// Puts the selected option's value into the text editor.
 	pub(crate) fn sync_nixos_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+		self.nixos_input_dirty = false;
 		let text = self
 			.nixos
 			.selected_editing()
@@ -387,9 +534,9 @@ impl NixboxApp {
 		let Some(option) = self.nixos.editing(path) else {
 			return;
 		};
-		let name = option_path_display(path);
 		if let Some(reason) = self.nixos.lock(option) {
-			self.status = format!("{name} is not editable: {reason}.").into();
+			self.status =
+				format!("{} is not editable: {reason}.", option_path_display(path)).into();
 			cx.notify();
 			return;
 		}
@@ -398,27 +545,8 @@ impl NixboxApp {
 			.engine
 			.sets_option(Target::NixosSystem, &option.entry);
 		let baseline = self.nixos_baseline(option);
-		let path = path.to_vec();
-		self.status = match value {
-			Some(value) if Some(&value) == baseline.as_ref() => {
-				self.nixos.staged.remove(&path);
-				format!("{name} is back to {}.", value.to_nix())
-			}
-			Some(value) => {
-				let text = format!("Staged {name} = {}.", value.to_nix());
-				self.nixos.staged.insert(path, Some(value));
-				text
-			}
-			None if ours => {
-				self.nixos.staged.insert(path, None);
-				format!("Staged unset {name}.")
-			}
-			None => {
-				self.nixos.staged.remove(&path);
-				format!("Dropped the staged change to {name}.")
-			}
-		}
-		.into();
+		self.status =
+			stage_edit(&mut self.nixos.staged, path, value, baseline.as_ref(), ours).into();
 		cx.notify();
 	}
 
@@ -492,17 +620,22 @@ impl NixboxApp {
 		self.refresh_nixos_hardware(window, cx);
 	}
 
+	/// Reapplies the tree's filters, keeping the selection while it stays
+	/// visible.
 	pub fn refresh_nixos_hardware(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-		let selected = self.nixos.selected.take();
-		self.nixos.cancel_inspection();
 		self.refresh_nixos_filter(cx);
-		if let Some(path) = selected.filter(|path| {
-			self.nixos
-				.visible
-				.iter()
-				.any(|index| self.nixos.options[*index].path == *path)
-		}) {
-			self.select_nixos_option(path, window, cx);
+		let hidden = self.nixos.view == View::AllOptions
+			&& self.nixos.selected.as_ref().is_some_and(|path| {
+				!self
+					.nixos
+					.visible
+					.iter()
+					.any(|index| self.nixos.options[*index].path == *path)
+			});
+		if hidden {
+			self.nixos.selected = None;
+			self.nixos.group.clear();
+			self.sync_nixos_input(window, cx);
 		}
 	}
 
@@ -521,7 +654,7 @@ mod tests {
 	use super::*;
 	use gpui_kit::component::Root;
 	use gpui_kit::test::{TestAppContextExt as _, TestWindowExt as _};
-	use gpui_kit::{AppContext as _, TestAppContext, px, size};
+	use gpui_kit::{AppContext as _, Entity, TestAppContext, WindowHandle, px, size};
 	use nixbox_config::{Config, Target};
 	use nixbox_core::options::NIXOS_HOST;
 	use nixbox_core::{Engine, Session};
@@ -529,8 +662,12 @@ mod tests {
 	use nixbox_nix::options::{OptionEntry, OptionKind};
 	use nixbox_nix::system_options::{InspectedValue, SystemOptionDetails};
 
-	fn editable(path: &str, kind: OptionKind, value: serde_json::Value) -> EditableOption {
-		let path: OptionPath = path.split('.').map(str::to_string).collect();
+	fn path(raw: &str) -> OptionPath {
+		raw.split('.').map(str::to_string).collect()
+	}
+
+	fn editable(raw: &str, kind: OptionKind, value: serde_json::Value) -> EditableOption {
+		let path = path(raw);
 		EditableOption {
 			details: SystemOptionDetails {
 				path: path.clone(),
@@ -555,14 +692,14 @@ mod tests {
 		}
 	}
 
-	fn option(path: &str, description: &str, diagnostic: bool) -> SystemOption {
+	fn option(raw: &str, description: &str) -> SystemOption {
 		SystemOption {
-			path: path.split('.').map(str::to_string).collect(),
+			path: path(raw),
 			configured: Some(false),
 			description: Some(description.into()),
 			type_description: "boolean".into(),
 			declarations: vec!["configuration.nix".into()],
-			diagnostic,
+			diagnostic: false,
 			read_only: false,
 			nested: false,
 			template: false,
@@ -571,19 +708,20 @@ mod tests {
 		}
 	}
 
-	#[gpui_kit::test]
-	async fn nixos_tab_renders_filters_and_preserves_inspection_across_tabs(
+	/// The app on the NixOS page of `host`, with `options` as its schema and
+	/// `evaluated` already read, so no test runs an evaluation.
+	fn open(
 		cx: &mut TestAppContext,
-	) {
+		config: Config,
+		host: &str,
+		options: Vec<SystemOption>,
+		evaluated: Vec<EditableOption>,
+	) -> (Entity<NixboxApp>, WindowHandle<Root>) {
 		cx.update(gpui_kit::init);
 		let runtime = tokio::runtime::Builder::new_current_thread()
 			.enable_all()
 			.build()
 			.expect("runtime");
-		let config = Config {
-			target: Target::HomeManager,
-			..Config::default()
-		};
 		let (session, build_rx) = Session::new(Engine::from_parts(
 			config,
 			Manifest::default(),
@@ -594,117 +732,127 @@ mod tests {
 			.without_persistence()
 			.with_runtime(runtime.handle().clone());
 		let mut app = None;
-		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
+		let handle = cx.open_window(size(px(1280.), px(860.)), |window, cx| {
 			let view = cx
 				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
 			app = Some(view.clone());
 			Root::new(view, window, cx)
 		});
+		// The runtime is never driven, so evaluations a test does not
+		// pre-fill stay pending instead of running Nix.
+		std::mem::forget(runtime);
 		let app = app.expect("view");
 		cx.update_window(handle.into(), |_, window, cx| {
-			app.update(cx, |app, _| {
+			app.update(cx, |app, cx| {
 				app.nixos.initialized = true;
-				app.nixos.hosts = vec!["workstation".into()];
+				app.nixos.hosts = vec![host.into()];
 				app.nixos.configuration = Some(NixosConfiguration {
 					root: app.session.config_dir(),
-					host: "workstation".into(),
+					host: host.into(),
 				});
-				app.nixos.options = vec![
-					option("services.pipewire.enable", "Sound server", false),
-					option("custom.welcome", "Welcome message", false),
-				];
-				app.nixos.options[0].configured = Some(true);
+				app.nixos.set_options(options);
+				app.nixos.evaluated = evaluated
+					.into_iter()
+					.map(|option| (option.entry.path.clone(), option))
+					.collect();
 				app.nixos.filter("");
+				app.set_page(Page::Nixos, window, cx);
 			});
 			window.render_frame(cx);
-			window.within("page-tabs").click(3_usize, cx);
+		})
+		.expect("window");
+		(app, handle)
+	}
+
+	#[gpui_kit::test]
+	async fn nixos_page_navigates_pages_tree_and_search(cx: &mut TestAppContext) {
+		let config = Config {
+			target: Target::HomeManager,
+			..Config::default()
+		};
+		let mut configured = option("services.pipewire.enable", "Sound server");
+		configured.configured = Some(true);
+		let options = vec![
+			configured,
+			option("custom.welcome", "Welcome message"),
+			option("services.printing.enable", "Printing"),
+		];
+		let evaluated = vec![
+			editable(
+				"services.pipewire.enable",
+				OptionKind::Bool,
+				serde_json::json!(true),
+			),
+			editable("custom.welcome", OptionKind::Bool, serde_json::json!(false)),
+		];
+		let (app, handle) = open(cx, config, "workstation", options, evaluated);
+		cx.update_window(handle.into(), |_, window, cx| {
+			assert_eq!(app.read(cx).nixos.view, View::Overview);
+			window.click(("nixos-page", SettingsPage::Audio.index()), cx);
 			window.render_frame(cx);
-			assert!(window.find(("nixos-option", 0_usize)).visible());
-			assert!(window.find(("nixos-option", 1_usize)).visible());
-			window.click(("nixos-category", Category::Configured.index()), cx);
-			window.render_frame(cx);
-			app.update(cx, |app, _| {
-				assert_eq!(app.nixos.category, Category::Configured);
-				assert_eq!(app.nixos.visible, [0]);
-				assert_eq!(app.nixos.counts[Category::Configured.index()], 1);
+			app.read_with(cx, |app, _| {
+				assert_eq!(app.nixos.view, View::Page(SettingsPage::Audio));
+				assert_eq!(app.nixos.sections.len(), 1, "Only declared settings show");
+				assert_eq!(app.nixos.sections[0].entries[0].label, "PipeWire");
 			});
-			assert!(window.find("nixos-configured-note").visible());
-			assert!(window.try_find(("nixos-option", 1_usize)).is_none());
-			window.click(("nixos-category", Category::All.index()), cx);
-			window.render_frame(cx);
+			assert!(window.find(("nixos-setting", 0_usize)).visible());
+
 			app.update(cx, |app, cx| {
-				app.nixos
-					.options
-					.push(option("hardware.nvidia.open", "NVIDIA", false));
-				app.nixos.local_hardware.nvidia_gpu = nixbox_nix::hardware::Presence::Absent;
-				app.use_local_nixos_hardware(true, window, cx);
-				assert_eq!(app.nixos.visible.len(), 2);
-				app.nixos.hardware.show_all = true;
+				app.open_nixos_view(View::AllOptions, window, cx)
+			});
+			window.render_frame(cx);
+			app.read_with(cx, |app, _| {
+				assert_eq!(
+					app.nixos.rows.len(),
+					2,
+					"custom holds one option, services folds two"
+				);
+			});
+			window.click(("nixos-option", 1_usize), cx);
+			window.render_frame(cx);
+			assert!(window.find(("nixos-option", 3_usize)).visible());
+			app.update(cx, |app, cx| {
+				app.nixos.category = Category::Configured;
 				app.refresh_nixos_hardware(window, cx);
-				assert_eq!(app.nixos.visible.len(), 3);
-				app.nixos.hardware.show_all = false;
-				app.use_local_nixos_hardware(false, window, cx);
-				assert_eq!(app.nixos.visible.len(), 3);
-				app.nixos.options.pop();
-				app.refresh_nixos_filter(cx);
-			});
-			window.render_frame(cx);
-			let row = window.find(("nixos-option", 0_usize)).bounds();
-			assert!(
-				row.size.width > px(200.) && row.size.height > px(0.),
-				"Schema rows need a real viewport"
-			);
-			app.update(cx, |app, cx| {
-				assert_eq!(app.page, Page::Nixos);
+				assert_eq!(app.nixos.visible, [0]);
+				app.nixos.category = Category::All;
+				app.refresh_nixos_hardware(window, cx);
 				app.nixos_filter
 					.update(cx, |input, cx| input.set_value("welcome", window, cx));
 				app.refresh_nixos_filter(cx);
+				assert_eq!(app.nixos.search.options, [1]);
 			});
 			window.render_frame(cx);
-			assert!(window.find(("nixos-option", 0_usize)).visible());
-			assert!(window.try_find(("nixos-option", 1_usize)).is_none());
+			window.click(("nixos-result", 0_usize), cx);
+			window.render_frame(cx);
 			app.update(cx, |app, cx| {
-				let path = vec!["custom".into(), "welcome".into()];
-				app.nixos.selected = Some(path.clone());
-				app.nixos.group = vec![editable(
-					&path.join("."),
-					OptionKind::Bool,
-					serde_json::Value::Bool(true),
-				)];
+				assert!(
+					app.nixos.query.is_empty(),
+					"Opening a result clears the search"
+				);
+				assert_eq!(app.nixos.view, View::AllOptions);
+				assert_eq!(app.nixos.selected, Some(path("custom.welcome")));
 				app.set_page(Page::Installed, window, cx);
 				app.set_page(Page::Nixos, window, cx);
 				app.focus_search(&crate::app::FocusSearch, window, cx);
 				assert_eq!(app.page, Page::Nixos, "Ctrl-F must stay on the NixOS tab");
+				assert_eq!(app.nixos.selected, Some(path("custom.welcome")));
 				assert_eq!(app.session.engine.config.target, Target::HomeManager);
 				assert!(app.session.queue.is_empty());
 				assert!(
 					app.options.is_none(),
 					"Package options have separate view state"
 				);
-				assert!(app.nixos.selected_editing().is_some());
 				assert!(
-					app.nixos.lock(&app.nixos.group[0]).is_some(),
+					app.nixos
+						.lock(app.nixos.selected_editing().unwrap())
+						.is_some(),
 					"Only the host nixbox rebuilds is editable"
 				);
 			});
 			window.render_frame(cx);
 			assert!(window.find("nixos-details").visible());
 			assert!(window.try_find("nixos-apply").is_none());
-			app.update(cx, |app, cx| {
-				app.nixos_filter.update(cx, |input, cx| {
-					input.set_value("does-not-exist", window, cx)
-				});
-				app.refresh_nixos_filter(cx);
-			});
-			window.render_frame(cx);
-			assert!(window.try_find(("nixos-option", 0_usize)).is_none());
-			app.update(cx, |app, cx| {
-				app.nixos_filter
-					.update(cx, |input, cx| input.set_value("", window, cx));
-				app.refresh_nixos_filter(cx);
-			});
-			window.render_frame(cx);
-			assert!(window.find(("nixos-option", 1_usize)).visible());
 		})
 		.expect("window");
 		cx.simulate_window_resize(handle.into(), size(px(780.), px(640.)));
@@ -720,77 +868,49 @@ mod tests {
 			window.render_frame(cx);
 			assert!(window.find(("nixos-option", 0_usize)).visible());
 			assert!(window.try_find("nixos-details").is_none());
-			window.click(("nixos-category", Category::Configured.index()), cx);
-			window.render_frame(cx);
-			app.update(cx, |app, _| {
-				assert_eq!(app.nixos.category, Category::Configured);
-				assert_eq!(app.nixos.visible, [0]);
-				assert!(app.session.queue.is_empty());
-			});
-			assert!(window.find("nixos-configured-note").visible());
+			assert!(
+				window.find("nixos-views").visible(),
+				"The sidebar folds into a menu"
+			);
 		})
 		.expect("small window");
 	}
 
 	#[gpui_kit::test]
 	async fn nixos_switches_and_dropdowns_stage_values_from_clicks(cx: &mut TestAppContext) {
-		cx.update(gpui_kit::init);
-		let runtime = tokio::runtime::Builder::new_current_thread()
-			.enable_all()
-			.build()
-			.expect("runtime");
-		let (session, build_rx) = Session::new(Engine::from_parts(
-			Config::default(),
-			Manifest::default(),
-			Manifest::default(),
-			Vec::new(),
-		));
-		let session = session
-			.without_persistence()
-			.with_runtime(runtime.handle().clone());
-		let mut app = None;
-		let handle = cx.open_window(size(px(1180.), px(900.)), |window, cx| {
-			let view = cx
-				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
-			app = Some(view.clone());
-			Root::new(view, window, cx)
-		});
-		let app = app.expect("view");
+		let options = vec![
+			option("custom.enable", "Enable the service"),
+			option("custom.mode", "Service mode"),
+			option("custom.optional", "Optional flag"),
+		];
+		let evaluated = vec![
+			editable("custom.enable", OptionKind::Bool, serde_json::json!(false)),
+			editable(
+				"custom.mode",
+				OptionKind::Enum(vec!["auto".into(), "manual".into()]),
+				serde_json::json!("auto"),
+			),
+			editable(
+				"custom.optional",
+				OptionKind::Nullable(Box::new(OptionKind::Bool)),
+				serde_json::Value::Null,
+			),
+		];
+		let (app, handle) = open(cx, Config::default(), NIXOS_HOST, options, evaluated);
+		let current = |app: &NixboxApp, raw: &str| {
+			app.nixos_current(app.nixos.editing(&path(raw)).expect("evaluated"))
+		};
 		cx.update_window(handle.into(), |_, window, cx| {
 			app.update(cx, |app, cx| {
-				app.nixos.initialized = true;
-				app.nixos.hosts = vec![NIXOS_HOST.into()];
-				app.nixos.configuration = Some(NixosConfiguration {
-					root: app.session.config_dir(),
-					host: NIXOS_HOST.into(),
-				});
-				app.nixos.options = vec![
-					option("custom.enable", "Enable the service", false),
-					option("custom.mode", "Service mode", false),
-					option("custom.optional", "Optional flag", false),
-				];
-				app.nixos.filter("");
-				app.nixos.group = vec![
-					editable("custom.enable", OptionKind::Bool, serde_json::json!(false)),
-					editable(
-						"custom.mode",
-						OptionKind::Enum(vec!["auto".into(), "manual".into()]),
-						serde_json::json!("auto"),
-					),
-					editable(
-						"custom.optional",
-						OptionKind::Nullable(Box::new(OptionKind::Bool)),
-						serde_json::Value::Null,
-					),
-				];
-				app.select_nixos_option(vec!["custom".into(), "enable".into()], window, cx);
-				app.set_page(Page::Nixos, window, cx);
+				app.open_nixos_view(View::AllOptions, window, cx);
+				app.select_nixos_option(path("custom.enable"), window, cx);
+				assert_eq!(app.nixos.group.len(), 3, "Siblings are edited together");
 			});
 			window.render_frame(cx);
 			window.click(("nixos-bool", 0_usize), cx);
 			app.read_with(cx, |app, _| {
 				assert_eq!(
-					app.nixos_current(&app.nixos.group[0]),
+					current(app, "custom.enable"),
 					Some(SettingValue::Bool(true))
 				);
 				assert!(
@@ -802,10 +922,6 @@ mod tests {
 			app.read_with(cx, |app, _| assert!(app.nixos.staged.is_empty()));
 			window.click(("nixos-menu", 1_usize), cx);
 			assert_eq!(
-				window.within("popup-menu").find(0_usize).label(),
-				Some("auto")
-			);
-			assert_eq!(
 				window.within("popup-menu").find(1_usize).label(),
 				Some("manual")
 			);
@@ -813,7 +929,7 @@ mod tests {
 			window.render_frame(cx);
 			app.read_with(cx, |app, _| {
 				assert_eq!(
-					app.nixos_current(&app.nixos.group[1]),
+					current(app, "custom.mode"),
 					Some(SettingValue::Str("manual".into()))
 				);
 				assert!(
@@ -829,7 +945,6 @@ mod tests {
 			|window, _| window.try_find("popup-menu").is_none(),
 		)
 		.await;
-		let mut unset = None;
 		cx.update_window(handle.into(), |_, window, cx| {
 			window.click(("nixos-menu", 2_usize), cx);
 			let labels: Vec<_> = (0_usize..3)
@@ -841,123 +956,82 @@ mod tests {
 						.map(str::to_owned)
 				})
 				.collect();
-			assert!(
-				labels.contains(&Some("null".into())),
-				"Nullable flags retain an explicit null choice"
-			);
+			let unset = labels
+				.iter()
+				.position(|label| label.as_deref() == Some("null"))
+				.expect("Nullable flags retain an explicit null choice");
 			let enabled = labels
 				.iter()
 				.position(|label| label.as_deref() == Some("true"))
 				.expect("true choice");
-			unset = Some(
-				labels
-					.iter()
-					.position(|label| label.as_deref() == Some("null"))
-					.expect("null choice"),
-			);
+			assert_ne!(unset, enabled);
 			window.within("popup-menu").click(enabled, cx);
 			window.render_frame(cx);
 			app.read_with(cx, |app, _| {
 				assert_eq!(
-					app.nixos_current(&app.nixos.group[2]),
+					current(app, "custom.optional"),
 					Some(SettingValue::Bool(true))
 				);
+				assert_eq!(app.nixos.staged.len(), 2);
 			});
 		})
 		.expect("nullable window");
-		cx.wait_for(
-			handle.into(),
-			std::time::Duration::from_secs(1),
-			|window, _| window.try_find("popup-menu").is_none(),
-		)
-		.await;
-		cx.update_window(handle.into(), |_, window, cx| {
-			window.click(("nixos-menu", 2_usize), cx);
-			window
-				.within("popup-menu")
-				.click(unset.expect("null choice"), cx);
-			app.read_with(cx, |app, _| {
-				assert_eq!(
-					app.nixos_current(&app.nixos.group[2]),
-					Some(SettingValue::Null)
-				);
-				assert_eq!(app.nixos.staged.len(), 1, "Restoring null drops that edit");
-			});
-		})
-		.expect("window");
 	}
 
 	#[gpui_kit::test]
-	async fn nixos_edits_stage_and_queue_one_system_rebuild(cx: &mut TestAppContext) {
-		cx.update(gpui_kit::init);
-		let runtime = tokio::runtime::Builder::new_current_thread()
-			.enable_all()
-			.build()
-			.expect("runtime");
-		let (session, build_rx) = Session::new(Engine::from_parts(
-			Config::default(),
-			Manifest::default(),
-			Manifest::default(),
-			Vec::new(),
-		));
-		let session = session
-			.without_persistence()
-			.with_runtime(runtime.handle().clone());
-		let mut app = None;
-		let handle = cx.open_window(size(px(1180.), px(760.)), |window, cx| {
-			let view = cx
-				.new(|cx| NixboxApp::new(session, build_rx, runtime.handle().clone(), window, cx));
-			app = Some(view.clone());
-			Root::new(view, window, cx)
-		});
-		let app = app.expect("view");
-		let path = |raw: &str| -> OptionPath { raw.split('.').map(str::to_string).collect() };
+	async fn nixos_edits_stage_review_and_queue_one_system_rebuild(cx: &mut TestAppContext) {
+		let options = vec![
+			option("networking.hostName", "Host name"),
+			option("services.printing.enable", "Printing"),
+			option("time.timeZone", "Time zone"),
+		];
+		let mut owned = editable(
+			"time.timeZone",
+			OptionKind::Nullable(Box::new(OptionKind::Str)),
+			serde_json::json!("UTC"),
+		);
+		owned.entry.defined_in = vec!["configuration.nix".into()];
+		let evaluated = vec![
+			editable(
+				"networking.hostName",
+				OptionKind::Str,
+				serde_json::json!("nixos"),
+			),
+			editable(
+				"services.printing.enable",
+				OptionKind::Bool,
+				serde_json::json!(false),
+			),
+			owned,
+		];
+		let (app, handle) = open(cx, Config::default(), NIXOS_HOST, options, evaluated);
 		cx.update_window(handle.into(), |_, window, cx| {
 			app.update(cx, |app, cx| {
 				let _cancel = app.session.fake_build(Target::HomeManager, "busy");
-				app.nixos.initialized = true;
-				app.nixos.hosts = vec![NIXOS_HOST.into()];
-				app.nixos.configuration = Some(NixosConfiguration {
-					root: app.session.config_dir(),
-					host: NIXOS_HOST.into(),
-				});
-				app.nixos.options = vec![
-					option("custom.enable", "Turns it on", false),
-					option("custom.greeting", "Greeting", false),
-					option("custom.owned", "Set by the user", false),
-				];
-				app.nixos.filter("");
-				let mut owned = editable(
-					"custom.owned",
-					OptionKind::Bool,
-					serde_json::Value::Bool(true),
+				app.open_nixos_view(View::Page(SettingsPage::General), window, cx);
+				assert_eq!(
+					section_paths(&app.nixos.sections),
+					[path("networking.hostName"), path("time.timeZone")]
 				);
-				owned.entry.defined_in = vec!["configuration.nix".into()];
-				app.nixos.group = vec![
-					editable(
-						"custom.enable",
-						OptionKind::Bool,
-						serde_json::Value::Bool(false),
-					),
-					editable(
-						"custom.greeting",
-						OptionKind::Str,
-						serde_json::Value::String("hello".into()),
-					),
-					owned,
-				];
-				app.select_nixos_option(path("custom.greeting"), window, cx);
-				assert_eq!(app.nixos_input.read(cx).value().as_ref(), "hello");
-				app.set_page(Page::Nixos, window, cx);
+				app.select_nixos_option(path("networking.hostName"), window, cx);
+				assert_eq!(app.nixos_input.read(cx).value().as_ref(), "nixos");
 
-				app.stage_nixos(&path("custom.owned"), Some(SettingValue::Bool(false)), cx);
+				app.stage_nixos(&path("time.timeZone"), Some(SettingValue::Null), cx);
 				assert!(app.nixos.staged.is_empty(), "User definitions stay locked");
-				app.stage_nixos(&path("custom.enable"), Some(SettingValue::Bool(true)), cx);
 				app.nixos_input
-					.update(cx, |input, cx| input.set_value("hi", window, cx));
+					.update(cx, |input, cx| input.set_value("desk", window, cx));
 				app.stage_nixos_text(cx);
+				app.stage_nixos(
+					&path("services.printing.enable"),
+					Some(SettingValue::Bool(true)),
+					cx,
+				);
 				assert_eq!(app.nixos.staged.len(), 2);
-				app.stage_nixos(&path("custom.enable"), Some(SettingValue::Bool(false)), cx);
+				app.stage_nixos(
+					&path("services.printing.enable"),
+					Some(SettingValue::Bool(false)),
+					cx,
+				);
 				assert_eq!(
 					app.nixos.staged.len(),
 					1,
@@ -965,11 +1039,33 @@ mod tests {
 				);
 			});
 			window.render_frame(cx);
-			assert!(window.find(("nixos-setting", 1_usize)).visible());
-			assert!(window.find("nixos-apply").visible());
-			app.update(cx, |app, cx| app.apply_nixos(window, cx));
+			assert!(window.find(("nixos-setting", 0_usize)).visible());
+			assert!(window.find(("nixos-open-source", 1_usize)).visible());
+			app.update(cx, |app, cx| app.open_nixos_view(View::Changed, window, cx));
+			window.render_frame(cx);
+			assert!(window.find(("nixos-setting", 0_usize)).visible());
+			assert!(window.try_find(("nixos-setting", 1_usize)).is_none());
+			window.click("nixos-review", cx);
+			window.render_frame(cx);
 		})
 		.expect("window");
+		// The sheet slides in; wait until its Apply button is on screen.
+		cx.wait_for(
+			handle.into(),
+			std::time::Duration::from_secs(2),
+			|window, _| {
+				window.try_find("nixos-review-apply").is_some_and(|button| {
+					let bounds = button.bounds();
+					bounds.origin.x + bounds.size.width <= px(1280.)
+				})
+			},
+		)
+		.await;
+		cx.update_window(handle.into(), |_, window, cx| {
+			window.click("nixos-review-apply", cx);
+			window.render_frame(cx);
+		})
+		.expect("review");
 		app.read_with(cx, |app, _| {
 			let Some(Op::SetOptions { changes, scope }) = app.session.queue.front() else {
 				panic!("expected one settings op");
@@ -978,18 +1074,23 @@ mod tests {
 			assert_eq!(
 				changes,
 				&[OptionChange {
-					path: path("custom.greeting"),
-					value: Some(SettingValue::Str("hi".into())),
+					path: path("networking.hostName"),
+					value: Some(SettingValue::Str("desk".into())),
 				}]
 			);
 			assert!(app.nixos.staged.is_empty());
-			let greeting = app
-				.nixos
-				.editing(&path("custom.greeting"))
-				.expect("greeting");
 			assert_eq!(
-				app.nixos_current(greeting),
-				Some(SettingValue::Str("hi".into())),
+				app.nixos.changed(&app.session),
+				[path("networking.hostName")],
+				"Queued edits stay in the Changed view until the rebuild"
+			);
+			let name = app
+				.nixos
+				.editing(&path("networking.hostName"))
+				.expect("host name");
+			assert_eq!(
+				app.nixos_current(name),
+				Some(SettingValue::Str("desk".into())),
 				"Queued values stay in the controls until the rebuild"
 			);
 		});

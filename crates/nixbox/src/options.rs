@@ -91,15 +91,7 @@ impl OptionsView {
 }
 
 /// How a value reads in the text field.
-pub(crate) fn edit_text(value: Option<&SettingValue>) -> String {
-	match value {
-		Some(SettingValue::Str(text)) => text.clone(),
-		Some(SettingValue::Int(number)) => number.to_string(),
-		Some(SettingValue::Float(number)) => number.to_string(),
-		Some(SettingValue::StrList(items)) => items.join(", "),
-		_ => String::new(),
-	}
-}
+pub(crate) use nixbox_core::options::edit_text;
 
 impl NixboxApp {
 	/// Opens the options page for an installed package.

@@ -281,7 +281,7 @@ fn start(app: &mut App, tx: &mpsc::Sender<AppEvent>, action: Action) {
 		})
 		.await
 		.unwrap_or_else(|error| Err(format!("repository worker failed: {error}")));
-		let _ = tx.send(AppEvent::Repository(result)).await;
+		let _ = tx.send(AppEvent::Repository(Box::new(result))).await;
 	});
 }
 

@@ -198,7 +198,6 @@ async fn handle_key_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: CtEven
 				schedule_flake_details(app, tx.clone());
 			}
 			Tab::Installed => move_installed_selection(app, delta),
-			Tab::Nixos => crate::nixos::move_cursor(app, delta),
 			_ => {}
 		}
 		return Ok(());
@@ -454,7 +453,7 @@ fn settings_main_index(page: SettingsPage) -> usize {
 
 pub(crate) fn handle_app_event(app: &mut App, tx: &mpsc::Sender<AppEvent>, ev: AppEvent) {
 	match ev {
-		AppEvent::Repository(result) => crate::repository::on_result(app, result),
+		AppEvent::Repository(result) => crate::repository::on_result(app, *result),
 		AppEvent::Nixos(event) => crate::nixos::on_event(app, tx, event),
 		AppEvent::SearchDone { epoch, hits } => {
 			if epoch == app.search_epoch {

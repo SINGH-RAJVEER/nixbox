@@ -4,6 +4,16 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 ## Unreleased
 
+- NixOS settings in the GUI and TUI show each option's own documentation, the description its module declares in the host's nixpkgs, instead of a hand-written summary. Links, option references, and note or warning blocks are rendered as plain text. The TUI strip shows the first paragraph and `d` the full text.
+- Added **Update** to the NixOS settings page (`U` in the TUI): it updates the system flake's inputs, then rebuilds the system.
+
+## 0.5.0 - 2026-11-17
+
+- Redesigned the NixOS settings page in the GUI and TUI. Settings pages (General and region, Network, Desktop and login, Audio and devices, Graphics and power, Users and security, Boot and storage, Programs, Services, Virtualization, Nix and maintenance) name common options in plain words, grouped into sections, and read their values in one evaluation. Changed lists staged and queued edits, and All options browses the whole schema as a namespace tree. One search finds curated settings first, then option paths. Pages list only settings the selected host declares; fields nested in a submodule, such as `nix.settings.*`, are reached through search and All options for now.
+- The GUI page has a sidebar with the host menu, filters, and search, and a status bar with Discard, Review, and Apply. Review opens a sheet with each change's old and new value and the generated settings. Settings defined in your own files offer Open source.
+- The TUI NixOS tab now edits simple settings of the `nixos` host: values show inline, `Space` toggles, `Enter` opens an editor, `R` reviews, and `a` applies the staged edits as one NixOS rebuild.
+- Includes the 0.4.8 changes below, which were not published to crates.io.
+
 ## 0.4.8 - 2026-11-13
 
 - Grouped flake outputs by family in the GUI and TUI detail panes: packages for the current system with name and version, modules for the active target, modules for the other target (dimmed), and other outputs. Rows drop the family prefix, and each installable GUI row has its own Install button.
