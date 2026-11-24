@@ -53,11 +53,7 @@ impl RepositoryControls {
 			focused: None,
 			diff_scroll: UniformListScrollHandle::new(),
 			show_status: false,
-			message: cx.new(|cx| {
-				TextareaState::new(window, cx)
-					.rows(5)
-					.placeholder("Commit message")
-			}),
+			message: cx.new(|cx| TextareaState::new(window, cx).placeholder("Commit message")),
 			branch: cx.new(|cx| InputState::new(window, cx).placeholder("Branch or bookmark")),
 			owner: cx.new(|cx| InputState::new(window, cx).placeholder("GitHub owner")),
 			name: cx.new(|cx| InputState::new(window, cx).placeholder("Repository name")),

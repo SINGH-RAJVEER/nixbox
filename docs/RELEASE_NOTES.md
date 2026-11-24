@@ -6,6 +6,7 @@ This file tracks the user-facing changes in each NixBox version published to cra
 
 - NixOS settings in the GUI and TUI show each option's own documentation, the description its module declares in the host's nixpkgs, instead of a hand-written summary. Links, option references, and note or warning blocks are rendered as plain text. The TUI strip shows the first paragraph and `d` the full text.
 - Added **Update** to the NixOS settings page (`U` in the TUI): it updates the system flake's inputs, then rebuilds the system.
+- The GUI's version control page keeps the commit, push, and GitHub remote controls at the bottom of the side panel. The commit message field above them grows with its text until it reaches the controls, then scrolls.
 
 ## 0.5.0 - 2026-11-17
 
